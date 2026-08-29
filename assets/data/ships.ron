@@ -14,6 +14,8 @@
             agility: 3, // no shields — dodging is all it has
             hull: 3,
             shields: 0,
+            squad_points: 12, // provisional
+
             sprite: "ships/tie-fighter.png",
             sprite_px: (461, 566),
             // Wings reach the top edge, so the ship's front line is y = 0
@@ -32,6 +34,8 @@
             agility: 2,
             hull: 3,
             shields: 3,
+            squad_points: 24, // provisional
+
             sprite: "ships/xwing-t70.png",
             sprite_px: (720, 809),
             // Nose tip measured at pixel row 1, centered on x = 362.

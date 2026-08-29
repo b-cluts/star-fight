@@ -23,20 +23,36 @@ pub enum Phase {
     GameOver,
 }
 
-/// Movement phase order: LOWEST pilot skill moves first.
-/// Ties break deterministically by ship id.
-pub fn movement_order(ships: &[(ShipId, u8)]) -> Vec<ShipId> {
-    let mut v: Vec<_> = ships.to_vec();
-    v.sort_by_key(|&(id, skill)| (skill, id.0));
-    v.into_iter().map(|(id, _)| id).collect()
+/// Who holds initiative at setup. The lower squad-point total's player
+/// takes it; on a tie, seat 0 (the game creator) rolls one red die —
+/// Hit/Crit keeps it, Focus/Blank hands it to the opponent. ("Choosing"
+/// is automated as choosing yourself.)
+pub fn initiative_seat(totals: [u32; 2], tie_roll: crate::dice::AttackFace) -> usize {
+    use crate::dice::AttackFace;
+    match totals[0].cmp(&totals[1]) {
+        std::cmp::Ordering::Less => 0,
+        std::cmp::Ordering::Greater => 1,
+        std::cmp::Ordering::Equal => match tie_roll {
+            AttackFace::Hit | AttackFace::Crit => 0,
+            AttackFace::Focus | AttackFace::Blank => 1,
+        },
+    }
 }
 
-/// Combat phase order: HIGHEST pilot skill fires first.
-/// Ties break deterministically by ship id.
-pub fn combat_order(ships: &[(ShipId, u8)]) -> Vec<ShipId> {
+/// Movement phase order: LOWEST pilot skill moves first. At equal skill
+/// the initiative player's ships go first; then ship id.
+pub fn movement_order(ships: &[(ShipId, u8, PlayerId)], initiative: PlayerId) -> Vec<ShipId> {
     let mut v: Vec<_> = ships.to_vec();
-    v.sort_by_key(|&(id, skill)| (std::cmp::Reverse(skill), id.0));
-    v.into_iter().map(|(id, _)| id).collect()
+    v.sort_by_key(|&(id, skill, owner)| (skill, owner != initiative, id.0));
+    v.into_iter().map(|(id, _, _)| id).collect()
+}
+
+/// Combat phase order: HIGHEST pilot skill fires first. At equal skill
+/// the initiative player's ships fire first; then ship id.
+pub fn combat_order(ships: &[(ShipId, u8, PlayerId)], initiative: PlayerId) -> Vec<ShipId> {
+    let mut v: Vec<_> = ships.to_vec();
+    v.sort_by_key(|&(id, skill, owner)| (std::cmp::Reverse(skill), owner != initiative, id.0));
+    v.into_iter().map(|(id, _, _)| id).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,14 +128,21 @@ pub struct GameState {
     pub ships: Vec<ShipState>,
     pub committed: [bool; 2],
     pub winner: Option<PlayerId>,
+    /// Holder of the initiative token (see `initiative_seat`).
+    pub initiative: PlayerId,
+    /// Squad-point totals per seat, for display.
+    pub squad_totals: [u32; 2],
 }
 
 impl GameState {
     /// `fleets[0]` deploys South (seat 0), `fleets[1]` North (seat 1).
+    /// `tie_roll` is one red die drawn by the server, used only when the
+    /// squad totals are equal.
     pub fn new(
         board: Board,
         content: &Content,
         fleets: [&[ShipClassId]; 2],
+        tie_roll: crate::dice::AttackFace,
     ) -> Result<Self, String> {
         let mut ships = Vec::new();
         for (seat, fleet) in fleets.iter().enumerate() {
@@ -145,6 +168,14 @@ impl GameState {
                 });
             }
         }
+        let mut squad_totals = [0u32; 2];
+        for (seat, fleet) in fleets.iter().enumerate() {
+            squad_totals[seat] = fleet
+                .iter()
+                .map(|id| content.ships.class(*id).expect("checked above").squad_points as u32)
+                .sum();
+        }
+        let initiative = PlayerId(initiative_seat(squad_totals, tie_roll) as u32);
         Ok(Self {
             board,
             phase: Phase::Placement,
@@ -152,6 +183,8 @@ impl GameState {
             ships,
             committed: [false, false],
             winner: None,
+            initiative,
+            squad_totals,
         })
     }
 
@@ -276,8 +309,9 @@ impl GameState {
                 .ships
                 .iter()
                 .filter(|s| !s.destroyed && s.pose.is_some())
-                .map(|s| (s.id, self.class_of(content, s).pilot_skill))
+                .map(|s| (s.id, self.class_of(content, s).pilot_skill, s.owner))
                 .collect::<Vec<_>>(),
+            self.initiative,
         );
         let mut records = Vec::new();
         for id in order {
@@ -415,7 +449,7 @@ mod tests {
     }
 
     fn new_1v1(c: &Content) -> GameState {
-        GameState::new(board(), c, [&[TIE], &[XWING]]).unwrap()
+        GameState::new(board(), c, [&[TIE], &[XWING]], crate::dice::AttackFace::Hit).unwrap()
     }
 
     /// Index of a maneuver on a class's dial.
@@ -433,6 +467,38 @@ mod tests {
     fn place_both(c: &Content, gs: &mut GameState) {
         gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.0, FRAC_PI_2)).unwrap();
         gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
+    }
+
+    #[test]
+    fn initiative_breaks_equal_pilot_skill() {
+        // Mirror match: all skill 1; P1 holds initiative.
+        let ships = [
+            (ShipId(0), 1, P0),
+            (ShipId(1), 1, P0),
+            (ShipId(2), 1, P1),
+            (ShipId(3), 1, P1),
+        ];
+        assert_eq!(
+            movement_order(&ships, P1),
+            vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]
+        );
+        assert_eq!(
+            combat_order(&ships, P1),
+            vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]
+        );
+    }
+
+    #[test]
+    fn initiative_setup_rules() {
+        use crate::dice::AttackFace;
+        // Lower squad total takes it outright — die irrelevant.
+        assert_eq!(initiative_seat([12, 24], AttackFace::Blank), 0);
+        assert_eq!(initiative_seat([48, 24], AttackFace::Hit), 1);
+        // Tie: seat 0 rolls. Hit/Crit keeps, Focus/Blank hands over.
+        assert_eq!(initiative_seat([24, 24], AttackFace::Hit), 0);
+        assert_eq!(initiative_seat([24, 24], AttackFace::Crit), 0);
+        assert_eq!(initiative_seat([24, 24], AttackFace::Focus), 1);
+        assert_eq!(initiative_seat([24, 24], AttackFace::Blank), 1);
     }
 
     #[test]

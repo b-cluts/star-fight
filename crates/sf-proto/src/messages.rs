@@ -52,6 +52,10 @@ pub enum ServerMsg {
         turn: u32,
         ships: Vec<ShipView>,
         committed: [bool; 2],
+        /// Seat holding the initiative token (breaks pilot-skill ties:
+        /// moves first AND fires first at equal skill).
+        initiative: u8,
+        squad_totals: [u32; 2],
     },
     /// A command of yours was refused.
     Rejected {

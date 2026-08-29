@@ -259,6 +259,8 @@ async fn session(
                         turn: gs.turn,
                         ships: gs.snapshot_for(PlayerId(s as u32)),
                         committed: gs.committed,
+                        initiative: gs.initiative.0 as u8,
+                        squad_totals: gs.squad_totals,
                     }
                 );
             }
@@ -277,8 +279,15 @@ async fn session(
                 let seat = players.len() as u8 - 1;
                 let _ = resp.send(Ok((seat, rx)));
                 if players.len() == 2 {
-                    let gs = GameState::new(default_board(), &content, [&FLEET_SOUTH, &FLEET_NORTH])
-                        .expect("valid content");
+                    // One red die, drawn now — only used if squad totals tie.
+                    let tie_roll = sf_core::dice::AttackFace::from_d8(rand::random::<u8>());
+                    let gs = GameState::new(
+                        default_board(),
+                        &content,
+                        [&FLEET_SOUTH, &FLEET_NORTH],
+                        tie_roll,
+                    )
+                    .expect("valid content");
                     for s in 0..2u8 {
                         let opponent = players[1 - s as usize].0.clone();
                         send_to!(s, ServerMsg::GameStart { seat: s, opponent });
@@ -310,6 +319,8 @@ async fn session(
                                     turn: gs.turn,
                                     ships: gs.snapshot_for(player),
                                     committed: gs.committed,
+                                    initiative: gs.initiative.0 as u8,
+                                    squad_totals: gs.squad_totals,
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),

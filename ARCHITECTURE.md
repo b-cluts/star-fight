@@ -361,6 +361,19 @@ Resolution: evades cancel hits first, then crits; hits resolve before crits;
 shields absorb damage point-per-point and **block critical effects** — only crits
 that reach the hull become face-up critical cards.
 
+### Squad points & initiative
+
+Ships, pilots, and modifiers all cost **squad points** (`squad_points` on each — ship
+values provisional until final costs land). At setup the server totals each squad and
+assigns **initiative** automatically: the *lower* total takes it; on a tie, seat 0
+rolls one red die — Hit/Crit keeps initiative, Focus/Blank hands it to the opponent
+(the tabletop "chooser" step is automated as choosing yourself). Initiative breaks
+every pilot-skill tie: the initiative player's ships move first *and* fire first at
+equal skill. The client must display who holds initiative and the resulting turn
+order — especially once games grow beyond two players (a design goal: `GameState`'s
+two-seat assumptions are localized in `committed`, `Seat`, and `initiative_seat`, the
+places to generalize when 3+ player matches arrive).
+
 ### Pilots, upgrades & modifiers (design)
 
 - **Pilots are data.** A `Pilot` (future `pilots.ron`) carries the pilot skill and,

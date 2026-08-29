@@ -57,6 +57,9 @@ pub struct ShipClass {
     /// Shield points: absorbed first, and while any remain the ship
     /// cannot suffer critical hits.
     pub shields: u8,
+    /// Squad-point cost (pilots and modifiers will add their own costs).
+    /// Lower squad total gets initiative choice at setup.
+    pub squad_points: u16,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.
