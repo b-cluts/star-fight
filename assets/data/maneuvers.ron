@@ -1,5 +1,5 @@
-// Maneuver sets by agility tier. Placeholder until the real per-ship
-// maneuver lists are provided.
+// Maneuver sets by agility tier. Placeholder set until the real per-ship
+// maneuver lists are provided. Speeds: Straight 1-5, Bank/Turn 1-3.
 (
     sets: [
         (
@@ -7,13 +7,21 @@
             maneuvers: [
                 (steer: Straight, distance: 1, difficulty: Easy),
                 (steer: Straight, distance: 2, difficulty: Easy),
-                (steer: Straight, distance: 3, difficulty: Normal),
-                (steer: SlightLeft, distance: 1, difficulty: Easy),
-                (steer: SlightRight, distance: 1, difficulty: Easy),
-                (steer: HardLeft, distance: 1, difficulty: Normal),
-                (steer: HardRight, distance: 1, difficulty: Normal),
-                (steer: TurnLeft, distance: 1, difficulty: Hard),
-                (steer: TurnRight, distance: 1, difficulty: Hard),
+                (steer: Straight, distance: 3, difficulty: Easy),
+                (steer: Straight, distance: 4, difficulty: Normal),
+                (steer: Straight, distance: 5, difficulty: Normal),
+                (steer: BankLeft, distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Easy),
+                (steer: BankLeft, distance: 2, difficulty: Normal),
+                (steer: BankRight, distance: 2, difficulty: Normal),
+                (steer: BankLeft, distance: 3, difficulty: Normal),
+                (steer: BankRight, distance: 3, difficulty: Normal),
+                (steer: TurnLeft, distance: 1, difficulty: Normal),
+                (steer: TurnRight, distance: 1, difficulty: Normal),
+                (steer: TurnLeft, distance: 2, difficulty: Hard),
+                (steer: TurnRight, distance: 2, difficulty: Hard),
+                (steer: TurnLeft, distance: 3, difficulty: Hard),
+                (steer: TurnRight, distance: 3, difficulty: Hard),
                 (steer: UTurn, distance: 1, difficulty: Hard),
             ],
         ),

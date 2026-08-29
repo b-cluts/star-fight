@@ -170,9 +170,10 @@ around game rules**. Crashes in one session can't touch another.
   path; the client renders with `f32`. Since the server is the single authority,
   cross-platform float determinism is *not* required — clients display what the server
   decides.
-- **1 game unit** = an abstract length (tunable constant `UNIT`), roughly one small-ship
-  length. All maneuver distances, ship footprints, and board dimensions are expressed in
-  game units so the scale can be tuned in one place.
+- **1 game unit = 40 mm** of the physical tabletop system: the side of a small ship
+  base, and exactly the length of a speed-1 straight template. All maneuver distances,
+  ship footprints, and board dimensions are expressed in game units; the mm → unit
+  conversion lives in one place (`sf-core/src/templates.rs`).
 
 ```rust
 pub struct Pose {
@@ -213,8 +214,14 @@ pub struct ShipState {
 }
 ```
 
-Suggested starting footprints (all tunable in `ships.ron`):
-Small 1.0 × 0.7, Medium 1.6 × 1.0, Large 2.5 × 1.4 game units.
+Ship bases are square (length = width), from the physical system:
+
+| Size   | Base (mm)   | Game units  | Notes                        |
+|--------|-------------|-------------|------------------------------|
+| Small  | 40 × 40     | 1.0 × 1.0   | = speed-1 straight template  |
+| Medium | 60 × 60     | 1.5 × 1.5   |                              |
+| Large  | 80 × 80     | 2.0 × 2.0   | = speed-2 straight template  |
+| Huge   | 80 × 192    | 2.0 × 4.8   | width × length               |
 
 ### Board & Deployment
 
@@ -240,16 +247,15 @@ This is the heart of the game, so it gets the most careful design.
 
 ```rust
 pub enum Steer {
-    Straight,        // no heading change
-    SlightLeft,  SlightRight,   // gentle bank  (e.g. 22.5° total — tunable)
-    HardLeft,    HardRight,     // 45° total
-    TurnLeft,    TurnRight,     // 90° total
-    UTurn,                      // ahead 1, rotate 180°, ahead 1
+    Straight,                 // no heading change, speeds 1..=5
+    BankLeft,  BankRight,     // 45° arc, speeds 1..=3
+    TurnLeft,  TurnRight,     // 90° arc, speeds 1..=3
+    UTurn,                    // ahead 1, rotate 180°, ahead 1
 }
 
 pub struct Maneuver {
     pub steer: Steer,
-    pub distance: u8,            // 1..=3 (UTurn ignores this)
+    pub distance: u8,            // speed (see ranges above; UTurn ignores this)
     pub difficulty: Difficulty,  // Easy / Normal / Hard — future stress mechanics
 }
 
@@ -271,15 +277,20 @@ front-center anchor in the ship's local frame:
 - `Arc(radius, sweep)` — circular arc; heading rotates by `sweep`, signed for left/right.
 - `Rotate(angle)` — turn in place (used only by the U-turn's 180° flip).
 
-Examples (exact numbers tuned in data):
+Template dimensions come from the physical system (all templates 20 mm wide; the
+anchor travels the template **centerline**, i.e. inside radius + 10 mm). Converted at
+1 unit = 40 mm in `templates.rs`:
 
-| Maneuver            | Path |
-|---------------------|------|
-| Straight 2          | `Line(2)` |
-| Slight right 3      | `Arc(radius: r_slight, sweep: -22.5°)` scaled to distance 3 |
-| Hard left 1 (45°)   | `Arc(radius: r_hard, sweep: +45°)` |
-| Turn right 2 (90°)  | `Arc(radius: r_turn, sweep: -90°)` at distance-2 radius |
-| U-turn              | `Line(1)`, `Rotate(180°)`, `Line(1)` |
+| Template          | Inside radius | Centerline | Game units | Path |
+|-------------------|---------------|------------|------------|------|
+| Straight n (1..5) | —             | 40·n mm    | n          | `Line(n)` |
+| Bank 1 (45°)      | 70 mm         | 80 mm      | 2.0        | `Arc(2.0, ±45°)` |
+| Bank 2 (45°)      | 120 mm        | 130 mm     | 3.25       | `Arc(3.25, ±45°)` |
+| Bank 3 (45°)      | 170 mm        | 180 mm     | 4.5        | `Arc(4.5, ±45°)` |
+| Turn 1 (90°)      | 25 mm         | 35 mm      | 0.875      | `Arc(0.875, ±90°)` |
+| Turn 2 (90°)      | 53 mm         | 63 mm      | 1.575      | `Arc(1.575, ±90°)` |
+| Turn 3 (90°)      | 80 mm         | 90 mm      | 2.25       | `Arc(2.25, ±90°)` |
+| U-turn            | —             | —          | —          | `Line(1)`, `Rotate(180°)`, `Line(1)` |
 
 `apply(pose, maneuver) -> (final Pose, sampled path)` is a pure function in `sf-core`.
 Because it's pure and shared:

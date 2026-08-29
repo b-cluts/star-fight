@@ -7,3 +7,4 @@ pub mod geometry;
 pub mod maneuver;
 pub mod rules;
 pub mod ship;
+pub mod templates;

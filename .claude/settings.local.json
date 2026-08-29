@@ -3,7 +3,9 @@
     "allow": [
       "Bash(rustc --version)",
       "Bash(cargo --version)",
-      "Bash(cargo check *)"
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(cargo clippy *)"
     ]
   }
 }
