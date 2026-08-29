@@ -46,6 +46,9 @@ pub struct ShipClass {
     pub maneuver_set: ManeuverSetId,
     /// Primary weapon attack dice at standard range (front 90° arc).
     pub attack_dice: u8,
+    /// Pilot skill: lower skill MOVES first in the movement phase;
+    /// higher skill FIRES first in the combat phase.
+    pub pilot_skill: u8,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.

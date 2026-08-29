@@ -345,9 +345,13 @@ Setup ─► Placement ─► [ Planning ─► Resolution ]* ─► GameOver
 
 1. **Placement** — alternating or simultaneous secret placement in deployment zones.
 2. **Planning** — each player secretly assigns one maneuver to every ship, then commits.
-3. **Resolution** — server reveals all plans and resolves movement in a defined order
-   (e.g., by size class or a future initiative stat — configurable), broadcasts
-   `TurnResult` containing each ship's path + final pose so clients can animate it.
+3. **Resolution** — server reveals all plans and resolves in **pilot-skill order**
+   (a `ShipClass` stat): movement executes lowest skill first (a rookie commits early;
+   an ace moves last with full information), then combat fires highest skill first
+   (the ace shoots before slower pilots can respond). TIE Fighter pilots are skill 1,
+   T-70 pilots skill 2 — so TIEs move first and X-Wings fire first. Skill ties break
+   deterministically by ship id. The server broadcasts `TurnResult` with each ship's
+   path + final pose so clients can animate it.
 4. Loop until a win condition (fleet destroyed / objective — later).
 
 ---
