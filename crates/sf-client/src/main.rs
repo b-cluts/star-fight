@@ -247,6 +247,7 @@ fn placement_input(
     mode: Res<Mode>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut wheel: EventReader<MouseWheel>,
+    keys: Res<ButtonInput<KeyCode>>,
     cursor: Res<CursorUnits>,
     game: Res<Game>,
     mut sel: ResMut<Sel>,
@@ -272,15 +273,41 @@ fn placement_input(
     if buttons.just_released(MouseButton::Left) {
         sel.drag = None;
     }
-    let scroll: f32 = wheel.read().map(|e| e.y).sum();
     if let Some((entity, off)) = sel.drag {
         if let Ok((_, mut ship)) = ships.get_mut(entity) {
             if let Some(cur) = cursor.0 {
                 ship.pose.anchor = cur + off;
             }
-            if scroll != 0.0 {
-                // One notch = 15°.
-                ship.pose.heading += scroll.signum() as f64 * std::f64::consts::PI / 12.0;
+        }
+    }
+    // Rotation: scroll wheel or Q/E, applied to the dragged ship if any,
+    // otherwise the ship under the cursor.
+    let scroll: f32 = wheel.read().map(|e| e.y).sum();
+    let mut steps = if scroll > 0.0 {
+        1.0
+    } else if scroll < 0.0 {
+        -1.0
+    } else {
+        0.0
+    };
+    if keys.just_pressed(KeyCode::KeyQ) {
+        steps += 1.0;
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        steps -= 1.0;
+    }
+    if steps != 0.0 {
+        let target = sel.drag.map(|(e, _)| e).or_else(|| {
+            let cur = cursor.0?;
+            ships.iter().find_map(|(e, s)| {
+                let fp = game.ships.classes[s.class_idx].footprint;
+                rules::point_in_footprint(s.pose, fp, cur).then_some(e)
+            })
+        });
+        if let Some(entity) = target {
+            if let Ok((_, mut ship)) = ships.get_mut(entity) {
+                // One notch / keypress = 15°.
+                ship.pose.heading += steps as f64 * std::f64::consts::PI / 12.0;
             }
         }
     }
@@ -383,6 +410,12 @@ fn draw_overlays(
             (Seat::North, _) => Color::srgba(0.9, 0.4, 0.3, 0.6),
         };
         gizmos.linestrip_2d(pts, color);
+        // Bright front edge (corners 0-1) so facing is always readable.
+        gizmos.line_2d(
+            game.to_world(corners[0]),
+            game.to_world(corners[1]),
+            Color::srgb(0.5, 0.95, 1.0),
+        );
     }
 
     let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else { return };
@@ -432,7 +465,8 @@ fn draw_overlays(
     *gtf = tf;
     *gvis = Visibility::Visible;
 
-    // End-pose base outline.
+    // End-pose base outline, bright front edge, and a heading arrow from
+    // the nose — unmistakable even when a K-turn leaves the ship in place.
     let corners = rules::footprint_corners(end, class.footprint);
     let pts: Vec<Vec2> = corners
         .iter()
@@ -440,6 +474,16 @@ fn draw_overlays(
         .map(|&c| game.to_world(c))
         .collect();
     gizmos.linestrip_2d(pts, color);
+    gizmos.line_2d(
+        game.to_world(corners[0]),
+        game.to_world(corners[1]),
+        Color::srgb(0.5, 0.95, 1.0),
+    );
+    gizmos.arrow_2d(
+        game.to_world(end.anchor),
+        game.to_world(end.local_to_world(GVec2::new(0.8, 0.0))),
+        color,
+    );
 }
 
 fn steer_name(s: Steer) -> &'static str {
@@ -464,7 +508,10 @@ fn update_hud(
 ) {
     let Ok(mut text) = hud.single_mut() else { return };
     text.0 = match *mode {
-        Mode::Placement => "PLACEMENT — drag ships, scroll to rotate, P for flight mode".into(),
+        Mode::Placement => {
+            "PLACEMENT — drag ships; scroll or Q/E rotates (hover or drag); P for flight mode"
+                .into()
+        }
         Mode::Flight => {
             let Some((_, ship)) = sel.ship.and_then(|e| ships.get(e).ok()) else {
                 return;
