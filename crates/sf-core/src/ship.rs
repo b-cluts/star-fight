@@ -44,10 +44,14 @@ pub struct ShipClass {
     pub size: SizeClass,
     pub footprint: Footprint,
     pub maneuver_set: ManeuverSetId,
-    /// Sprite asset path, e.g. "ships/scout.png".
+    /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Pixel coordinates of the front-center point in the sprite.
     pub anchor_px: (u32, u32),
+    /// Optional showcase art for UI (fleet panel, ship selection) — may be
+    /// a perspective render; never used on the board.
+    #[serde(default)]
+    pub portrait: Option<String>,
 }
 
 /// One ship in play.
