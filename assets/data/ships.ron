@@ -20,7 +20,7 @@
             name: "X-Wing T-70",
             size: Small,
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
-            maneuver_set: 1,
+            maneuver_set: 2,
             sprite: "ships/xwing-t70.png",
             // Sprite is 720 x 809; nose tip measured at pixel row 1,
             // centered on x = 362.

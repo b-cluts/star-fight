@@ -247,16 +247,17 @@ This is the heart of the game, so it gets the most careful design.
 
 ```rust
 pub enum Steer {
-    Straight,                 // no heading change, speeds 1..=5
-    BankLeft,  BankRight,     // 45° arc, speeds 1..=3
-    TurnLeft,  TurnRight,     // 90° arc, speeds 1..=3
-    UTurn,                    // ahead 1, rotate 180°, ahead 1
+    Straight,                   // no heading change, speeds 1..=5
+    BankLeft,   BankRight,      // 45° arc, speeds 1..=3
+    TurnLeft,   TurnRight,      // 90° arc, speeds 1..=4
+    TallonLeft, TallonRight,    // Tallon roll: 90° turn, then +90° flip
+    KTurn,                      // Koiogran: straight at speed, then flip 180°
 }
 
 pub struct Maneuver {
     pub steer: Steer,
-    pub distance: u8,            // speed (see ranges above; UTurn ignores this)
-    pub difficulty: Difficulty,  // Easy / Normal / Hard — future stress mechanics
+    pub distance: u8,            // speed (see ranges above)
+    pub difficulty: Difficulty,  // dial color: Easy=blue, Normal=white, Hard=red
 }
 
 pub struct ManeuverSet {         // maneuvers.ron — one per agility tier
@@ -290,7 +291,18 @@ anchor travels the template **centerline**, i.e. inside radius + 10 mm). Convert
 | Turn 1 (90°)      | 25 mm         | 35 mm      | 0.875      | `Arc(0.875, ±90°)` |
 | Turn 2 (90°)      | 53 mm         | 63 mm      | 1.575      | `Arc(1.575, ±90°)` |
 | Turn 3 (90°)      | 80 mm         | 90 mm      | 2.25       | `Arc(2.25, ±90°)` |
-| U-turn            | —             | —          | —          | `Line(1)`, `Rotate(180°)`, `Line(1)` |
+| Turn 4 (90°)      | 107 mm (extrapolated) | 117 mm | 2.925  | `Arc(2.925, ±90°)` |
+| Tallon roll n     | turn template n | —        | —          | `Arc(r_turn(n), ±90°)`, `Rotate(±90°)` |
+| Koiogran n (1..5) | —             | 40·n mm    | n          | `Line(n)`, `Rotate(180°)` |
+
+No physical speed-4 turn template exists; its radius extends the 1–3 progression
+(+27 mm per speed) to support dials like the T-70's speed-4 hard turn.
+
+Difficulty is the dial color and drives the (future) stress system: flying a **blue**
+(Easy) maneuver removes a stress token, **red** (Hard) adds one, and a stressed ship
+may not select red maneuvers. Which steer/speed/color combinations a ship gets is
+entirely dial data in `maneuvers.ron` — e.g. the standard TIE Fighter dial has no
+speed-1 hard turns, blue straights 1–3, and red Koiogran turns at 3 and 4.
 
 `apply(pose, maneuver) -> (final Pose, sampled path)` is a pure function in `sf-core`.
 Because it's pure and shared:

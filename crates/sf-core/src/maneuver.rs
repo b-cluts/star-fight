@@ -14,24 +14,39 @@ pub enum Steer {
     /// 45° arc on the bank templates. Speeds 1..=3.
     BankLeft,
     BankRight,
-    /// 90° arc on the turn templates. Speeds 1..=3.
+    /// 90° arc on the turn templates. Speeds 1..=4 (4 extrapolated).
     TurnLeft,
     TurnRight,
-    /// Ahead 1, rotate 180° about the anchor, ahead 1. Ignores `distance`.
-    UTurn,
+    /// Tallon roll: fly a 90° turn template, then rotate a further 90° in
+    /// the same direction — ends facing 180° from start, displaced to the
+    /// flank. Speeds as per turn templates.
+    TallonLeft,
+    TallonRight,
+    /// Koiogran turn: fly a straight template at `distance`, then flip
+    /// 180° in place — ends facing backward. Speeds 1..=5 geometrically;
+    /// which speeds a ship may fly comes from its dial.
+    KTurn,
 }
 
+/// Maneuver difficulty, color-coded as on the physical dials. Stress rules
+/// (enforced in `game.rs` once tokens exist): flying a Blue/Easy maneuver
+/// removes one stress token; flying a Red/Hard maneuver adds one; a
+/// stressed ship may not select Red maneuvers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Difficulty {
+    /// Blue on the dial.
     Easy,
+    /// White on the dial.
     Normal,
+    /// Red on the dial.
     Hard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Maneuver {
     pub steer: Steer,
-    /// Speed: 1..=5 for Straight, 1..=3 for banks/turns; ignored by UTurn.
+    /// Speed: 1..=5 for Straight and KTurn, 1..=3 for banks,
+    /// 1..=4 for turns and Tallon rolls.
     pub distance: u8,
     pub difficulty: Difficulty,
 }
@@ -84,9 +99,17 @@ pub fn segments(m: Maneuver) -> Result<Vec<Segment>, BadManeuver> {
             let sign = if m.steer == Steer::TurnLeft { 1.0 } else { -1.0 };
             vec![Segment::Arc { radius, sweep: sign * FRAC_PI_2 }]
         }
-        Steer::UTurn => {
-            let ahead = templates::straight_length(1).expect("speed 1 is always valid");
-            vec![Segment::Line(ahead), Segment::Rotate(PI), Segment::Line(ahead)]
+        Steer::TallonLeft | Steer::TallonRight => {
+            let radius = templates::turn_radius(m.distance).ok_or(bad)?;
+            let sign = if m.steer == Steer::TallonLeft { 1.0 } else { -1.0 };
+            vec![
+                Segment::Arc { radius, sweep: sign * FRAC_PI_2 },
+                Segment::Rotate(sign * FRAC_PI_2),
+            ]
+        }
+        Steer::KTurn => {
+            let ahead = templates::straight_length(m.distance).ok_or(bad)?;
+            vec![Segment::Line(ahead), Segment::Rotate(PI)]
         }
     })
 }
@@ -179,7 +202,8 @@ mod tests {
     fn left_and_right_are_mirrors() {
         for (l, r, max) in [
             (Steer::BankLeft, Steer::BankRight, 3),
-            (Steer::TurnLeft, Steer::TurnRight, 3),
+            (Steer::TurnLeft, Steer::TurnRight, 4),
+            (Steer::TallonLeft, Steer::TallonRight, 4),
         ] {
             for speed in 1..=max {
                 let pl = apply(Pose::new(0.0, 0.0, 0.0), m(l, speed)).unwrap();
@@ -192,26 +216,38 @@ mod tests {
     }
 
     #[test]
-    fn uturn_returns_anchor_flipped() {
-        // Ahead 1, flip, ahead 1: the anchor comes back to the start with
-        // heading reversed — the hull (which trails the anchor) ends one
-        // ship-length AHEAD of where it began, now facing backward.
-        let p = apply(Pose::new(2.0, 3.0, 1.0), m(Steer::UTurn, 1)).unwrap();
-        assert!(approx(p.anchor.x, 2.0));
-        assert!(approx(p.anchor.y, 3.0));
-        assert!(approx(p.heading, 1.0 + PI));
+    fn kturn_flies_straight_then_flips() {
+        // Koiogran 3 from origin facing +X: anchor ends 3 ahead, heading
+        // reversed; the hull (which trails the anchor) flips to sit ahead
+        // of the anchor, facing back the way it came.
+        let p = apply(Pose::new(0.0, 0.0, 0.0), m(Steer::KTurn, 3)).unwrap();
+        assert!(approx(p.anchor.x, 3.0));
+        assert!(approx(p.anchor.y, 0.0));
+        assert!(approx(p.heading, PI));
+    }
+
+    #[test]
+    fn tallon_roll_ends_flipped_on_the_flank() {
+        // Tallon left 3: 90° left arc (r = 2.25) to (2.25, 2.25) facing
+        // +Y, then a further 90° left in place — net heading 180°.
+        let p = apply(Pose::new(0.0, 0.0, 0.0), m(Steer::TallonLeft, 3)).unwrap();
+        assert!(approx(p.anchor.x, 2.25));
+        assert!(approx(p.anchor.y, 2.25));
+        assert!(approx(p.heading, PI));
     }
 
     #[test]
     fn bad_speeds_rejected() {
         assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::Straight, 6)).is_err());
-        assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::TurnLeft, 4)).is_err());
+        assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::TurnLeft, 5)).is_err());
+        assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::TallonRight, 5)).is_err());
         assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::BankRight, 0)).is_err());
+        assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::KTurn, 6)).is_err());
     }
 
     #[test]
     fn sampled_path_ends_at_final_pose() {
-        for steer in [Steer::Straight, Steer::BankLeft, Steer::TurnRight, Steer::UTurn] {
+        for steer in [Steer::Straight, Steer::BankLeft, Steer::TurnRight, Steer::KTurn] {
             let man = m(steer, 2);
             let start = Pose::new(1.0, -2.0, 0.4);
             let path = sample_path(start, man).unwrap();
