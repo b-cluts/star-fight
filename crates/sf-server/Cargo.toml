@@ -6,3 +6,10 @@ edition.workspace = true
 [dependencies]
 sf-core = { path = "../sf-core" }
 sf-proto = { path = "../sf-proto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite = "0.23"
+futures-util = "0.3"
+rand = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "test-util"] }
