@@ -1,16 +1,18 @@
-// Ship classes. Placeholder entries until real ships and sprites arrive.
-// footprint is (length, width) in game units; anchor_px is the sprite's
-// front-center pixel.
+// Ship classes. footprint is (length, width) in game units; anchor_px is
+// the sprite pixel that maps onto the ship's front-center anchor (the
+// sprite faces UP, so that's top-center of the artwork).
 (
     classes: [
         (
             id: 1,
-            name: "Scout",
+            name: "TIE Fighter",
             size: Small,
-            footprint: (length: 1.0, width: 0.7),
+            footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
             maneuver_set: 1,
-            sprite: "ships/scout.png",
-            anchor_px: (128, 0),
+            sprite: "ships/tie-fighter.png",
+            // Sprite is 461 x 566; wings reach the top edge, so the ship's
+            // front line is y = 0 at the horizontal center.
+            anchor_px: (230, 0),
         ),
     ],
 )
