@@ -15,5 +15,17 @@
             anchor_px: (230, 0),
             portrait: Some("portraits/tie-fighter.png"),
         ),
+        (
+            id: 2,
+            name: "X-Wing T-70",
+            size: Small,
+            footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
+            maneuver_set: 1,
+            sprite: "ships/xwing-t70.png",
+            // Sprite is 720 x 809; nose tip measured at pixel row 1,
+            // centered on x = 362.
+            anchor_px: (362, 1),
+            portrait: None,
+        ),
     ],
 )
