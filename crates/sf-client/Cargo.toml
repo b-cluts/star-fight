@@ -1,0 +1,9 @@
+[package]
+name = "sf-client"
+version.workspace = true
+edition.workspace = true
+
+# Bevy is added in milestone M2 (offline sandbox) to keep early builds fast.
+[dependencies]
+sf-core = { path = "../sf-core" }
+sf-proto = { path = "../sf-proto" }

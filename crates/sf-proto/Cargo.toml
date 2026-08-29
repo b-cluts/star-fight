@@ -1,0 +1,9 @@
+[package]
+name = "sf-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sf-core = { path = "../sf-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

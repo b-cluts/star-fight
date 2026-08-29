@@ -1,0 +1,16 @@
+// Ship classes. Placeholder entries until real ships and sprites arrive.
+// footprint is (length, width) in game units; anchor_px is the sprite's
+// front-center pixel.
+(
+    classes: [
+        (
+            id: 1,
+            name: "Scout",
+            size: Small,
+            footprint: (length: 1.0, width: 0.7),
+            maneuver_set: 1,
+            sprite: "ships/scout.png",
+            anchor_px: (128, 0),
+        ),
+    ],
+)

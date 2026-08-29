@@ -1,0 +1,21 @@
+// Maneuver sets by agility tier. Placeholder until the real per-ship
+// maneuver lists are provided.
+(
+    sets: [
+        (
+            id: 1, // agile (small ships)
+            maneuvers: [
+                (steer: Straight, distance: 1, difficulty: Easy),
+                (steer: Straight, distance: 2, difficulty: Easy),
+                (steer: Straight, distance: 3, difficulty: Normal),
+                (steer: SlightLeft, distance: 1, difficulty: Easy),
+                (steer: SlightRight, distance: 1, difficulty: Easy),
+                (steer: HardLeft, distance: 1, difficulty: Normal),
+                (steer: HardRight, distance: 1, difficulty: Normal),
+                (steer: TurnLeft, distance: 1, difficulty: Hard),
+                (steer: TurnRight, distance: 1, difficulty: Hard),
+                (steer: UTurn, distance: 1, difficulty: Hard),
+            ],
+        ),
+    ],
+)

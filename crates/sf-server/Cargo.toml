@@ -1,0 +1,8 @@
+[package]
+name = "sf-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sf-core = { path = "../sf-core" }
+sf-proto = { path = "../sf-proto" }
