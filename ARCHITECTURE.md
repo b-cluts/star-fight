@@ -361,6 +361,20 @@ Resolution: evades cancel hits first, then crits; hits resolve before crits;
 shields absorb damage point-per-point and **block critical effects** — only crits
 that reach the hull become face-up critical cards.
 
+### Pilots, upgrades & modifiers (design)
+
+- **Pilots are data.** A `Pilot` (future `pilots.ron`) carries the pilot skill and,
+  later, abilities. A fleet entry is *ship class + pilot (+ upgrades)*; better pilots
+  are assigned per ship. (`pilot_skill` currently sits on `ShipClass` as the basic
+  pilot's value; it moves to `Pilot` when game state lands in M3.)
+- **One modifier system for everything.** Ordnance, pilot abilities, and critical-hit
+  effects are all the same mechanism: effect tags attached to a ship instance that
+  rules code consults during movement/combat. Critical hits are NOT shown as cards in
+  the UI — a crit simply attaches its modifier, and the ship status panel lists active
+  modifiers as text.
+- **Runtime ship state** (with game state in M3): current hull/shields, stress tokens,
+  action tokens (Focus / Target Lock / Evade), assigned pilot, active modifiers.
+
 ### Turn structure (phase machine in `game.rs`)
 
 ```
@@ -393,6 +407,9 @@ Bevy app organized around a state enum mirroring the game phases:
 - **Planning UI**: select ship → maneuver list from its `ManeuverSet` → hovering a
   maneuver renders the path arc + translucent ghost ship at the final pose (via the same
   `apply` function the server uses). Commit button sends `CommitPlans`.
+- **Ship status panel**: toggling between your ships (Tab) drives a corner subscreen
+  showing the selected ship's pilot, hull/shield status, stress and action tokens, and
+  active modifiers — plus the action picker (Focus, Target Lock, …) for the turn.
 - **Resolution**: animate each ship along the server-provided sampled path; the final
   pose always snaps to the server's answer.
 - The client keeps a mirror `GameState` updated only from `ServerMsg` — it never
