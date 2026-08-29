@@ -374,6 +374,20 @@ order — especially once games grow beyond two players (a design goal: `GameSta
 two-seat assumptions are localized in `committed`, `Seat`, and `initiative_seat`, the
 places to generalize when 3+ player matches arrive).
 
+### Squad builder & scenarios (design)
+
+- **Squad builder in the client**: choose a faction, add ships, then pilots and
+  ordnance/upgrades (content details TBD). Squads are saved locally as RON files in
+  the user's config directory and offered when joining a game.
+- **Scenarios**: a server game session can carry restrictions — max squad points,
+  banned size classes, faction locks, etc. — expressed as a `ScenarioRules` struct in
+  sf-core, sent to clients with the lobby info.
+- **Validation is shared, enforcement is server-side**: one
+  `validate_squad(squad, rules)` function in sf-core. The client runs it live in the
+  builder and before joining (instant, explanatory feedback); the server re-runs it
+  on `JoinGame` and rejects violations — the client check is a courtesy, the server
+  check is the guarantee. Same shared-crate principle as maneuver legality.
+
 ### Pilots, upgrades & modifiers (design)
 
 - **Pilots are data.** A `Pilot` (future `pilots.ron`) carries the pilot skill and,
