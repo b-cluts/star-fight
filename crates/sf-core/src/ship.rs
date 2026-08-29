@@ -69,11 +69,19 @@ pub struct ShipClass {
     pub portrait: Option<String>,
 }
 
-/// One ship in play.
+/// One ship in play — runtime state owned by `game::GameState`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipState {
     pub id: ShipId,
     pub owner: PlayerId,
     pub class: ShipClassId,
-    pub pose: Pose,
+    /// None until placed during the Placement phase.
+    pub pose: Option<Pose>,
+    pub hull: u8,
+    pub shields: u8,
+    pub stress: u8,
+    /// Secretly planned maneuver (index into the ship's dial) — never
+    /// revealed to the opponent before resolution.
+    pub plan: Option<u8>,
+    pub destroyed: bool,
 }

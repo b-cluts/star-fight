@@ -29,6 +29,20 @@ impl ShipDb {
     }
 }
 
+/// Everything loaded from the data files — the static content both server
+/// and client consult while running a game.
+#[derive(Debug, Clone)]
+pub struct Content {
+    pub ships: ShipDb,
+    pub dials: ManeuverDb,
+}
+
+impl Content {
+    pub fn from_ron(ships: &str, dials: &str) -> Result<Self, ron::error::SpannedError> {
+        Ok(Self { ships: ShipDb::from_ron(ships)?, dials: ManeuverDb::from_ron(dials)? })
+    }
+}
+
 /// Contents of `assets/data/maneuvers.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManeuverDb {
