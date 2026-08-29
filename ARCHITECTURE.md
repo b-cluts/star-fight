@@ -295,8 +295,9 @@ anchor travels the template **centerline**, i.e. inside radius + 10 mm). Convert
 | Tallon roll n     | turn template n | —        | —          | `Arc(r_turn(n), ±90°)`, `Rotate(±90°)` |
 | Koiogran n (1..5) | —             | 40·n mm    | n          | `Line(n)`, `Rotate(180°)` |
 
-No physical speed-4 turn template exists; its radius extends the 1–3 progression
-(+27 mm per speed) to support dials like the T-70's speed-4 hard turn.
+No physical speed-4 turn template exists; this game's canonical radius extends the
+1–3 progression (+27 mm per speed), adopted deliberately in preference to the
+physical game's makeshift speed-4 turn rules.
 
 Difficulty is the dial color and drives the (future) stress system: flying a **blue**
 (Easy) maneuver removes a stress token, **red** (Hard) adds one, and a stressed ship

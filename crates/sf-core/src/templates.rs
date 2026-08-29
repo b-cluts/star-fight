@@ -18,9 +18,9 @@
 //! | Bank 3 (45°)      | 170 mm        | 180 mm     | 4.5        |
 //! | Straight n (1..5) | —             | 40·n mm    | n          |
 //!
-//! (*) No speed-4 turn template exists physically; the radius is
-//! extrapolated from the 1–3 progression (+27 mm per speed) to support
-//! dials with a speed-4 hard turn (e.g. the T-70). Tunable.
+//! (*) No speed-4 turn template exists physically; this game's canonical
+//! radius extends the 1–3 progression (+27 mm per speed) — adopted as the
+//! standard here in preference to the physical game's makeshift rules.
 
 pub const MM_PER_UNIT: f64 = 40.0;
 pub const TEMPLATE_WIDTH_MM: f64 = 20.0;
