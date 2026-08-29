@@ -345,6 +345,22 @@ Primary attack dice are a `ShipClass` stat (`attack_dice`: TIE Fighter 2, X-Wing
 3). The client overlays the cone and band arcs on the selected ship and on maneuver
 previews, so players can see where a move will point their guns before committing.
 
+### Combat dice (`dice.rs`)
+
+Custom d8s, deterministic in core (the server supplies raw d8 values from its seeded
+RNG, so resolutions are replayable):
+
+| Die              | Faces                                | Natural success |
+|------------------|--------------------------------------|-----------------|
+| Red (attack)     | Hit x3, Crit x1, Focus x2, Blank x2  | 50%             |
+| Green (defense)  | Evade x3, Focus x2, Blank x3         | 37.5%           |
+
+Modifiers: spending a Focus token converts Focus faces to Hits (attack) or Evades
+(defense); a Target Lock rerolls blanks (action economy lands with game state).
+Resolution: evades cancel hits first, then crits; hits resolve before crits;
+shields absorb damage point-per-point and **block critical effects** — only crits
+that reach the hull become face-up critical cards.
+
 ### Turn structure (phase machine in `game.rs`)
 
 ```

@@ -29,7 +29,7 @@
             maneuver_set: 2,
             attack_dice: 3,
             pilot_skill: 2,
-            agility: 2, // provisional — confirm the T-70's defense dice
+            agility: 2,
             hull: 3,
             shields: 3,
             sprite: "ships/xwing-t70.png",
