@@ -320,6 +320,23 @@ The path is sampled at small steps; at each step the ship's footprint rectangle
 (stop short, overlap penalty, damage) is a rules decision to make later — the detection
 machinery is the same regardless.
 
+### Firing arcs & range bands (`combat.rs`)
+
+Both starter ships use the standard **Front Firing Arc**: a 90° forward cone (±45° of
+heading) originating at the **center of the ship's base**. Range is measured from the
+closest point of the attacker's base inside the arc to the closest point of the
+defender's base, in three bands of exactly 100 mm = **2.5 game units** each:
+
+| Band | Distance          | Attacker           | Defender          |
+|------|-------------------|--------------------|-------------------|
+| 1    | 0–2.5 u (100 mm)  | +1 attack die      | —                 |
+| 2    | 2.5–5 u (200 mm)  | standard dice      | —                 |
+| 3    | 5–7.5 u (300 mm)  | standard dice      | +1 defense die    |
+
+Primary attack dice are a `ShipClass` stat (`attack_dice`: TIE Fighter 2, X-Wing T-70
+3). The client overlays the cone and band arcs on the selected ship and on maneuver
+previews, so players can see where a move will point their guns before committing.
+
 ### Turn structure (phase machine in `game.rs`)
 
 ```

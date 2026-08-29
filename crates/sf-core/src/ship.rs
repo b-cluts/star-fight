@@ -44,6 +44,8 @@ pub struct ShipClass {
     pub size: SizeClass,
     pub footprint: Footprint,
     pub maneuver_set: ManeuverSetId,
+    /// Primary weapon attack dice at standard range (front 90° arc).
+    pub attack_dice: u8,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.

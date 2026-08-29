@@ -428,6 +428,8 @@ fn draw_overlays(
         return;
     };
     let class = &game.ships.classes[ship.class_idx];
+    // Firing arc from the CURRENT pose (faint) — where you threaten now.
+    draw_firing_arc(&mut gizmos, &game, ship.pose, class.footprint, 0.25);
     let dial = game.dial(class);
     if dial.is_empty() {
         *gvis = Visibility::Hidden;
@@ -484,6 +486,43 @@ fn draw_overlays(
         game.to_world(end.local_to_world(GVec2::new(0.8, 0.0))),
         color,
     );
+    // Firing arc from the END pose (bright) — where this maneuver aims you.
+    draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+}
+
+/// Ghost overlay of the front firing arc: a 90° cone from the base center
+/// with the three range-band boundaries (each 2.5 units, measured from the
+/// base edge along the centerline).
+fn draw_firing_arc(
+    gizmos: &mut Gizmos,
+    game: &Game,
+    pose: Pose,
+    fp: sf_core::geometry::Footprint,
+    alpha: f32,
+) {
+    let center = sf_core::combat::base_center(pose, fp);
+    let half_len = fp.length / 2.0;
+    let outer = half_len + sf_core::combat::MAX_RANGE_BAND as f64 * sf_core::combat::RANGE_BAND_UNITS;
+    let color = Color::srgba(1.0, 0.75, 0.2, alpha);
+    let faint = Color::srgba(1.0, 0.75, 0.2, alpha * 0.45);
+
+    let point_at = |angle: f64, r: f64| {
+        game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
+    };
+    let (a0, a1) = (pose.heading - std::f64::consts::FRAC_PI_4, pose.heading + std::f64::consts::FRAC_PI_4);
+
+    // Cone edges.
+    for a in [a0, a1] {
+        gizmos.line_2d(point_at(a, half_len), point_at(a, outer), color);
+    }
+    // Band boundary arcs (range 1..=3), sampled.
+    for band in 1..=sf_core::combat::MAX_RANGE_BAND {
+        let r = half_len + band as f64 * sf_core::combat::RANGE_BAND_UNITS;
+        let pts: Vec<Vec2> = (0..=24)
+            .map(|i| point_at(a0 + (a1 - a0) * i as f64 / 24.0, r))
+            .collect();
+        gizmos.linestrip_2d(pts, if band == sf_core::combat::MAX_RANGE_BAND { color } else { faint });
+    }
 }
 
 fn steer_name(s: Steer) -> &'static str {
