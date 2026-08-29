@@ -52,6 +52,7 @@ fn main() {
         .insert_resource(Mode::Placement)
         .insert_resource(Sel::default())
         .insert_resource(CursorUnits(None))
+        .insert_resource(ShowArcs(true))
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -113,6 +114,10 @@ struct Sel {
 
 #[derive(Resource)]
 struct CursorUnits(Option<GVec2>);
+
+/// Firing-arc overlay toggle (F key). On by default.
+#[derive(Resource)]
+struct ShowArcs(bool);
 
 #[derive(Component)]
 struct ShipEnt {
@@ -233,13 +238,21 @@ fn track_cursor(
     })();
 }
 
-fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<Mode>, mut sel: ResMut<Sel>) {
+fn toggle_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut mode: ResMut<Mode>,
+    mut sel: ResMut<Sel>,
+    mut arcs: ResMut<ShowArcs>,
+) {
     if keys.just_pressed(KeyCode::KeyP) {
         *mode = match *mode {
             Mode::Placement => Mode::Flight,
             Mode::Flight => Mode::Placement,
         };
         sel.drag = None;
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        arcs.0 = !arcs.0;
     }
 }
 
@@ -390,6 +403,7 @@ fn draw_overlays(
     ships: Query<(Entity, &ShipEnt)>,
     mut ghost: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<Ghost>>,
     art: Res<ClassArt>,
+    arcs: Res<ShowArcs>,
 ) {
     // Board frame.
     let bsize = Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX);
@@ -428,8 +442,6 @@ fn draw_overlays(
         return;
     };
     let class = &game.ships.classes[ship.class_idx];
-    // Firing arc from the CURRENT pose (faint) — where you threaten now.
-    draw_firing_arc(&mut gizmos, &game, ship.pose, class.footprint, 0.25);
     let dial = game.dial(class);
     if dial.is_empty() {
         *gvis = Visibility::Hidden;
@@ -486,8 +498,10 @@ fn draw_overlays(
         game.to_world(end.local_to_world(GVec2::new(0.8, 0.0))),
         color,
     );
-    // Firing arc from the END pose (bright) — where this maneuver aims you.
-    draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+    // Firing arc from the END pose — where this maneuver aims you.
+    if arcs.0 {
+        draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+    }
 }
 
 /// Ghost overlay of the front firing arc: a 90° cone from the base center
@@ -585,7 +599,7 @@ fn update_hud(
                 })
                 .unwrap_or_default();
             format!(
-                "FLIGHT — {} | [{}/{}] {} {} ({color}){status}\nTab: next ship  \u{2190}/\u{2192}: dial  Enter: execute  P: placement",
+                "FLIGHT — {} | [{}/{}] {} {} ({color}){status}\nTab: next ship  \u{2190}/\u{2192}: dial  Enter: execute  F: arcs  P: placement",
                 class.name,
                 idx + 1,
                 dial.len(),
