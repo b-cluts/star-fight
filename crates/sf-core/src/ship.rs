@@ -49,6 +49,14 @@ pub struct ShipClass {
     /// Pilot skill: lower skill MOVES first in the movement phase;
     /// higher skill FIRES first in the combat phase.
     pub pilot_skill: u8,
+    /// Defense (agility) dice rolled against attacks.
+    pub agility: u8,
+    /// Hull points. Damage past the shields comes here, and only hull
+    /// damage can inflict critical effects.
+    pub hull: u8,
+    /// Shield points: absorbed first, and while any remain the ship
+    /// cannot suffer critical hits.
+    pub shields: u8,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.

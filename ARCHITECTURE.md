@@ -201,9 +201,17 @@ pub struct ShipClass {          // loaded from ships.ron
     pub size: SizeClass,
     pub footprint: Footprint,   // length × width in game units
     pub maneuver_set: ManeuverSetId,
-    pub sprite: String,         // asset path
-    // later: hull, shields, weapons, initiative…
+    pub sprite: String,         // asset path (+ portrait, sprite_px, anchor_px)
+    pub attack_dice: u8,        // primary weapon dice (front arc)
+    pub pilot_skill: u8,        // low moves first; high fires first
+    pub agility: u8,            // defense dice
+    pub hull: u8,               // crit-able hit points
+    pub shields: u8,            // absorbed first; block crits while up
 }
+
+Starter stats — TIE/ln: attack 2, skill 1, agility 3, hull 3, shields 0 (all dodge,
+no buffer, crit-able from the first hit). T-70 X-Wing: attack 3, skill 2, agility 2
+(provisional), hull 3, shields 3 (6 effective HP; crits blocked while shielded).
 
 pub struct ShipState {
     pub id: ShipId,
