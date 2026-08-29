@@ -46,6 +46,8 @@ pub struct ShipClass {
     pub maneuver_set: ManeuverSetId,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
+    /// Sprite image dimensions (width, height) in pixels.
+    pub sprite_px: (u32, u32),
     /// Pixel coordinates of the front-center point in the sprite.
     pub anchor_px: (u32, u32),
     /// Optional showcase art for UI (fleet panel, ship selection) — may be

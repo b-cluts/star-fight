@@ -19,6 +19,15 @@ pub fn footprint_corners(pose: Pose, fp: Footprint) -> [Vec2; 4] {
     ]
 }
 
+/// Does a world point lie inside the ship's footprint? (Mouse picking.)
+pub fn point_in_footprint(pose: Pose, fp: Footprint, p: Vec2) -> bool {
+    let d = p - pose.anchor;
+    let (s, c) = pose.heading.sin_cos();
+    let local_x = c * d.x + s * d.y;
+    let local_y = -s * d.x + c * d.y;
+    (-fp.length..=0.0).contains(&local_x) && local_y.abs() <= fp.width / 2.0
+}
+
 fn project(corners: &[Vec2; 4], axis: Vec2) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
@@ -137,6 +146,15 @@ mod tests {
             assert!(p.x >= 4.0 - 1e-9 && p.x <= 5.0 + 1e-9);
             assert!(p.y >= 4.5 - 1e-9 && p.y <= 5.5 + 1e-9);
         }
+    }
+
+    #[test]
+    fn point_picking_respects_rotation() {
+        // Ship at (5,5) facing +Y: hull spans y in [4,5], x in [4.5,5.5].
+        let pose = Pose::new(5.0, 5.0, FRAC_PI_2);
+        assert!(point_in_footprint(pose, FP_SMALL, crate::geometry::Vec2::new(5.0, 4.5)));
+        assert!(!point_in_footprint(pose, FP_SMALL, crate::geometry::Vec2::new(5.0, 5.5)));
+        assert!(!point_in_footprint(pose, FP_SMALL, crate::geometry::Vec2::new(4.2, 4.5)));
     }
 
     #[test]
