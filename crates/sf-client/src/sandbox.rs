@@ -123,28 +123,25 @@ fn placement_input(
         wheel.clear();
         return;
     }
-    if buttons.just_pressed(MouseButton::Left) {
-        if let Some(cur) = cursor.0 {
-            for (entity, ship) in &ships {
-                let fp = game.ships.classes[ship.class_idx].footprint;
-                if rules::point_in_footprint(ship.pose, fp, cur) {
-                    let off = ship.pose.anchor - cur;
-                    sel.drag = Some((entity, off));
-                    sel.ship = Some(entity);
-                    break;
-                }
+    if buttons.just_pressed(MouseButton::Left) && let Some(cur) = cursor.0 {
+        for (entity, ship) in &ships {
+            let fp = game.ships.classes[ship.class_idx].footprint;
+            if rules::point_in_footprint(ship.pose, fp, cur) {
+                let off = ship.pose.anchor - cur;
+                sel.drag = Some((entity, off));
+                sel.ship = Some(entity);
+                break;
             }
         }
     }
     if buttons.just_released(MouseButton::Left) {
         sel.drag = None;
     }
-    if let Some((entity, off)) = sel.drag {
-        if let Ok((_, mut ship)) = ships.get_mut(entity) {
-            if let Some(cur) = cursor.0 {
-                ship.pose.anchor = cur + off;
-            }
-        }
+    if let Some((entity, off)) = sel.drag
+        && let Ok((_, mut ship)) = ships.get_mut(entity)
+        && let Some(cur) = cursor.0
+    {
+        ship.pose.anchor = cur + off;
     }
     // Rotation: scroll wheel or Q/E, on the dragged ship else the hovered one.
     let scroll: f32 = wheel.read().map(|e| e.y).sum();
@@ -169,10 +166,10 @@ fn placement_input(
                 rules::point_in_footprint(s.pose, fp, cur).then_some(e)
             })
         });
-        if let Some(entity) = target {
-            if let Ok((_, mut ship)) = ships.get_mut(entity) {
-                ship.pose.heading += steps as f64 * std::f64::consts::PI / 12.0;
-            }
+        if let Some(entity) = target
+            && let Ok((_, mut ship)) = ships.get_mut(entity)
+        {
+            ship.pose.heading += steps * std::f64::consts::PI / 12.0;
         }
     }
 }
@@ -212,10 +209,10 @@ fn flight_input(
     if keys.just_pressed(KeyCode::ArrowLeft) {
         sel.dial_idx = (sel.dial_idx + dial.len() - 1) % dial.len();
     }
-    if keys.just_pressed(KeyCode::Enter) {
-        if let Ok(end) = maneuver::apply(ship.pose, dial[sel.dial_idx]) {
-            ship.pose = end;
-        }
+    if keys.just_pressed(KeyCode::Enter)
+        && let Ok(end) = maneuver::apply(ship.pose, dial[sel.dial_idx])
+    {
+        ship.pose = end;
     }
 }
 

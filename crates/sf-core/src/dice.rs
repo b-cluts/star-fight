@@ -24,7 +24,7 @@ impl AttackFace {
     /// Face shown for a d8 value (0..=7 — larger values wrap).
     pub fn from_d8(v: u8) -> Self {
         match v % 8 {
-            0 | 1 | 2 => AttackFace::Hit,
+            0..=2 => AttackFace::Hit,
             3 => AttackFace::Crit,
             4 | 5 => AttackFace::Focus,
             _ => AttackFace::Blank,
@@ -42,7 +42,7 @@ pub enum DefenseFace {
 impl DefenseFace {
     pub fn from_d8(v: u8) -> Self {
         match v % 8 {
-            0 | 1 | 2 => DefenseFace::Evade,
+            0..=2 => DefenseFace::Evade,
             3 | 4 => DefenseFace::Focus,
             _ => DefenseFace::Blank,
         }

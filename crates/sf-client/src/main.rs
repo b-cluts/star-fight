@@ -1,5 +1,10 @@
 //! Star Fight client: main menu → offline sandbox or connected play.
 
+// Idiomatic Bevy trips these two lints constantly: ECS systems take many
+// parameters and query types are structurally complex. Everything else is
+// held to zero clippy warnings (warnings are treated as errors).
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
+
 mod menu;
 mod net;
 mod online;

@@ -321,25 +321,22 @@ fn placement_input(
         .map(|s| s.ships.iter().filter(|v| v.owner.0 == seat as u32).cloned().collect())
         .unwrap_or_default();
 
-    if buttons.just_pressed(MouseButton::Left) {
-        if let Some(cur) = cursor.0 {
-            for view in &own_views {
-                let Some(pose) = online.effective_pose(view) else { continue };
-                let fp = game.ships.classes[game.class_index(view.class)].footprint;
-                if rules::point_in_footprint(pose, fp, cur) {
-                    online.drag = Some((view.id.0, pose.anchor - cur));
-                    online.sel = Some(view.id.0);
-                    break;
-                }
+    if buttons.just_pressed(MouseButton::Left) && let Some(cur) = cursor.0 {
+        for view in &own_views {
+            let Some(pose) = online.effective_pose(view) else { continue };
+            let fp = game.ships.classes[game.class_index(view.class)].footprint;
+            if rules::point_in_footprint(pose, fp, cur) {
+                online.drag = Some((view.id.0, pose.anchor - cur));
+                online.sel = Some(view.id.0);
+                break;
             }
         }
     }
-    if buttons.just_released(MouseButton::Left) {
-        if let Some((id, _)) = online.drag.take() {
-            if let Some(pose) = online.overrides.get(&id).copied() {
-                online.send(ClientMsg::PlaceShip { ship_id: ShipId(id), pose });
-            }
-        }
+    if buttons.just_released(MouseButton::Left)
+        && let Some((id, _)) = online.drag.take()
+        && let Some(pose) = online.overrides.get(&id).copied()
+    {
+        online.send(ClientMsg::PlaceShip { ship_id: ShipId(id), pose });
     }
     if let (Some((id, off)), Some(cur)) = (online.drag, cursor.0) {
         let view = own_views.iter().find(|v| v.id.0 == id);

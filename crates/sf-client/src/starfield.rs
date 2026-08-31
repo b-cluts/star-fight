@@ -92,7 +92,7 @@ pub fn starfield_image(w: u32, h: u32, seed: u64) -> Image {
         let x = (xorshift(&mut rng) % w as u64) as i64;
         let y = (xorshift(&mut rng) % h as u64) as i64;
         let v = 70 + (xorshift(&mut rng) % 186) as u8;
-        let bluish = xorshift(&mut rng) % 3 == 0;
+        let bluish = xorshift(&mut rng).is_multiple_of(3);
         put(&mut data, x, y, v, bluish);
         if v > 225 {
             let d = (v / 3).max(60);
