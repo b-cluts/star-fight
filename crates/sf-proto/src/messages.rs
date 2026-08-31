@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use sf_core::board::Board;
 use sf_core::game::{MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::ship::ShipId;
@@ -45,6 +46,7 @@ pub enum ServerMsg {
     GameStart {
         seat: u8,
         opponent: String,
+        board: Board,
     },
     /// Your current view of the game (already filtered for you).
     Snapshot {

@@ -103,7 +103,7 @@ async fn two_clients_play_a_full_turn() {
     send(&mut b, &ClientMsg::JoinGame { code }).await;
 
     let seat_a = recv_until(&mut a, |m| match m {
-        ServerMsg::GameStart { seat, opponent } => {
+        ServerMsg::GameStart { seat, opponent, .. } => {
             assert_eq!(opponent, "bob");
             Some(seat)
         }

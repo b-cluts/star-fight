@@ -3500,8 +3500,11 @@ name = "sf-client"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "futures-util",
  "sf-core",
  "sf-proto",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

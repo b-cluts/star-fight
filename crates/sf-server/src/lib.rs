@@ -290,7 +290,7 @@ async fn session(
                     .expect("valid content");
                     for s in 0..2u8 {
                         let opponent = players[1 - s as usize].0.clone();
-                        send_to!(s, ServerMsg::GameStart { seat: s, opponent });
+                        send_to!(s, ServerMsg::GameStart { seat: s, opponent, board: gs.board });
                     }
                     snapshots!(&gs);
                     game = Some(gs);
