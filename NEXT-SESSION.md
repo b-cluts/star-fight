@@ -35,10 +35,12 @@ thread + channels), starfield.rs.
    constant-time password check, menu gains password + fingerprint fields.
    Server password field already exists in Hello (currently ignored).
 
-## Housekeeping backlog
+## Housekeeping / workflow
 
-- 15 clippy style warnings (collapsible-if, too-many-args, range patterns —
-  list via `cargo clippy --workspace`). Harmless; batch-fix sometime.
+- POLICY: clippy warnings are treated as errors — verify with
+  `cargo clippy --workspace -- -D warnings` (currently clean). sf-client
+  has a documented crate-level allow for type_complexity and
+  too_many_arguments only (idiomatic Bevy can't satisfy those two).
 - Workflow: user wants noisy verification (build/clippy/test) delegated to a
   Haiku subagent that reports summaries; main model does edits. This caught
   a real bug already (tokio feature-unification masking a missing "macros"
