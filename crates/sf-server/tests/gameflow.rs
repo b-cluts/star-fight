@@ -175,12 +175,12 @@ async fn two_clients_play_a_full_turn() {
 
     // Both clients get the identical resolved turn.
     let moves_a = recv_until(&mut a, |m| match m {
-        ServerMsg::TurnResult { moves } => Some(moves),
+        ServerMsg::TurnResult { moves, .. } => Some(moves),
         _ => None,
     })
     .await;
     let moves_b = recv_until(&mut b, |m| match m {
-        ServerMsg::TurnResult { moves } => Some(moves),
+        ServerMsg::TurnResult { moves, .. } => Some(moves),
         _ => None,
     })
     .await;

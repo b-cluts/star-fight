@@ -309,6 +309,23 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
+                    ClientMsg::PlanAction { ship_id, action } => {
+                        match gs.plan_action(&content, player, ship_id, action) {
+                            // Plans are secret: only the planner's view changes.
+                            Ok(()) => send_to!(
+                                seat,
+                                ServerMsg::Snapshot {
+                                    phase: gs.phase,
+                                    turn: gs.turn,
+                                    ships: gs.snapshot_for(player),
+                                    committed: gs.committed,
+                                    initiative: gs.initiative.0 as u8,
+                                    squad_totals: gs.squad_totals,
+                                }
+                            ),
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
                     ClientMsg::PlanManeuver { ship_id, maneuver_index } => {
                         match gs.plan_maneuver(&content, player, ship_id, maneuver_index) {
                             // Plans are secret: only the planner's view changes.
@@ -326,11 +343,21 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
-                    ClientMsg::CommitPlans => match gs.commit_plans(&content, player) {
+                    ClientMsg::CommitPlans => match gs.commit_plans(
+                        &content,
+                        player,
+                        &mut || rand::random::<u8>(),
+                    ) {
                         Ok(None) => snapshots!(&*gs),
-                        Ok(Some(moves)) => {
+                        Ok(Some(rec)) => {
                             for s in 0..players.len() as u8 {
-                                send_to!(s, ServerMsg::TurnResult { moves: moves.clone() });
+                                send_to!(
+                                    s,
+                                    ServerMsg::TurnResult {
+                                        moves: rec.moves.clone(),
+                                        attacks: rec.attacks.clone(),
+                                    }
+                                );
                             }
                             snapshots!(&*gs);
                             if gs.phase == Phase::GameOver {

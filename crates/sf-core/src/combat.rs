@@ -32,6 +32,45 @@ pub fn in_front_arc(pose: Pose, fp: Footprint, target: Vec2) -> bool {
     rel.abs() <= FRAC_PI_4 + 1e-12
 }
 
+fn point_seg_distance(p: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    let t = if len2 == 0.0 { 0.0 } else { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) };
+    let c = Vec2::new(a.x + ab.x * t, a.y + ab.y * t);
+    let d = p - c;
+    (d.x * d.x + d.y * d.y).sqrt()
+}
+
+/// Closest distance between two base rectangles (0 if they overlap).
+/// This is the "any point to any point" measurement of the range ruler.
+pub fn base_distance(a: &[Vec2; 4], b: &[Vec2; 4]) -> f64 {
+    if crate::rules::obbs_overlap(a, b) {
+        return 0.0;
+    }
+    // Non-overlapping convex quads: the minimum is between a vertex of one
+    // and an edge of the other.
+    let mut min = f64::INFINITY;
+    for i in 0..4 {
+        for j in 0..4 {
+            let (a1, a2) = (a[i], a[(i + 1) % 4]);
+            let (b1, b2) = (b[j], b[(j + 1) % 4]);
+            min = min
+                .min(point_seg_distance(a[i], b1, b2))
+                .min(point_seg_distance(b[j], a1, a2))
+                .min(point_seg_distance(a2, b1, b2))
+                .min(point_seg_distance(b2, a1, a2));
+        }
+    }
+    min
+}
+
+/// Range band (1..=3) between two bases, or None beyond range 3.
+/// Touching bases are range 1.
+pub fn range_band_between(a: &[Vec2; 4], b: &[Vec2; 4]) -> Option<u8> {
+    let d = base_distance(a, b);
+    (1..=MAX_RANGE_BAND).find(|&band| d <= band as f64 * RANGE_BAND_UNITS)
+}
+
 /// Attack dice thrown at a given range band: +1 at point-blank Range 1.
 pub fn attack_dice(base_dice: u8, band: u8) -> u8 {
     if band == 1 { base_dice + 1 } else { base_dice }
@@ -70,6 +109,24 @@ mod tests {
         let pose = Pose::new(5.0, 5.0, FRAC_PI_2); // facing +Y
         assert!(in_front_arc(pose, FP, Vec2::new(5.0, 9.0)));
         assert!(!in_front_arc(pose, FP, Vec2::new(9.0, 5.0)));
+    }
+
+    #[test]
+    fn range_bands_between_bases() {
+        use crate::rules::footprint_corners;
+        let a = footprint_corners(Pose::new(5.0, 5.0, 0.0), FP);
+        // Hulls: a spans x 4..5 at y 4.5..5.5.
+        let touching = footprint_corners(Pose::new(6.0, 5.0, 0.0), FP); // x 5..6
+        let r1 = footprint_corners(Pose::new(8.0, 5.0, 0.0), FP); // gap 2.0
+        let r2 = footprint_corners(Pose::new(9.0, 5.0, 0.0), FP); // gap 3.0
+        let r3 = footprint_corners(Pose::new(12.0, 5.0, 0.0), FP); // gap 6.0
+        let out = footprint_corners(Pose::new(14.0, 5.0, 0.0), FP); // gap 8.0
+        assert_eq!(range_band_between(&a, &touching), Some(1));
+        assert_eq!(range_band_between(&a, &r1), Some(1));
+        assert_eq!(range_band_between(&a, &r2), Some(2));
+        assert_eq!(range_band_between(&a, &r3), Some(3));
+        assert_eq!(range_band_between(&a, &out), None);
+        assert_eq!(range_band_between(&a, &a), Some(1)); // overlap = 0
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Pure game logic — no I/O, no async, no rendering.
 //! Compiled into both client and server so rules can never drift.
 
+pub mod action;
 pub mod board;
 pub mod combat;
 pub mod data;

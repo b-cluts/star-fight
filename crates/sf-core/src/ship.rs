@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::action::{ActionKind, PlannedAction};
 use crate::geometry::{Footprint, Pose};
 use crate::maneuver::ManeuverSetId;
 
@@ -11,6 +12,14 @@ pub struct ShipId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u32);
+
+/// Faction, cosmetic for now (laser bolt colors: Rebel Alliance red,
+/// Empire green) — squad building will restrict by faction later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Faction {
+    RebelAlliance,
+    Empire,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SizeClass {
@@ -41,6 +50,7 @@ impl SizeClass {
 pub struct ShipClass {
     pub id: ShipClassId,
     pub name: String,
+    pub faction: Faction,
     pub size: SizeClass,
     pub footprint: Footprint,
     pub maneuver_set: ManeuverSetId,
@@ -60,6 +70,8 @@ pub struct ShipClass {
     /// Squad-point cost (pilots and modifiers will add their own costs).
     /// Lower squad total gets initiative choice at setup.
     pub squad_points: u16,
+    /// Actions this ship may perform (one per turn, after moving).
+    pub action_bar: Vec<ActionKind>,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.
@@ -86,5 +98,14 @@ pub struct ShipState {
     /// Secretly planned maneuver (index into the ship's dial) — never
     /// revealed to the opponent before resolution.
     pub plan: Option<u8>,
+    /// Secretly planned action, executed right after the maneuver
+    /// (defaults to Pass at commit if unset).
+    pub planned_action: Option<PlannedAction>,
+    /// Focus tokens (public). Cleared in the End phase.
+    pub focus: u8,
+    /// Evade tokens (public). Cleared in the End phase.
+    pub evade: u8,
+    /// Acquired target lock (public). Persists until re-locked or spent.
+    pub lock: Option<ShipId>,
     pub destroyed: bool,
 }

@@ -6,8 +6,9 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
 
+use sf_core::action::{ActionKind, ActionResult, PlannedAction, Side};
 use sf_core::board::Seat;
-use sf_core::game::{MoveRecord, Phase, ShipView};
+use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
 use sf_core::rules;
@@ -22,6 +23,11 @@ use crate::Screen;
 /// (samples are 0.1 units apart → 4 units/second).
 const ANIM_SAMPLES_PER_SEC: f32 = 40.0;
 
+/// Seconds per attack in the combat animation.
+const ATTACK_DUR: f32 = 1.1;
+/// Fraction of an attack spent in bolt flight (the rest: impact / fade).
+const FLY_FRAC: f32 = 0.55;
+
 pub struct Snap {
     pub phase: Phase,
     pub turn: u32,
@@ -31,10 +37,31 @@ pub struct Snap {
     pub totals: [u32; 2],
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum Stage {
+    Moves,
+    Attacks,
+}
+
 pub struct Anim {
     pub moves: Vec<MoveRecord>,
     pub idx: usize,
     pub t: f32,
+    pub attacks: Vec<AttackRecord>,
+    pub aidx: usize,
+    pub at: f32,
+    pub stage: Stage,
+}
+
+impl Anim {
+    /// A ship's pose once its move this turn has resolved.
+    fn end_pose(&self, ship: u32, snap: &Snap) -> Option<Pose> {
+        self.moves
+            .iter()
+            .find(|m| m.ship.0 == ship)
+            .map(|m| m.end)
+            .or_else(|| snap.ships.iter().find(|v| v.id.0 == ship).and_then(|v| v.pose))
+    }
 }
 
 #[derive(Resource, Default)]
@@ -55,6 +82,10 @@ pub struct Online {
     pub drag: Option<(u32, GVec2)>,
     /// Local provisional poses while arranging placement.
     pub overrides: HashMap<u32, Pose>,
+    /// Waiting for the player to click an enemy to target-lock.
+    pub lock_pick: bool,
+    /// Human-readable summary of last turn's combat, shown in the HUD.
+    pub combat_log: Vec<String>,
 }
 
 impl Online {
@@ -154,9 +185,56 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                 ServerMsg::Rejected { reason } => {
                     online.status = format!("Rejected: {reason}");
                 }
-                ServerMsg::TurnResult { moves } => {
+                ServerMsg::TurnResult { moves, attacks } => {
                     online.status.clear();
-                    online.anim = Some(Anim { moves, idx: 0, t: 0.0 });
+                    let log: Vec<String> = attacks
+                        .iter()
+                        .map(|a| {
+                            let name = |id: u32| {
+                                online
+                                    .snap
+                                    .as_ref()
+                                    .and_then(|s| s.ships.iter().find(|v| v.id.0 == id))
+                                    .map(|v| {
+                                        game.ships.classes[game.class_index(v.class)]
+                                            .name
+                                            .clone()
+                                    })
+                                    .unwrap_or_else(|| "ship".into())
+                            };
+                            let landed = a.hits + a.crits;
+                            let mut line = format!(
+                                "{} #{} → {} #{} @R{}: ",
+                                name(a.attacker.0),
+                                a.attacker.0,
+                                name(a.defender.0),
+                                a.defender.0,
+                                a.range
+                            );
+                            if landed == 0 {
+                                line.push_str("miss");
+                            } else {
+                                line.push_str(&format!(
+                                    "{} dmg (-{} shields, -{} hull)",
+                                    landed, a.shields_lost, a.hull_lost
+                                ));
+                            }
+                            if a.defender_destroyed {
+                                line.push_str(" — DESTROYED");
+                            }
+                            line
+                        })
+                        .collect();
+                    online.combat_log = log;
+                    online.anim = Some(Anim {
+                        moves,
+                        idx: 0,
+                        t: 0.0,
+                        attacks,
+                        aidx: 0,
+                        at: 0.0,
+                        stage: Stage::Moves,
+                    });
                 }
                 ServerMsg::GameOver { winner, reason } => {
                     let text = match (winner, online.seat) {
@@ -213,11 +291,11 @@ fn sync_ships(
     mut ships_q: Query<(Entity, &OnlineShip, &mut Sprite, &mut Transform, &mut Visibility)>,
 ) {
     let Some(snap) = &online.snap else { return };
-    let animating: Option<u32> = online
-        .anim
-        .as_ref()
-        .and_then(|a| a.moves.get(a.idx))
-        .map(|m| m.ship.0);
+    // While a turn animation plays, animate() owns every ship transform:
+    // already-moved ships hold their end poses, unmoved ships their
+    // pre-turn poses. Snapping back to snapshot poses here would rubber-
+    // band ships mid-animation.
+    let animating = online.anim.is_some();
     let mut existing: HashMap<u32, Entity> = HashMap::new();
     for (e, ship, ..) in &ships_q {
         existing.insert(ship.0, e);
@@ -228,8 +306,8 @@ fn sync_ships(
         match existing.get(&view.id.0) {
             Some(&e) => {
                 let Ok((_, _, mut sprite, mut tf, mut vis)) = ships_q.get_mut(e) else { continue };
-                if Some(view.id.0) == animating {
-                    continue; // animate() owns this transform right now
+                if animating {
+                    continue;
                 }
                 let pose = online.effective_pose(view);
                 if view.destroyed && online.anim.is_none() || pose.is_none() {
@@ -274,42 +352,74 @@ fn animate(
     let Online { anim, snap, pending_snap, .. } = &mut *online;
     let Some(a) = anim else { return };
     let Some(snapshot) = snap else { return };
-    loop {
-        let Some(mv) = a.moves.get(a.idx) else {
-            // Animation finished: adopt the post-turn snapshot.
-            *anim = None;
-            if let Some(s) = pending_snap.take() {
-                *snap = Some(s);
-            }
-            return;
-        };
-        a.t += time.delta_secs() * ANIM_SAMPLES_PER_SEC;
-        let k = a.t as usize;
-        let Some(view) = snapshot.ships.iter().find(|s| s.id.0 == mv.ship.0) else {
-            a.idx += 1;
-            a.t = 0.0;
-            continue;
-        };
-        let class = &game.ships.classes[game.class_index(view.class)];
-        let pose = if k < mv.path.len() { mv.path[k] } else { mv.end };
-        for (ship, mut sprite, mut tf, mut vis) in &mut ships_q {
-            if ship.0 == mv.ship.0 {
-                let (size, t) = render::ship_visual(class, pose, &game, 1.5);
-                sprite.custom_size = Some(size);
-                *tf = t;
-                *vis = if k >= mv.path.len() && mv.destroyed {
-                    Visibility::Hidden
+    let mut finish = false;
+    match a.stage {
+        Stage::Moves => loop {
+            let Some(mv) = a.moves.get(a.idx) else {
+                if a.attacks.is_empty() {
+                    finish = true;
                 } else {
-                    Visibility::Visible
-                };
+                    a.stage = Stage::Attacks;
+                    a.aidx = 0;
+                    a.at = 0.0;
+                }
+                break;
+            };
+            a.t += time.delta_secs() * ANIM_SAMPLES_PER_SEC;
+            let k = a.t as usize;
+            let Some(view) = snapshot.ships.iter().find(|s| s.id.0 == mv.ship.0) else {
+                a.idx += 1;
+                a.t = 0.0;
+                continue;
+            };
+            let class = &game.ships.classes[game.class_index(view.class)];
+            let pose = if k < mv.path.len() { mv.path[k] } else { mv.end };
+            for (ship, mut sprite, mut tf, mut vis) in &mut ships_q {
+                if ship.0 == mv.ship.0 {
+                    let (size, t) = render::ship_visual(class, pose, &game, 1.5);
+                    sprite.custom_size = Some(size);
+                    *tf = t;
+                    // Only off-board destruction hides here; combat kills
+                    // are revealed at the impact moment in the next stage.
+                    *vis = if k >= mv.path.len() && mv.destroyed {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Visible
+                    };
+                }
+            }
+            if k >= mv.path.len() {
+                a.idx += 1;
+                a.t = 0.0;
+                continue;
+            }
+            break;
+        },
+        Stage::Attacks => {
+            a.at += time.delta_secs();
+            if a.at >= ATTACK_DUR {
+                if let Some(rec) = a.attacks.get(a.aidx) {
+                    if rec.defender_destroyed {
+                        for (ship, _, _, mut vis) in &mut ships_q {
+                            if ship.0 == rec.defender.0 {
+                                *vis = Visibility::Hidden;
+                            }
+                        }
+                    }
+                }
+                a.aidx += 1;
+                a.at = 0.0;
+                if a.aidx >= a.attacks.len() {
+                    finish = true;
+                }
             }
         }
-        if k >= mv.path.len() {
-            a.idx += 1;
-            a.t = 0.0;
-            continue;
+    }
+    if finish {
+        *anim = None;
+        if let Some(s) = pending_snap.take() {
+            *snap = Some(s);
         }
-        return;
     }
 }
 
@@ -402,6 +512,8 @@ fn planning_input(
     mut online: ResMut<Online>,
     game: Res<Game>,
     keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    cursor: Res<CursorUnits>,
 ) {
     if online.phase() != Some(Phase::Planning) || online.anim.is_some() || online.over.is_some() {
         return;
@@ -451,11 +563,167 @@ fn planning_input(
             maneuver_index: online.dial_idx as u8,
         });
     }
+
+    // Action planning: 1 Pass, 2 Focus, 3 Evade, 4/5 barrel roll L/R,
+    // 6 target lock (then click an enemy ship).
+    let bar = {
+        let Some(snap) = &online.snap else { return };
+        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else { return };
+        game.ships.classes[game.class_index(view.class)].action_bar.clone()
+    };
+    let plan_action = |online: &mut Online, action: PlannedAction| {
+        online.lock_pick = false;
+        online.send(ClientMsg::PlanAction { ship_id: ShipId(selected), action });
+    };
+    if keys.just_pressed(KeyCode::Digit1) {
+        plan_action(&mut online, PlannedAction::Pass);
+    }
+    if keys.just_pressed(KeyCode::Digit2) && bar.contains(&ActionKind::Focus) {
+        plan_action(&mut online, PlannedAction::Focus);
+    }
+    if keys.just_pressed(KeyCode::Digit3) && bar.contains(&ActionKind::Evade) {
+        plan_action(&mut online, PlannedAction::Evade);
+    }
+    if keys.just_pressed(KeyCode::Digit4) && bar.contains(&ActionKind::BarrelRoll) {
+        plan_action(&mut online, PlannedAction::BarrelRoll(Side::Left));
+    }
+    if keys.just_pressed(KeyCode::Digit5) && bar.contains(&ActionKind::BarrelRoll) {
+        plan_action(&mut online, PlannedAction::BarrelRoll(Side::Right));
+    }
+    if keys.just_pressed(KeyCode::Digit6) && bar.contains(&ActionKind::TargetLock) {
+        online.lock_pick = true;
+        online.status = "Target lock: click an enemy ship".into();
+    }
+    if online.lock_pick && buttons.just_pressed(MouseButton::Left) {
+        if let Some(cur) = cursor.0 {
+            let target = online.snap.as_ref().and_then(|snap| {
+                snap.ships
+                    .iter()
+                    .filter(|v| v.owner.0 != seat as u32 && !v.destroyed)
+                    .find(|v| {
+                        v.pose.is_some_and(|p| {
+                            let fp =
+                                game.ships.classes[game.class_index(v.class)].footprint;
+                            rules::point_in_footprint(p, fp, cur)
+                        })
+                    })
+                    .map(|v| v.id.0)
+            });
+            if let Some(t) = target {
+                online.status.clear();
+                plan_action(&mut online, PlannedAction::TargetLock(ShipId(t)));
+            }
+        }
+    }
+
     if keys.just_pressed(KeyCode::KeyC) {
         online.send(ClientMsg::CommitPlans);
     }
     if keys.just_pressed(KeyCode::KeyX) {
         online.send(ClientMsg::Resign);
+    }
+}
+
+/// Laser bolts, impact flash, and fly-by fade for the current attack.
+fn draw_attack_fx(
+    gizmos: &mut Gizmos,
+    game: &Game,
+    snap: &Snap,
+    anim: &Anim,
+    rec: &sf_core::game::AttackRecord,
+) {
+    use sf_core::ship::Faction;
+    let Some(atk_pose) = anim.end_pose(rec.attacker.0, snap) else { return };
+    let Some(def_pose) = anim.end_pose(rec.defender.0, snap) else { return };
+    let (atk_view, def_view) = (
+        snap.ships.iter().find(|v| v.id.0 == rec.attacker.0),
+        snap.ships.iter().find(|v| v.id.0 == rec.defender.0),
+    );
+    let (Some(atk_view), Some(def_view)) = (atk_view, def_view) else { return };
+    let atk_class = &game.ships.classes[game.class_index(atk_view.class)];
+    let def_class = &game.ships.classes[game.class_index(def_view.class)];
+
+    let bolt_color = match atk_class.faction {
+        Faction::RebelAlliance => Color::srgb(1.0, 0.25, 0.15),
+        Faction::Empire => Color::srgb(0.25, 1.0, 0.3),
+    };
+    let start = game.to_world(atk_pose.anchor);
+    let target =
+        game.to_world(sf_core::combat::base_center(def_pose, def_class.footprint));
+    let hit = rec.hits + rec.crits > 0;
+    let to_target = target - start;
+    let dist = to_target.length().max(1.0);
+    let dir = to_target / dist;
+    let perp = Vec2::new(-dir.y, dir.x);
+    // Misses aim visibly wide of the base (alternating side per attack).
+    let side = if anim.aidx % 2 == 0 { 1.0 } else { -1.0 };
+    let aim = if hit { target } else { target + perp * 0.7 * render::PX * side };
+
+    let p = (anim.at / ATTACK_DUR).clamp(0.0, 1.0);
+    let nbolts = rec.attack_faces.len().min(4);
+    if hit {
+        // Bolt flight until impact.
+        if p < FLY_FRAC {
+            let head = start + (aim - start) * (p / FLY_FRAC);
+            draw_volley(gizmos, start, head, dir, nbolts, bolt_color, 1.0);
+        } else {
+            // Impact flash: blue-white when shields soaked it, orange for
+            // hull damage, and a wide burst on a kill.
+            let q = ((p - FLY_FRAC) / (1.0 - FLY_FRAC)).clamp(0.0, 1.0);
+            let alpha = 1.0 - q;
+            let flash = if rec.hull_lost > 0 {
+                Color::srgba(1.0, 0.6, 0.2, alpha)
+            } else {
+                Color::srgba(0.5, 0.75, 1.0, alpha)
+            };
+            gizmos.circle_2d(target, 6.0 + q * 26.0, flash);
+            gizmos.circle_2d(target, 3.0 + q * 14.0, Color::srgba(1.0, 1.0, 0.9, alpha));
+            if rec.defender_destroyed {
+                gizmos.circle_2d(target, 10.0 + q * 55.0, Color::srgba(1.0, 0.45, 0.1, alpha));
+            }
+        }
+    } else {
+        // Fly past the target and fade out on the way.
+        let beyond = aim + dir * 3.0 * render::PX;
+        let head = start + (beyond - start) * p;
+        let fade = if p > 0.55 { 1.0 - (p - 0.55) / 0.45 } else { 1.0 };
+        draw_volley(gizmos, start, head, dir, nbolts, bolt_color, fade);
+    }
+}
+
+fn draw_volley(
+    gizmos: &mut Gizmos,
+    start: Vec2,
+    head: Vec2,
+    dir: Vec2,
+    nbolts: usize,
+    color: Color,
+    alpha: f32,
+) {
+    let c = color.with_alpha(alpha.clamp(0.0, 1.0));
+    for b in 0..nbolts {
+        let h = head - dir * (b as f32 * 24.0);
+        // Only draw bolts that have left the muzzle.
+        if (h - start).dot(dir) <= 0.0 {
+            continue;
+        }
+        let tail = h - dir * 14.0;
+        let tail = if (tail - start).dot(dir) < 0.0 { start } else { tail };
+        gizmos.line_2d(tail, h, c);
+        // Slight parallel line for perceived thickness.
+        let off = Vec2::new(-dir.y, dir.x) * 1.2;
+        gizmos.line_2d(tail + off, h + off, c);
+    }
+}
+
+fn action_name(a: PlannedAction) -> String {
+    match a {
+        PlannedAction::Pass => "Pass".into(),
+        PlannedAction::Focus => "Focus".into(),
+        PlannedAction::Evade => "Evade".into(),
+        PlannedAction::BarrelRoll(Side::Left) => "Barrel Roll L".into(),
+        PlannedAction::BarrelRoll(Side::Right) => "Barrel Roll R".into(),
+        PlannedAction::TargetLock(id) => format!("Lock #{}", id.0),
     }
 }
 
@@ -514,15 +782,24 @@ fn draw(
         }
     }
 
-    // Animation path overlay.
+    // Animation overlays: the current move's path, then laser bolts.
     if let Some(a) = &online.anim {
-        if let Some(mv) = a.moves.get(a.idx) {
-            render::draw_path(
-                &mut gizmos,
-                &game,
-                &mv.path,
-                render::difficulty_color(mv.maneuver.difficulty),
-            );
+        match a.stage {
+            Stage::Moves => {
+                if let Some(mv) = a.moves.get(a.idx) {
+                    render::draw_path(
+                        &mut gizmos,
+                        &game,
+                        &mv.path,
+                        render::difficulty_color(mv.maneuver.difficulty),
+                    );
+                }
+            }
+            Stage::Attacks => {
+                if let Some(rec) = a.attacks.get(a.aidx) {
+                    draw_attack_fx(&mut gizmos, &game, snap, a, rec);
+                }
+            }
         }
         return;
     }
@@ -586,9 +863,16 @@ fn hud(
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];
         let mut line = format!(
-            "{} — hull {}/{} shields {}/{} stress {}",
-            class.name, view.hull, class.hull, view.shields, class.shields, view.stress
+            "{} — hull {}/{} shields {}/{} stress {} focus {} evade {}",
+            class.name, view.hull, class.hull, view.shields, class.shields, view.stress,
+            view.focus, view.evade
         );
+        if let Some(l) = view.lock {
+            line.push_str(&format!(" lock #{}", l.0));
+        }
+        if let Some(a) = view.planned_action {
+            line.push_str(&format!(" | action: {}", action_name(a)));
+        }
         if snap.phase == Phase::Planning {
             let dial = game.dial(class);
             if !dial.is_empty() {
@@ -609,10 +893,47 @@ fn hud(
     }
     let help = match snap.phase {
         Phase::Placement => "drag ships • Q/E or scroll rotates • A: submit all positions",
-        Phase::Planning => "Tab: ship • ←/→: dial • Enter: plan • C: commit • F: arcs • X: resign",
+        Phase::Planning => {
+            "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock • C: commit • X: resign"
+        }
         Phase::GameOver => "game over",
     };
     lines.push(help.into());
+    if let Some(a) = &online.anim {
+        match a.stage {
+            Stage::Moves => {
+                if let Some(mv) = a.moves.get(a.idx) {
+                    if let Some(view) = snap.ships.iter().find(|v| v.id.0 == mv.ship.0) {
+                        let class = &game.ships.classes[game.class_index(view.class)];
+                        let result = match mv.action_result {
+                            ActionResult::Performed => "".into(),
+                            ActionResult::SkippedStressed => " (skipped: stressed)".to_string(),
+                            ActionResult::SkippedBumped => " (skipped: bumped)".to_string(),
+                            ActionResult::Failed => " (failed)".to_string(),
+                        };
+                        lines.push(format!(
+                            "{} flies {} {} — action: {}{result}",
+                            class.name,
+                            render::steer_name(mv.maneuver.steer),
+                            mv.maneuver.distance,
+                            action_name(mv.action),
+                        ));
+                    }
+                }
+            }
+            Stage::Attacks => {
+                if let Some(line) = online.combat_log.get(a.aidx) {
+                    lines.push(line.clone());
+                }
+            }
+        }
+    }
+    if online.anim.is_none() && !online.combat_log.is_empty() {
+        lines.push("— last combat —".into());
+        for l in online.combat_log.iter().take(4) {
+            lines.push(l.clone());
+        }
+    }
     if !online.status.is_empty() {
         lines.push(online.status.clone());
     }

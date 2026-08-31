@@ -6,6 +6,7 @@
         (
             id: 1,
             name: "TIE Fighter",
+            faction: Empire,
             size: Small,
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
             maneuver_set: 1,
@@ -15,6 +16,7 @@
             hull: 3,
             shields: 0,
             squad_points: 12, // provisional
+            action_bar: [Focus, BarrelRoll, Evade],
 
             sprite: "ships/tie-fighter.png",
             sprite_px: (461, 566),
@@ -26,6 +28,7 @@
         (
             id: 2,
             name: "X-Wing T-70",
+            faction: RebelAlliance,
             size: Small,
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
             maneuver_set: 2,
@@ -35,6 +38,9 @@
             hull: 3,
             shields: 3,
             squad_points: 24, // provisional
+            // Approximation: the T-70 also has Boost, which needs boost
+            // templates — added when Boost is implemented.
+            action_bar: [Focus, TargetLock, BarrelRoll],
 
             sprite: "ships/xwing-t70.png",
             sprite_px: (720, 809),

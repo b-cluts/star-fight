@@ -1,6 +1,23 @@
-# Where we left off (2026-08-31)
+# Where we left off (2026-08-31, session 2)
 
-## State: M3 COMPLETE (pending human playtest) — client is fully connected
+## New this session
+
+- Placement-visibility playtest bug FIXED (ships now seeded/draggable).
+- ACTIONS implemented from core rules p.8-9 (Focus/Evade/BarrelRoll/
+  TargetLock/Pass, action bars, tokens, stress/bump forfeits) — planned
+  secretly with the dial (async adaptation, revisit if interactive
+  activation wanted). Keys 1-6 in planning; 6 then click enemy = lock.
+- COMBAT PHASE implemented from p.10-13: full attack pipeline, auto
+  target/token policy (documented in ARCHITECTURE.md), simultaneous
+  equal-skill rule, initiative wins mutual kill. Server injects RNG.
+- Laser bolt animations: faction-colored (RebelAlliance red, Empire
+  green), impact flashes (blue=shields, orange=hull, burst=kill),
+  misses fly past and fade. Combat log in HUD.
+- Faction field on ShipClass. Fixed mid-animation rubber-banding.
+- The user's core_rules_en.pdf (repo root) is the rules source — read
+  specific pages on demand; pages 8-13 are done. NOT in git (18 MB).
+
+## State: M3 COMPLETE — full networked game loop with combat
 
 `cargo build` clean, `cargo test --workspace` green (46 tests). The client now
 opens on a main menu over a procedural starfield/nebula backdrop:

@@ -388,6 +388,42 @@ places to generalize when 3+ player matches arrive).
   on `JoinGame` and rejects violations — the client check is a courtesy, the server
   check is the guarantee. Same shared-crate principle as maneuver legality.
 
+### Actions (`action.rs`, core rules p.8-9)
+
+Each ship performs **one action right after its maneuver**, from its class
+`action_bar`: **Focus** (token: eyes→hits or evades when spent), **Evade** (token:
++1 evade result), **Barrel Roll** (straight-1 template sideways: lateral shift of
+1 unit + base width, heading unchanged; simplified — no fore/aft slide), **Acquire
+Target Lock** (enemy at range 1-3, measured closest-point 360°; persists until
+re-locked or spent), or **Pass**. A stressed ship cannot act; a ship that bumped
+loses its action; an impossible action (blocked roll, out-of-range lock) fails.
+Focus/evade tokens are removed in the End phase; locks and stress persist.
+
+**Async adaptation:** actions are planned secretly during Planning alongside the
+dial (`PlanAction`) and auto-executed — the tabletop chooses actions live after
+each move. Revisit if interactive activation is ever wanted.
+
+### Combat phase (`game.rs::perform_attack`, core rules p.10-13)
+
+After all movement+actions, each ship attacks once: highest pilot skill first,
+initiative breaking ties; equal-skill ships fire "simultaneously" (everyone alive
+at their skill group's start still shoots, even if destroyed within the group).
+Target must have any part of its base in the attacker's 90° front arc at range
+1-3; touching bases cannot be targeted. Attack dice = `attack_dice` (+1 at range
+1); defense dice = `agility` (+1 at range 3). Evades cancel hits before crits;
+hits resolve before crits; shields absorb first and block crit effects
+(`crits_to_hull` recorded for the future modifier system). Destroying every enemy
+wins; a simultaneous final kill goes to the initiative holder.
+
+**Async adaptation (documented policy, revisit later):** the server auto-picks
+the target (locked ship if eligible, else nearest in arc) and auto-spends tokens
+(lock rerolls misses; focus when eyes matter; evade when damage would land).
+Dice come from the server RNG via `commit_plans`'s injected roll source, so
+resolutions stay deterministic/replayable; every die face lands in `AttackRecord`
+for the client's combat log and laser-bolt animation (Rebel Alliance red, Empire
+green; impact flash on hits — blue for shields, orange for hull — misses fly
+past and fade).
+
 ### Pilots, upgrades & modifiers (design)
 
 - **Pilots are data.** A `Pilot` (future `pilots.ron`) carries the pilot skill and,

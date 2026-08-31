@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use sf_core::action::PlannedAction;
 use sf_core::board::Board;
-use sf_core::game::{MoveRecord, Phase, ShipView};
+use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::ship::ShipId;
 
@@ -25,6 +26,11 @@ pub enum ClientMsg {
         ship_id: ShipId,
         /// Index into the ship's dial.
         maneuver_index: u8,
+    },
+    /// Secretly assign the ship's one post-move action.
+    PlanAction {
+        ship_id: ShipId,
+        action: PlannedAction,
     },
     CommitPlans,
     Resign,
@@ -63,9 +69,10 @@ pub enum ServerMsg {
     Rejected {
         reason: String,
     },
-    /// Both sides committed: the revealed, resolved movement.
+    /// Both sides committed: the revealed, resolved turn.
     TurnResult {
         moves: Vec<MoveRecord>,
+        attacks: Vec<AttackRecord>,
     },
     GameOver {
         /// Winning seat; None on mutual destruction.
