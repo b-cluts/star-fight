@@ -42,6 +42,19 @@ pub fn initiative_seat(totals: [u32; 2], tie_roll: crate::dice::AttackFace) -> u
     }
 }
 
+/// Replacement for a red maneuver revealed while stressed: prefer the
+/// slowest white straight, then any slowest white, then any non-red.
+fn substitute_non_red(dial: &[Maneuver]) -> Option<Maneuver> {
+    let pick = |pred: &dyn Fn(&Maneuver) -> bool| {
+        dial.iter().filter(|m| pred(m)).min_by_key(|m| m.distance).copied()
+    };
+    pick(&|m| {
+        m.difficulty == Difficulty::Normal && m.steer == crate::maneuver::Steer::Straight
+    })
+    .or_else(|| pick(&|m| m.difficulty == Difficulty::Normal))
+    .or_else(|| pick(&|m| m.difficulty != Difficulty::Hard))
+}
+
 /// Movement phase order: LOWEST pilot skill moves first. At equal skill
 /// the initiative player's ships go first; then ship id.
 pub fn movement_order(ships: &[(ShipId, u8, PlayerId)], initiative: PlayerId) -> Vec<ShipId> {
@@ -416,7 +429,20 @@ impl GameState {
                 (class.footprint, class.maneuver_set)
             };
             let dial = &content.dials.set(dial_id).expect("validated").maneuvers;
-            let man = dial[self.ships[i].plan.expect("commit checked plans") as usize];
+            let mut man = dial[self.ships[i].plan.expect("commit checked plans") as usize];
+            // p.17: a ship that is ALREADY stressed when it reveals a red
+            // maneuver doesn't fly it — the opposing player picks any
+            // non-red replacement. Unreachable through normal play until
+            // external stress sources exist (planning red while stressed
+            // is rejected), and automated here as the slowest white
+            // straight, an adversarial stand-in for the opponent's choice.
+            // PROVISIONAL: the user may replace this policy.
+            if self.ships[i].stress > 0
+                && man.difficulty == Difficulty::Hard
+                && let Some(sub) = substitute_non_red(dial)
+            {
+                man = sub;
+            }
             let start = self.ships[i].pose.expect("placed");
             let path = maneuver::sample_path(start, man).expect("validated at plan time");
 
@@ -1371,6 +1397,34 @@ mod tests {
         assert_eq!((xw_shot.hits, xw_shot.crits), (1, 0));
         assert_eq!(xw_shot.hull_lost, 1);
         assert_eq!(gs.ships[0].hull, 2);
+    }
+
+    #[test]
+    fn stressed_red_reveal_substitutes_slowest_white_straight() {
+        let c = content();
+        let mut gs = new_1v1(&c);
+        place_both(&c, &mut gs);
+        let kturn3 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::KTurn && m.distance == 3
+        });
+        // Plan the red K-turn while unstressed (legal), then simulate an
+        // external stress source (future crit/ability) before it resolves.
+        gs.plan_maneuver(&c, P0, ShipId(0), kturn3).unwrap();
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        gs.ships[0].stress = 1;
+        gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
+        gs.commit_plans(&c, P0, &mut || 7).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut || 7).unwrap().unwrap();
+        let mv = &rec.moves[0];
+        // TIE's slowest white straight is speed 4: flown instead, no flip.
+        assert_eq!(mv.maneuver.steer, crate::maneuver::Steer::Straight);
+        assert_eq!(mv.maneuver.distance, 4);
+        assert!((mv.end.anchor.y - 6.0).abs() < 1e-9);
+        assert!((mv.end.heading - FRAC_PI_2).abs() < 1e-9, "no 180 flip");
+        // White maneuver: the stress neither grows nor sheds…
+        assert_eq!(mv.stress, 1);
+        // …and the still-stressed ship forfeits its action.
+        assert_eq!(mv.action_result, ActionResult::SkippedStressed);
     }
 
     #[test]

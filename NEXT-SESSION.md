@@ -75,8 +75,13 @@ thread + channels), starfield.rs.
 
 ## Still needed from the user
 
-- Action economy (when actions happen, token lifetime, stress interaction) —
-  blocks wiring combat into turn resolution (dice/arc/range all built).
-- Critical-effect list, real squad costs, pilot roster, ordnance content.
+- **USER TODO (agreed 2026-08-31): research and supply the critical-hit
+  effect table** — a small list of persistent penalties applied as
+  modifier tags when a crit reaches the hull (crits_to_hull is already
+  recorded per attack; effects currently do nothing). No card UI.
+- User is also reconsidering the stressed-red-reveal rule: currently
+  auto-substituted with the slowest white straight (PROVISIONAL, marked
+  in game.rs) — they may propose a different approach.
+- Real squad costs, pilot roster, ordnance content.
 - 3+ player support is designed-for (initiative order display) but the
   GameState/Seat model is 2-player; generalizing is future work.
