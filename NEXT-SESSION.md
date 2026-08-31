@@ -1,87 +1,91 @@
-# Where we left off (2026-08-31, session 2)
+# Where we left off (2026-08-31, end of session 2)
 
-## New this session
+## State: full networked game loop with combat, actions, and crits
 
-- Placement-visibility playtest bug FIXED (ships now seeded/draggable).
-- ACTIONS implemented from core rules p.8-9 (Focus/Evade/BarrelRoll/
-  TargetLock/Pass, action bars, tokens, stress/bump forfeits) — planned
-  secretly with the dial (async adaptation, revisit if interactive
-  activation wanted). Keys 1-6 in planning; 6 then click enemy = lock.
-- COMBAT PHASE implemented from p.10-13: full attack pipeline, auto
-  target/token policy (documented in ARCHITECTURE.md), simultaneous
-  equal-skill rule, initiative wins mutual kill. Server injects RNG.
-- Laser bolt animations: faction-colored (RebelAlliance red, Empire
-  green), impact flashes (blue=shields, orange=hull, burst=kill),
-  misses fly past and fade. Combat log in HUD.
-- Faction field on ShipClass. Fixed mid-animation rubber-banding.
-- The user's core_rules_en.pdf (repo root) is the rules source — read
-  specific pages on demand; pages 8-13 are done. NOT in git (18 MB).
+`cargo build` clean, `cargo test --workspace` green (74 tests),
+`cargo clippy --workspace -- -D warnings` clean. Rulebook coverage:
+core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
+sits at the repo root, gitignored — read further pages on demand;
+p.18+ covers upgrade cards / squad building, not yet read).
 
-## State: M3 COMPLETE — full networked game loop with combat
-
-`cargo build` clean, `cargo test --workspace` green (46 tests). The client now
-opens on a main menu over a procedural starfield/nebula backdrop:
-
-- **Offline Sandbox** — the previous sandbox, unchanged behavior (Esc → menu).
-- **Create Game / Join Game** — full networked play: name/server/code fields
-  (click to focus, Tab cycles), placement (drag, Q/E/scroll rotate, each
-  release submits; A submits all), secret planning (Tab/←→/Enter, C commits,
-  X resigns), animated turn resolution along server paths, initiative +
-  squad totals + ship status + stress-lock warnings in the HUD.
+What exists end-to-end:
+- Menu (over procedural starfield) → Offline Sandbox or Create/Join game.
+- Networked play: hidden placement (drag, Q/E rotate, A submits all),
+  secret planning of maneuver (dial keys) + action (keys 1-6; 6 then
+  click enemy = target lock), C commits, X resigns.
+- Resolution: movement lowest-skill-first (initiative breaks ties;
+  move-THROUGH allowed, only final overlap bumps and backs up along the
+  template; K-turn/Tallon degrade to unflipped maneuver on overlap;
+  fleeing the board destroys), one action after each move (stress/bump/
+  sensors forfeit), Combat highest-skill-first (arc + closest-point
+  range, bullseye lane denies defender tokens, lock/focus/evade auto-
+  spend policy, simultaneous fire at equal skill, initiative wins mutual
+  kill), End phase (focus/evade cleared, locks persist, timed crits tick).
+- All 14 critical damage effects as modifier tags (crit.rs); events
+  narrated in the combat log; ship status shows tokens + crits.
+- Two-stage turn animation: flown paths, then faction-colored laser
+  bolts (Alliance red, Empire green), shield/hull impact flashes,
+  misses fly past and fade; bullseye lane shaded amber on previews.
 
 To try it: `cargo run -p sf-server` then two `cargo run -p sf-client`
 instances — create in one, join with the code in the other.
 
-## Client structure (crates/sf-client/src/)
+## NEXT TASK (user picks)
 
-main.rs (Screen state: Menu/Sandbox/Online, global setup), render.rs (shared
-Game resource, ship_visual, draw helpers), menu.rs, online.rs (server mirror +
-Snap/Anim, never mutates game state locally), sandbox.rs, net.rs (background
-thread + channels), starfield.rs.
-
-## NEXT TASK (either order)
-
-1. **Human playtest of M3** — user runs server + two clients; fix whatever
-   feels wrong (animation speed constant ANIM_SAMPLES_PER_SEC=40, HUD copy,
-   placement UX).
+1. **Playtest** — crits/combat are new since the last playtest; expect
+   tuning requests (animation pacing ANIM_SAMPLES_PER_SEC/ATTACK_DUR in
+   online.rs, HUD copy, log length).
 2. **M4 — security**: TLS with pinned self-signed cert + server password,
    mirroring ../hex-ship-game (design in ARCHITECTURE.md §4): server
    generates/persists cert, prints SHA-256 fingerprint + join string
    `starfight://host:port/#<fp>`; client custom rustls verifier (≥16 hex
-   prefix), remembered pins in config file (changed pin = hard error),
-   constant-time password check, menu gains password + fingerprint fields.
-   Server password field already exists in Hello (currently ignored).
+   prefix), remembered pins in config (changed pin = hard error),
+   constant-time password check, menu gains password + fingerprint
+   fields. Hello already carries password (currently ignored).
+3. **Rulebook p.18+** — upgrade cards / squad points, feeding the squad
+   builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
+
+## Client structure (crates/sf-client/src/)
+
+main.rs (Screen state: Menu/Sandbox/Online, global setup), render.rs
+(Game resource, ship_visual, draw helpers, bullseye shade), menu.rs,
+online.rs (server mirror + Snap/Anim two-stage animation, never mutates
+game state locally), sandbox.rs, net.rs (background thread + channels),
+starfield.rs.
 
 ## Housekeeping / workflow
 
-- POLICY: clippy warnings are treated as errors — verify with
-  `cargo clippy --workspace -- -D warnings` (currently clean). sf-client
-  has a documented crate-level allow for type_complexity and
-  too_many_arguments only (idiomatic Bevy can't satisfy those two).
-- Workflow: user wants noisy verification (build/clippy/test) delegated to a
-  Haiku subagent that reports summaries; main model does edits. This caught
-  a real bug already (tokio feature-unification masking a missing "macros"
-  feature — check crates alone, not together).
+- POLICY: clippy warnings are errors — `cargo clippy --workspace -- -D
+  warnings` must stay at zero. sf-client has a documented crate-level
+  allow for type_complexity + too_many_arguments only (Bevy idiom).
+- Workflow: delegate noisy verification (build/clippy/test) to a Haiku
+  subagent reporting summaries; main model does edits. Check crates
+  individually (feature unification across crates can mask breaks).
+- Frequent small commits, one concern each; tests scripted via the
+  `roll: &mut dyn FnMut() -> u8` d8 injection (7=blank, 0=hit/evade).
 
-## Recently decided (in ARCHITECTURE.md, don't re-litigate)
+## Decided (in ARCHITECTURE.md / code, don't re-litigate)
 
-- Initiative: lower squad total; tie → seat-0 red-die roll (Hit/Crit keeps).
-  Breaks ALL pilot-skill ties. Provisional costs: TIE 12, T-70 24.
+- Initiative: lower squad total; tie → seat-0 red-die roll (Hit/Crit
+  keeps). Breaks ALL skill ties. Provisional costs: TIE 12, T-70 24.
+- Async adaptations of the tabletop, all documented: actions planned
+  secretly with the dial; combat targets + token spending auto-resolved
+  server-side (interactive later if wanted); "choosing" initiative is
+  automated as choosing yourself.
+- Crits/ordnance/abilities are ONE modifier-tag system; no card UI.
 - Squad builder: client builds/saves squads; scenarios restrict; shared
-  validate_squad() — client for UX, server enforces (not yet implemented).
-- Modifiers: one effect-tag system for crits/ordnance/abilities; no card UI.
-- Pilots become data with per-ship assignment (not yet implemented).
+  validate_squad() client+server (not yet implemented).
+- Pilots become data with per-ship assignment (not yet implemented);
+  pilot_skill on ShipClass is the generic pilot until then.
 - Speed-4 turn radius (2.925 u) is canonical.
 
-## Still needed from the user
+## Open items / needed from the user
 
-- ~~Critical-hit effect table~~ DONE: all 14 original core set effects
-  implemented in crit.rs + game.rs (commit 846946c). Injured Pilot is a
-  no-op until pilot abilities exist.
-- User is still reconsidering the stressed-red-reveal rule: currently
-  auto-substituted with the slowest white straight (PROVISIONAL, marked
-  in game.rs; judges color AFTER crit modifiers) — they may propose a
-  different approach.
-- Real squad costs, pilot roster, ordnance content.
-- 3+ player support is designed-for (initiative order display) but the
-  GameState/Seat model is 2-player; generalizing is future work.
+- Stressed-red-reveal rule: PROVISIONAL auto-substitution (slowest white
+  straight, effective-color aware; marked in game.rs) — user is
+  considering an alternative approach.
+- Real squad costs, pilot roster (abilities would activate Injured
+  Pilot), ordnance content, faction rosters for the squad builder.
+- 3+ players: designed-for but GameState/Seat model is 2-player.
+- Boost exists as an action (T-70 bar) — sandbox/online action keys
+  cover it; no dedicated preview arrows yet.
