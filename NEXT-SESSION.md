@@ -75,13 +75,13 @@ thread + channels), starfield.rs.
 
 ## Still needed from the user
 
-- **USER TODO (agreed 2026-08-31): research and supply the critical-hit
-  effect table** — a small list of persistent penalties applied as
-  modifier tags when a crit reaches the hull (crits_to_hull is already
-  recorded per attack; effects currently do nothing). No card UI.
-- User is also reconsidering the stressed-red-reveal rule: currently
+- ~~Critical-hit effect table~~ DONE: all 14 original core set effects
+  implemented in crit.rs + game.rs (commit 846946c). Injured Pilot is a
+  no-op until pilot abilities exist.
+- User is still reconsidering the stressed-red-reveal rule: currently
   auto-substituted with the slowest white straight (PROVISIONAL, marked
-  in game.rs) — they may propose a different approach.
+  in game.rs; judges color AFTER crit modifiers) — they may propose a
+  different approach.
 - Real squad costs, pilot roster, ordnance content.
 - 3+ player support is designed-for (initiative order display) but the
   GameState/Seat model is 2-player; generalizing is future work.
