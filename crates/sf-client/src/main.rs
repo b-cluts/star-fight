@@ -61,11 +61,17 @@ fn main() {
         .insert_resource(render::Sel::default())
         .insert_resource(render::CursorUnits(None))
         .insert_resource(render::ShowArcs(true))
+        .insert_resource(render::BullseyePreview::default())
         .init_state::<Screen>()
         .add_systems(Startup, global_setup)
         .add_systems(
             Update,
-            (render::track_cursor, render::toggle_arcs, render::sync_board_quad),
+            (
+                render::track_cursor,
+                render::toggle_arcs,
+                render::sync_board_quad,
+                render::apply_bullseye,
+            ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin))
         .run();
@@ -114,6 +120,14 @@ fn global_setup(
         Transform::default(),
         Visibility::Hidden,
         Ghost,
+    ));
+
+    // Bullseye lane shading for maneuver previews.
+    commands.spawn((
+        Sprite::from_color(Color::srgba(1.0, 0.75, 0.2, 0.16), Vec2::ONE),
+        Transform::default(),
+        Visibility::Hidden,
+        render::BullseyeShade,
     ));
 
     // Shared HUD text.

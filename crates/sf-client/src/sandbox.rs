@@ -245,7 +245,9 @@ fn draw_overlays(
     art: Res<ClassArt>,
     ships: Query<(Entity, &ShipEnt)>,
     mut ghost: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<Ghost>>,
+    mut bullseye: ResMut<render::BullseyePreview>,
 ) {
+    bullseye.0 = None;
     render::draw_board(&mut gizmos, &game);
     for (entity, ship) in &ships {
         let class = &game.ships.classes[ship.class_idx];
@@ -299,6 +301,7 @@ fn draw_overlays(
     render::draw_heading_arrow(&mut gizmos, &game, end, color);
     if arcs.0 {
         render::draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+        bullseye.0 = Some(end);
     }
 }
 

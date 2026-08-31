@@ -322,11 +322,14 @@ Because it's pure and shared:
 
 ### Collision & bounds
 
-The path is sampled at small steps; at each step the ship's footprint rectangle
-(anchored at front-center) is tested against board edges and other ships' footprints
-(oriented-rectangle overlap via separating-axis test). What a collision *means*
-(stop short, overlap penalty, damage) is a rules decision to make later — the detection
-machinery is the same regardless.
+The path is sampled at small steps; footprint rectangles are tested via the
+separating-axis test. Per core rules p.17, ships **move through** occupied space
+freely — only the FINAL position matters. If the final base overlaps another ship,
+the mover backs up along its template to the last clear pose ("bump") and forfeits
+its action; a K-turn or Tallon roll that would end overlapping executes as the
+plain straight/turn of the same speed and color instead (no flip, stress still
+applies). Touching ships cannot target each other in combat. Fleeing: a maneuver
+whose final base is even partly outside the play area destroys the ship.
 
 ### Firing arcs & range bands (`combat.rs`)
 
@@ -393,9 +396,11 @@ places to generalize when 3+ player matches arrive).
 Each ship performs **one action right after its maneuver**, from its class
 `action_bar`: **Focus** (token: eyes→hits or evades when spent), **Evade** (token:
 +1 evade result), **Barrel Roll** (straight-1 template sideways: lateral shift of
-1 unit + base width, heading unchanged; simplified — no fore/aft slide), **Acquire
-Target Lock** (enemy at range 1-3, measured closest-point 360°; persists until
-re-locked or spent), or **Pass**. A stressed ship cannot act; a ship that bumped
+1 unit + base width, heading unchanged; simplified — no fore/aft slide), **Boost**
+(fly a straight-1 or bank-1 template; not a maneuver, so no stress interaction;
+blocked if it would overlap or leave the board), **Acquire Target Lock** (enemy at
+range 1-3, measured closest-point 360°; persists until re-locked or spent), or
+**Pass**. A stressed ship cannot act; a ship that bumped
 loses its action; an impossible action (blocked roll, out-of-range lock) fails.
 Focus/evade tokens are removed in the End phase; locks and stress persist.
 
@@ -423,6 +428,18 @@ resolutions stay deterministic/replayable; every die face lands in `AttackRecord
 for the client's combat log and laser-bolt animation (Rebel Alliance red, Empire
 green; impact flash on hits — blue for shields, orange for hull — misses fly
 past and fade).
+
+### Card-less adaptations still OPEN (discuss before implementing)
+
+- **Critical damage effects** (p.16): faceup cards carry effects; we record
+  `crits_to_hull` but apply no effect yet. Plan: a small table of modifier tags
+  drawn randomly per crit — contents need agreement.
+- **Revealing red while stressed** (p.17): the opponent chooses a replacement
+  non-red maneuver. Currently unreachable (stress only comes from own maneuvers,
+  and planning already blocks red while stressed) — becomes live once crits or
+  abilities can add stress mid-turn; an auto-policy will be needed.
+- Color note: the physical rules call easy maneuvers **green**; this game uses
+  blue (second-edition style) — same mechanics.
 
 ### Pilots, upgrades & modifiers (design)
 

@@ -38,9 +38,7 @@
             hull: 3,
             shields: 3,
             squad_points: 24, // provisional
-            // Approximation: the T-70 also has Boost, which needs boost
-            // templates — added when Boost is implemented.
-            action_bar: [Focus, TargetLock, BarrelRoll],
+            action_bar: [Focus, TargetLock, BarrelRoll, Boost],
 
             sprite: "ships/xwing-t70.png",
             sprite_px: (720, 809),

@@ -17,6 +17,28 @@ pub const RANGE_BAND_UNITS: f64 = 100.0 / MM_PER_UNIT;
 /// Weapons reach three bands (300 mm / 7.5 units).
 pub const MAX_RANGE_BAND: u8 = 3;
 
+/// Bullseye lane: 300 mm long × 15 mm wide (range-ruler dimensions),
+/// centered straight ahead from the front edge of the base.
+pub const BULLSEYE_LENGTH_UNITS: f64 = 300.0 / MM_PER_UNIT;
+pub const BULLSEYE_WIDTH_UNITS: f64 = 15.0 / MM_PER_UNIT;
+
+/// World-space corners of the ship's bullseye lane.
+pub fn bullseye_corners(pose: Pose) -> [Vec2; 4] {
+    let hw = BULLSEYE_WIDTH_UNITS / 2.0;
+    [
+        pose.local_to_world(Vec2::new(0.0, -hw)),
+        pose.local_to_world(Vec2::new(0.0, hw)),
+        pose.local_to_world(Vec2::new(BULLSEYE_LENGTH_UNITS, hw)),
+        pose.local_to_world(Vec2::new(BULLSEYE_LENGTH_UNITS, -hw)),
+    ]
+}
+
+/// Is any part of the defender's base inside the attacker's bullseye?
+/// (Defenders in the bullseye cannot spend focus or evade tokens.)
+pub fn in_bullseye(attacker: Pose, defender_corners: &[Vec2; 4]) -> bool {
+    crate::rules::obbs_overlap(&bullseye_corners(attacker), defender_corners)
+}
+
 /// Center of the ship's base (the firing arc's origin).
 pub fn base_center(pose: Pose, fp: Footprint) -> Vec2 {
     pose.local_to_world(Vec2::new(-fp.length / 2.0, 0.0))
@@ -127,6 +149,18 @@ mod tests {
         assert_eq!(range_band_between(&a, &r3), Some(3));
         assert_eq!(range_band_between(&a, &out), None);
         assert_eq!(range_band_between(&a, &a), Some(1)); // overlap = 0
+    }
+
+    #[test]
+    fn bullseye_is_a_narrow_centered_lane() {
+        use crate::rules::footprint_corners;
+        let attacker = Pose::new(0.0, 0.0, 0.0); // facing +X
+        let dead_ahead = footprint_corners(Pose::new(5.0, 0.0, 0.0), FP);
+        let offset = footprint_corners(Pose::new(5.0, 1.2, 0.0), FP);
+        let beyond = footprint_corners(Pose::new(8.6, 0.0, 0.0), FP);
+        assert!(in_bullseye(attacker, &dead_ahead));
+        assert!(!in_bullseye(attacker, &offset), "off-axis is outside the lane");
+        assert!(!in_bullseye(attacker, &beyond), "past 7.5 units is outside");
     }
 
     #[test]

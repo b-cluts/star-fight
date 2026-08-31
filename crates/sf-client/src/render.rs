@@ -77,6 +77,36 @@ pub struct HudText;
 #[derive(Component)]
 pub struct BoardQuad;
 
+/// Translucent quad shading the bullseye lane on maneuver previews.
+#[derive(Component)]
+pub struct BullseyeShade;
+
+/// Pose whose bullseye lane should be shaded this frame (None = hidden).
+/// The active mode's draw system writes it; `apply_bullseye` renders it.
+#[derive(Resource, Default)]
+pub struct BullseyePreview(pub Option<Pose>);
+
+pub fn apply_bullseye(
+    preview: Res<BullseyePreview>,
+    game: Res<Game>,
+    mut shades: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<BullseyeShade>>,
+) {
+    for (mut sprite, mut tf, mut vis) in &mut shades {
+        match preview.0 {
+            None => *vis = Visibility::Hidden,
+            Some(pose) => {
+                let len = sf_core::combat::BULLSEYE_LENGTH_UNITS;
+                let wid = sf_core::combat::BULLSEYE_WIDTH_UNITS;
+                sprite.custom_size = Some(Vec2::new(len as f32 * PX, wid as f32 * PX));
+                let center = game.to_world(pose.local_to_world(GVec2::new(len / 2.0, 0.0)));
+                *tf = Transform::from_translation(center.extend(0.5))
+                    .with_rotation(Quat::from_rotation_z(pose.heading as f32));
+                *vis = Visibility::Visible;
+            }
+        }
+    }
+}
+
 /// Sprite size + transform so the artwork's front-center pixel lands on the
 /// pose anchor. Sprites face up; heading 0 = +X, so rotate by heading - 90°.
 pub fn ship_visual(class: &ShipClass, pose: Pose, game: &Game, z: f32) -> (Vec2, Transform) {

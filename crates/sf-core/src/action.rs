@@ -15,6 +15,27 @@ pub enum ActionKind {
     TargetLock,
     Evade,
     BarrelRoll,
+    Boost,
+}
+
+/// Boost template choice: straight-1 or bank-1 left/right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BoostDir {
+    Straight,
+    BankLeft,
+    BankRight,
+}
+
+/// The 1-speed maneuver a boost flies. Boosting does NOT count as
+/// executing a maneuver (no stress interaction, no dial color).
+pub fn boost_maneuver(dir: BoostDir) -> crate::maneuver::Maneuver {
+    use crate::maneuver::{Difficulty, Maneuver, Steer};
+    let steer = match dir {
+        BoostDir::Straight => Steer::Straight,
+        BoostDir::BankLeft => Steer::BankLeft,
+        BoostDir::BankRight => Steer::BankRight,
+    };
+    Maneuver { steer, distance: 1, difficulty: Difficulty::Normal }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +56,8 @@ pub enum PlannedAction {
     Evade,
     /// Shift laterally by a straight-1 template, heading unchanged.
     BarrelRoll(Side),
+    /// Fly a straight-1 or bank-1 template forward (not a maneuver).
+    Boost(BoostDir),
     /// Lock a target at range 1-3 (any point to any point, 360°).
     TargetLock(ShipId),
 }
@@ -47,6 +70,7 @@ impl PlannedAction {
             PlannedAction::Focus => Some(ActionKind::Focus),
             PlannedAction::Evade => Some(ActionKind::Evade),
             PlannedAction::BarrelRoll(_) => Some(ActionKind::BarrelRoll),
+            PlannedAction::Boost(_) => Some(ActionKind::Boost),
             PlannedAction::TargetLock(_) => Some(ActionKind::TargetLock),
         }
     }

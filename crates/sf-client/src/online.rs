@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
 
-use sf_core::action::{ActionKind, ActionResult, PlannedAction, Side};
+use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, Side};
 use sf_core::board::Seat;
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
@@ -218,6 +218,9 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                                     "{} dmg (-{} shields, -{} hull)",
                                     landed, a.shields_lost, a.hull_lost
                                 ));
+                            }
+                            if a.defender_in_bullseye {
+                                line.push_str(" [bullseye]");
                             }
                             if a.defender_destroyed {
                                 line.push_str(" — DESTROYED");
@@ -594,6 +597,17 @@ fn planning_input(
         online.lock_pick = true;
         online.status = "Target lock: click an enemy ship".into();
     }
+    if bar.contains(&ActionKind::Boost) {
+        if keys.just_pressed(KeyCode::Digit7) {
+            plan_action(&mut online, PlannedAction::Boost(BoostDir::Straight));
+        }
+        if keys.just_pressed(KeyCode::Digit8) {
+            plan_action(&mut online, PlannedAction::Boost(BoostDir::BankLeft));
+        }
+        if keys.just_pressed(KeyCode::Digit9) {
+            plan_action(&mut online, PlannedAction::Boost(BoostDir::BankRight));
+        }
+    }
     if online.lock_pick
         && buttons.just_pressed(MouseButton::Left)
         && let Some(cur) = cursor.0
@@ -723,6 +737,9 @@ fn action_name(a: PlannedAction) -> String {
         PlannedAction::Evade => "Evade".into(),
         PlannedAction::BarrelRoll(Side::Left) => "Barrel Roll L".into(),
         PlannedAction::BarrelRoll(Side::Right) => "Barrel Roll R".into(),
+        PlannedAction::Boost(BoostDir::Straight) => "Boost".into(),
+        PlannedAction::Boost(BoostDir::BankLeft) => "Boost L".into(),
+        PlannedAction::Boost(BoostDir::BankRight) => "Boost R".into(),
         PlannedAction::TargetLock(id) => format!("Lock #{}", id.0),
     }
 }
@@ -744,7 +761,9 @@ fn draw(
     arcs: Res<ShowArcs>,
     art: Res<ClassArt>,
     mut ghost: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<Ghost>>,
+    mut bullseye: ResMut<render::BullseyePreview>,
 ) {
+    bullseye.0 = None;
     render::draw_board(&mut gizmos, &game);
     let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else { return };
     *gvis = Visibility::Hidden;
@@ -826,6 +845,7 @@ fn draw(
     render::draw_heading_arrow(&mut gizmos, &game, end, color);
     if arcs.0 {
         render::draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+        bullseye.0 = Some(end);
     }
     let (size, tf) = render::ship_visual(class, end, &game, 2.0);
     gsprite.image = art.0[class_idx].clone();
@@ -894,7 +914,7 @@ fn hud(
     let help = match snap.phase {
         Phase::Placement => "drag ships • Q/E or scroll rotates • A: submit all positions",
         Phase::Planning => {
-            "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock • C: commit • X: resign"
+            "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
         }
         Phase::GameOver => "game over",
     };

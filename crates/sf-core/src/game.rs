@@ -131,6 +131,8 @@ pub struct AttackRecord {
     pub attacker_focus_spent: bool,
     pub defender_focus_spent: bool,
     pub evade_spent: bool,
+    /// Defender was inside the attacker's bullseye lane (tokens denied).
+    pub defender_in_bullseye: bool,
     /// Uncanceled results that landed.
     pub hits: u8,
     pub crits: u8,
@@ -428,19 +430,37 @@ impl GameState {
                 })
                 .collect();
 
-            // Walk forward; stop just before the first overlapping sample.
-            let mut stop = path.len() - 1;
-            'walk: for (k, p) in path.iter().enumerate().skip(1) {
-                let corners = rules::footprint_corners(*p, fp);
-                for oc in &obstacles {
-                    if rules::obbs_overlap(&corners, oc) {
-                        stop = k - 1;
-                        break 'walk;
-                    }
+            // Core rules p.17: ships move THROUGH occupied space freely —
+            // only the FINAL position matters. A K-turn (or Tallon roll)
+            // that would end overlapping is executed as the plain maneuver
+            // of the same speed instead (no flip). If the final position
+            // (still) overlaps, back up along the template to the last
+            // clear pose; that ship "bumped" and forfeits its action.
+            let overlaps = |pose: Pose| {
+                let c = rules::footprint_corners(pose, fp);
+                obstacles.iter().any(|oc| rules::obbs_overlap(&c, oc))
+            };
+            let mut used_path = path;
+            if overlaps(*used_path.last().expect("paths are non-empty")) {
+                let degraded = match man.steer {
+                    maneuver::Steer::KTurn => Some(maneuver::Steer::Straight),
+                    maneuver::Steer::TallonLeft => Some(maneuver::Steer::TurnLeft),
+                    maneuver::Steer::TallonRight => Some(maneuver::Steer::TurnRight),
+                    _ => None,
+                };
+                if let Some(steer) = degraded
+                    && let Ok(p2) = maneuver::sample_path(start, Maneuver { steer, ..man })
+                {
+                    used_path = p2;
                 }
             }
-            let end = path[stop];
-            let bumped = stop + 1 != path.len();
+            let mut stop = used_path.len() - 1;
+            let mut bumped = false;
+            while stop > 0 && overlaps(used_path[stop]) {
+                stop -= 1;
+                bumped = true;
+            }
+            let end = used_path[stop];
             let destroyed =
                 !rules::within_board(&self.board, &rules::footprint_corners(end, fp));
 
@@ -491,6 +511,30 @@ impl GameState {
                             ActionResult::Failed
                         }
                     }
+                    PlannedAction::Boost(dir) => {
+                        // Not a maneuver: no stress interaction. Blocked if
+                        // it would overlap a ship or leave the board.
+                        let boosted = maneuver::apply(
+                            self.ships[i].pose.expect("just set"),
+                            action::boost_maneuver(dir),
+                        );
+                        match boosted {
+                            Ok(candidate) => {
+                                let corners = rules::footprint_corners(candidate, fp);
+                                let clear = rules::within_board(&self.board, &corners)
+                                    && obstacles
+                                        .iter()
+                                        .all(|oc| !rules::obbs_overlap(&corners, oc));
+                                if clear {
+                                    self.ships[i].pose = Some(candidate);
+                                    ActionResult::Performed
+                                } else {
+                                    ActionResult::Failed
+                                }
+                            }
+                            Err(_) => ActionResult::Failed,
+                        }
+                    }
                     PlannedAction::TargetLock(target) => {
                         let in_range = self
                             .ship_index(target)
@@ -526,7 +570,7 @@ impl GameState {
             records.push(MoveRecord {
                 ship: id,
                 maneuver: man,
-                path: path[..=stop].to_vec(),
+                path: used_path[..=stop].to_vec(),
                 end,
                 bumped,
                 destroyed,
@@ -719,13 +763,21 @@ impl GameState {
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
 
+        // A defender inside the attacker's bullseye lane cannot spend
+        // focus or evade tokens to defend.
+        let defender_in_bullseye = {
+            let d_pose = self.ships[d_idx].pose.expect("candidates are placed");
+            let d_fp = self.class_of(content, &self.ships[d_idx]).footprint;
+            combat::in_bullseye(a_pose, &rules::footprint_corners(d_pose, d_fp))
+        };
+
         // Modify defense: focus converts eyes when it helps, evade token
         // adds one evade result if damage would still land.
         let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let incoming = raw_hits + raw_crits;
         let mut defender_focus_spent = false;
         let eyes = defense_faces.iter().filter(|f| **f == DefenseFace::Focus).count() as u8;
-        if self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
+        if !defender_in_bullseye && self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
             self.ships[d_idx].focus -= 1;
             defender_focus_spent = true;
             for f in defense_faces.iter_mut() {
@@ -736,7 +788,7 @@ impl GameState {
             evades += eyes;
         }
         let mut evade_spent = false;
-        if self.ships[d_idx].evade > 0 && evades < incoming {
+        if !defender_in_bullseye && self.ships[d_idx].evade > 0 && evades < incoming {
             self.ships[d_idx].evade -= 1;
             evade_spent = true;
             evades += 1;
@@ -790,6 +842,7 @@ impl GameState {
             attacker_focus_spent,
             defender_focus_spent,
             evade_spent,
+            defender_in_bullseye,
             hits,
             crits,
             shields_lost,
@@ -1141,6 +1194,101 @@ mod tests {
         assert_eq!(gs.ships[1].lock, Some(ShipId(0)));
     }
 
+    #[test]
+    fn ships_move_through_others_when_final_position_is_clear() {
+        let c = content();
+        // Two TIEs south, one X-Wing north; TIE #0 flies straight through
+        // the space occupied by TIE #1 and lands cleanly beyond it.
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&[TIE, TIE], &[XWING]],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 1.15, FRAC_PI_2)).unwrap();
+        // Blocker faces east across #0's path (hull y 2.0-3.0).
+        gs.place_ship(&c, P0, ShipId(1), Pose::new(10.0, 2.5, 0.0)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
+        let s3 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 3
+        });
+        let s1 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 1
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), s3).unwrap();
+        gs.plan_maneuver(&c, P0, ShipId(1), s1).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(2), straight2(&c, XWING)).unwrap();
+        gs.commit_plans(&c, P0, &mut || 6).unwrap();
+        let moves = gs.commit_plans(&c, P1, &mut || 6).unwrap().unwrap().moves;
+        let mover = moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert!(!mover.bumped, "final position is clear: passing through is legal");
+        assert!((mover.end.anchor.y - 4.15).abs() < 1e-9, "{}", mover.end.anchor.y);
+    }
+
+    #[test]
+    fn kturn_ending_in_overlap_becomes_a_straight_without_the_flip() {
+        let c = content();
+        let mut gs = new_1v1(&c);
+        place_both(&c, &mut gs);
+        let tie_s5 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
+        });
+        let tie_s2 = straight2(&c, TIE);
+        let xw_s4 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 4
+        });
+        let xw_k4 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::KTurn && m.distance == 4
+        });
+        // Turn 1: TIE 2→7, X-Wing 18→14.
+        gs.plan_maneuver(&c, P0, ShipId(0), tie_s5).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), xw_s4).unwrap();
+        gs.commit_plans(&c, P0, &mut || 6).unwrap();
+        gs.commit_plans(&c, P1, &mut || 6).unwrap().unwrap();
+        // Turn 2: TIE moves to 9 (hull 8-9); the X-Wing's K-turn to 10
+        // would flip and overlap (flipped hull 9-10), so it executes as a
+        // plain straight-4 instead: same spot, heading unchanged, and the
+        // red maneuver still stresses.
+        gs.plan_maneuver(&c, P0, ShipId(0), tie_s2).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), xw_k4).unwrap();
+        gs.commit_plans(&c, P0, &mut || 6).unwrap();
+        let moves = gs.commit_plans(&c, P1, &mut || 6).unwrap().unwrap().moves;
+        let xw = moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert!((xw.end.anchor.y - 10.0).abs() < 1e-9, "{}", xw.end.anchor.y);
+        assert!(
+            (xw.end.heading + FRAC_PI_2).abs() < 1e-9,
+            "no 180° flip on a bumped K-turn: {}",
+            xw.end.heading
+        );
+        assert!(!xw.bumped, "degraded straight lands clear");
+        assert_eq!(xw.stress, 1, "the red maneuver still stresses");
+    }
+
+    #[test]
+    fn boost_flies_a_one_template_after_the_move() {
+        let c = content();
+        let mut gs = new_1v1(&c);
+        place_both(&c, &mut gs);
+        // TIE has no Boost on its bar.
+        assert_eq!(
+            gs.plan_action(&c, P0, ShipId(0), PlannedAction::Boost(action::BoostDir::Straight)),
+            Err(Rejection::ActionNotOnBar)
+        );
+        gs.plan_maneuver(&c, P0, ShipId(0), straight2(&c, TIE)).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Boost(action::BoostDir::Straight))
+            .unwrap();
+        gs.commit_plans(&c, P0, &mut || 6).unwrap();
+        let moves = gs.commit_plans(&c, P1, &mut || 6).unwrap().unwrap().moves;
+        let xw = moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(xw.action_result, ActionResult::Performed);
+        // Straight-2 (18→16) plus boost straight-1 → 15; no stress change.
+        let pose = gs.ships[1].pose.unwrap();
+        assert!((pose.anchor.y - 15.0).abs() < 1e-9, "{}", pose.anchor.y);
+        assert_eq!(gs.ships[1].stress, 0);
+    }
+
     /// Cycles a scripted d8 sequence.
     fn scripted(vals: Vec<u8>) -> impl FnMut() -> u8 {
         let mut i = 0;
@@ -1195,8 +1343,10 @@ mod tests {
     fn combat_tokens_spend_focus_and_evade() {
         let c = content();
         let mut gs = new_1v1(&c);
+        // Laterally offset: each ship is in the other's 90° arc but OUT of
+        // the narrow bullseye lane, so defense tokens stay spendable.
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
-        gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(12.0, 17.5, -FRAC_PI_2)).unwrap();
         let s5 = dial_index(&c, TIE, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 5
         });
@@ -1215,11 +1365,43 @@ mod tests {
         gs.commit_plans(&c, P0, &mut rolls).unwrap();
         let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
         let xw_shot = &rec.attacks[0];
+        assert!(!xw_shot.defender_in_bullseye);
         assert!(xw_shot.attacker_focus_spent);
         assert!(xw_shot.evade_spent);
         assert_eq!((xw_shot.hits, xw_shot.crits), (1, 0));
         assert_eq!(xw_shot.hull_lost, 1);
         assert_eq!(gs.ships[0].hull, 2);
+    }
+
+    #[test]
+    fn bullseye_denies_defender_tokens() {
+        let c = content();
+        let mut gs = new_1v1(&c);
+        // Dead-center alignment: the TIE ends squarely in the X-Wing's
+        // bullseye lane, so its evade token cannot be spent.
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
+        let s5 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
+        });
+        let s4 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 4
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), s5).unwrap();
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Evade).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), s4).unwrap();
+        // X-Wing attack: 2 hits + blank; TIE defense: 4 blanks. Without
+        // its evade token the shieldless TIE takes both hits.
+        // TIE attack: 2 blanks; X-Wing defense: 3 blanks.
+        let mut rolls = scripted(vec![0, 0, 6, 7, 7, 7, 7, 6, 6, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let xw_shot = &rec.attacks[0];
+        assert!(xw_shot.defender_in_bullseye);
+        assert!(!xw_shot.evade_spent, "bullseye denies the evade token");
+        assert_eq!((xw_shot.hits, xw_shot.crits), (2, 0));
+        assert_eq!(xw_shot.hull_lost, 2);
+        assert_eq!(gs.ships[0].hull, 1);
     }
 
     #[test]
