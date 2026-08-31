@@ -127,7 +127,6 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online.seat = Some(seat);
                     online.status = format!("Matched with {opponent} — place your ships");
                     online.opponent = opponent;
-                    seed_default_placement(&mut online, &game);
                 }
                 ServerMsg::Snapshot { phase, turn, ships, committed, initiative, squad_totals } => {
                     if phase != Phase::Placement {
@@ -145,6 +144,11 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         online.pending_snap = Some(snap);
                     } else {
                         online.snap = Some(snap);
+                        // Unplaced own ships need provisional draggable spots
+                        // (the ship list only exists once a snapshot is here).
+                        if phase == Phase::Placement {
+                            seed_default_placement(&mut online, &game);
+                        }
                     }
                 }
                 ServerMsg::Rejected { reason } => {
@@ -178,6 +182,9 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
 /// Give unplaced own ships sensible provisional spots in the deployment
 /// zone so there is something to drag.
 fn seed_default_placement(online: &mut Online, game: &Game) {
+    if online.seat.is_none() {
+        return;
+    }
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
     let (y, heading) = if seat == 0 {
@@ -185,12 +192,16 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
     } else {
         (game.board.height - 1.5, -FRAC_PI_2)
     };
+    let mut seeds = Vec::new();
     let mut x = 5.0;
     for view in snap.ships.iter().filter(|s| s.owner.0 == seat as u32) {
-        if view.pose.is_none() {
-            online.overrides.insert(view.id.0, Pose::new(x, y, heading));
+        if view.pose.is_none() && !online.overrides.contains_key(&view.id.0) {
+            seeds.push((view.id.0, Pose::new(x, y, heading)));
         }
         x += 4.0;
+    }
+    for (id, pose) in seeds {
+        online.overrides.insert(id, pose);
     }
 }
 
