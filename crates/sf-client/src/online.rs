@@ -398,12 +398,12 @@ fn animate(
         Stage::Attacks => {
             a.at += time.delta_secs();
             if a.at >= ATTACK_DUR {
-                if let Some(rec) = a.attacks.get(a.aidx) {
-                    if rec.defender_destroyed {
-                        for (ship, _, _, mut vis) in &mut ships_q {
-                            if ship.0 == rec.defender.0 {
-                                *vis = Visibility::Hidden;
-                            }
+                if let Some(rec) = a.attacks.get(a.aidx)
+                    && rec.defender_destroyed
+                {
+                    for (ship, _, _, mut vis) in &mut ships_q {
+                        if ship.0 == rec.defender.0 {
+                            *vis = Visibility::Hidden;
                         }
                     }
                 }
@@ -594,25 +594,25 @@ fn planning_input(
         online.lock_pick = true;
         online.status = "Target lock: click an enemy ship".into();
     }
-    if online.lock_pick && buttons.just_pressed(MouseButton::Left) {
-        if let Some(cur) = cursor.0 {
-            let target = online.snap.as_ref().and_then(|snap| {
-                snap.ships
-                    .iter()
-                    .filter(|v| v.owner.0 != seat as u32 && !v.destroyed)
-                    .find(|v| {
-                        v.pose.is_some_and(|p| {
-                            let fp =
-                                game.ships.classes[game.class_index(v.class)].footprint;
-                            rules::point_in_footprint(p, fp, cur)
-                        })
+    if online.lock_pick
+        && buttons.just_pressed(MouseButton::Left)
+        && let Some(cur) = cursor.0
+    {
+        let target = online.snap.as_ref().and_then(|snap| {
+            snap.ships
+                .iter()
+                .filter(|v| v.owner.0 != seat as u32 && !v.destroyed)
+                .find(|v| {
+                    v.pose.is_some_and(|p| {
+                        let fp = game.ships.classes[game.class_index(v.class)].footprint;
+                        rules::point_in_footprint(p, fp, cur)
                     })
-                    .map(|v| v.id.0)
-            });
-            if let Some(t) = target {
-                online.status.clear();
-                plan_action(&mut online, PlannedAction::TargetLock(ShipId(t)));
-            }
+                })
+                .map(|v| v.id.0)
+        });
+        if let Some(t) = target {
+            online.status.clear();
+            plan_action(&mut online, PlannedAction::TargetLock(ShipId(t)));
         }
     }
 
@@ -656,7 +656,7 @@ fn draw_attack_fx(
     let dir = to_target / dist;
     let perp = Vec2::new(-dir.y, dir.x);
     // Misses aim visibly wide of the base (alternating side per attack).
-    let side = if anim.aidx % 2 == 0 { 1.0 } else { -1.0 };
+    let side = if anim.aidx.is_multiple_of(2) { 1.0 } else { -1.0 };
     let aim = if hit { target } else { target + perp * 0.7 * render::PX * side };
 
     let p = (anim.at / ATTACK_DUR).clamp(0.0, 1.0);
@@ -902,23 +902,23 @@ fn hud(
     if let Some(a) = &online.anim {
         match a.stage {
             Stage::Moves => {
-                if let Some(mv) = a.moves.get(a.idx) {
-                    if let Some(view) = snap.ships.iter().find(|v| v.id.0 == mv.ship.0) {
-                        let class = &game.ships.classes[game.class_index(view.class)];
-                        let result = match mv.action_result {
-                            ActionResult::Performed => "".into(),
-                            ActionResult::SkippedStressed => " (skipped: stressed)".to_string(),
-                            ActionResult::SkippedBumped => " (skipped: bumped)".to_string(),
-                            ActionResult::Failed => " (failed)".to_string(),
-                        };
-                        lines.push(format!(
-                            "{} flies {} {} — action: {}{result}",
-                            class.name,
-                            render::steer_name(mv.maneuver.steer),
-                            mv.maneuver.distance,
-                            action_name(mv.action),
-                        ));
-                    }
+                if let Some(mv) = a.moves.get(a.idx)
+                    && let Some(view) = snap.ships.iter().find(|v| v.id.0 == mv.ship.0)
+                {
+                    let class = &game.ships.classes[game.class_index(view.class)];
+                    let result = match mv.action_result {
+                        ActionResult::Performed => "".into(),
+                        ActionResult::SkippedStressed => " (skipped: stressed)".to_string(),
+                        ActionResult::SkippedBumped => " (skipped: bumped)".to_string(),
+                        ActionResult::Failed => " (failed)".to_string(),
+                    };
+                    lines.push(format!(
+                        "{} flies {} {} — action: {}{result}",
+                        class.name,
+                        render::steer_name(mv.maneuver.steer),
+                        mv.maneuver.distance,
+                        action_name(mv.action),
+                    ));
                 }
             }
             Stage::Attacks => {
