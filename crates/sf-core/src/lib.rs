@@ -4,6 +4,7 @@
 pub mod action;
 pub mod board;
 pub mod combat;
+pub mod crit;
 pub mod data;
 pub mod dice;
 pub mod game;

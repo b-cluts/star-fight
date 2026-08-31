@@ -356,6 +356,7 @@ async fn session(
                                     ServerMsg::TurnResult {
                                         moves: rec.moves.clone(),
                                         attacks: rec.attacks.clone(),
+                                        events: rec.events.clone(),
                                     }
                                 );
                             }

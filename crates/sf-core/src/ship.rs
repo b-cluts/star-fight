@@ -107,5 +107,7 @@ pub struct ShipState {
     pub evade: u8,
     /// Acquired target lock (public). Persists until re-locked or spent.
     pub lock: Option<ShipId>,
+    /// Active (faceup) critical effects — public information.
+    pub crits: Vec<crate::crit::CritEffect>,
     pub destroyed: bool,
 }

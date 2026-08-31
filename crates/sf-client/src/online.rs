@@ -185,7 +185,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                 ServerMsg::Rejected { reason } => {
                     online.status = format!("Rejected: {reason}");
                 }
-                ServerMsg::TurnResult { moves, attacks } => {
+                ServerMsg::TurnResult { moves, attacks, events } => {
                     online.status.clear();
                     let log: Vec<String> = attacks
                         .iter()
@@ -228,6 +228,8 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                             line
                         })
                         .collect();
+                    let mut log = log;
+                    log.extend(events);
                     online.combat_log = log;
                     online.anim = Some(Anim {
                         moves,
@@ -890,6 +892,10 @@ fn hud(
         if let Some(l) = view.lock {
             line.push_str(&format!(" lock #{}", l.0));
         }
+        if !view.crits.is_empty() {
+            let names: Vec<&str> = view.crits.iter().map(|c| c.name()).collect();
+            line.push_str(&format!(" | crits: {}", names.join(", ")));
+        }
         if let Some(a) = view.planned_action {
             line.push_str(&format!(" | action: {}", action_name(a)));
         }
@@ -930,6 +936,7 @@ fn hud(
                         ActionResult::Performed => "".into(),
                         ActionResult::SkippedStressed => " (skipped: stressed)".to_string(),
                         ActionResult::SkippedBumped => " (skipped: bumped)".to_string(),
+                        ActionResult::SkippedDamaged => " (sensors damaged)".to_string(),
                         ActionResult::Failed => " (failed)".to_string(),
                     };
                     lines.push(format!(

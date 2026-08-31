@@ -73,6 +73,8 @@ pub enum ServerMsg {
     TurnResult {
         moves: Vec<MoveRecord>,
         attacks: Vec<AttackRecord>,
+        /// Narrated side effects (crit draws, burns, collisions).
+        events: Vec<String>,
     },
     GameOver {
         /// Winning seat; None on mutual destruction.

@@ -84,6 +84,8 @@ pub enum ActionResult {
     SkippedStressed,
     /// A ship that bumped loses its action.
     SkippedBumped,
+    /// A Damaged Sensor Array denies all action-bar actions.
+    SkippedDamaged,
     /// The action was impossible (barrel roll blocked, lock out of range).
     Failed,
 }
