@@ -40,11 +40,13 @@ What exists end-to-end:
 To try it: `cargo run -p sf-server` then two `cargo run -p sf-client`
 instances — create in one, join with the code in the other.
 
-## NEXT TASK (user picks)
+## NEXT TASK: M4 security (decided 2026-09-02)
 
-1. **Playtest** — Declare Target prompts and the minimap are new; expect
-   tuning requests (animation pacing ANIM_SAMPLES_PER_SEC/ATTACK_DUR in
-   online.rs, minimap size MINI_PX in render.rs, HUD copy).
+Playtest of Declare Target + minimap done and approved by the user
+("gameplay was good", minimap "looks good"). Next is item 2 below.
+
+1. ~~Playtest~~ done. Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC /
+   ATTACK_DUR in online.rs, MINI_PX in render.rs.
 2. **M4 — security**: TLS with pinned self-signed cert + server password,
    mirroring ../hex-ship-game (design in ARCHITECTURE.md §4): server
    generates/persists cert, prints SHA-256 fingerprint + join string
