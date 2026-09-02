@@ -14,3 +14,4 @@ pub mod pilot;
 pub mod rules;
 pub mod ship;
 pub mod templates;
+pub mod upgrade;

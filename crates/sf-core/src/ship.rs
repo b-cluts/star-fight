@@ -78,6 +78,9 @@ pub struct ShipClass {
     pub shields: u8,
     /// Actions this ship may perform (one per turn, after moving).
     pub action_bar: Vec<ActionKind>,
+    /// Printed upgrade slots (Modification and Title are implicit).
+    #[serde(default)]
+    pub upgrade_bar: Vec<crate::upgrade::Slot>,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::maneuver::{ManeuverSet, ManeuverSetId};
 use crate::pilot::{Pilot, PilotId, Source};
 use crate::ship::{ShipClass, ShipClassId};
+use crate::upgrade::{Slot, Upgrade, UpgradeId};
 
 /// RON parser configured so ID newtypes (`ShipClassId(1)`) can be written
 /// as plain values (`id: 1`) in the data files.
@@ -37,6 +38,7 @@ pub struct Content {
     pub ships: ShipDb,
     pub dials: ManeuverDb,
     pub pilots: PilotDb,
+    pub upgrades: UpgradeDb,
 }
 
 impl Content {
@@ -44,12 +46,56 @@ impl Content {
         ships: &str,
         dials: &str,
         pilots: &str,
+        upgrades: &str,
     ) -> Result<Self, ron::error::SpannedError> {
         Ok(Self {
             ships: ShipDb::from_ron(ships)?,
             dials: ManeuverDb::from_ron(dials)?,
             pilots: PilotDb::from_ron(pilots)?,
+            upgrades: UpgradeDb::from_ron(upgrades)?,
         })
+    }
+
+    /// Read the four data files from a directory.
+    pub fn load_dir(dir: &str) -> Result<Self, String> {
+        let read = |name: &str| {
+            std::fs::read_to_string(format!("{dir}/{name}"))
+                .map_err(|e| format!("{dir}/{name}: {e}"))
+        };
+        Self::from_ron(
+            &read("ships.ron")?,
+            &read("maneuvers.ron")?,
+            &read("pilots.ron")?,
+            &read("upgrades.ron")?,
+        )
+        .map_err(|e| format!("parse data in {dir}: {e}"))
+    }
+}
+
+/// Contents of `assets/data/upgrades.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpgradeDb {
+    pub upgrades: Vec<Upgrade>,
+}
+
+impl UpgradeDb {
+    pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
+        parser().from_str(s)
+    }
+
+    pub fn upgrade(&self, id: UpgradeId) -> Option<&Upgrade> {
+        self.upgrades.iter().find(|u| u.id == id)
+    }
+
+    pub fn by_slot(&self, slot: Slot) -> Vec<&Upgrade> {
+        self.upgrades.iter().filter(|u| u.slot == slot).collect()
+    }
+
+    /// Card image path in an XWS-layout card directory:
+    /// `upgrades/<slot>/<xws>.png`.
+    pub fn card_image(&self, id: UpgradeId) -> Option<String> {
+        let u = self.upgrade(id)?;
+        Some(format!("upgrades/{}/{}.png", u.slot.xws(), u.xws))
     }
 }
 
@@ -170,6 +216,42 @@ mod tests {
                 p.name
             );
         }
+        let upgrades = UpgradeDb::from_ron(&read_asset("upgrades.ron")).expect("upgrades.ron");
+        for u in &upgrades.upgrades {
+            let rel = upgrades.card_image(u.id).unwrap();
+            let png = format!("{root}/{rel}");
+            let jpg = png.replace(".png", ".jpg");
+            assert!(
+                std::path::Path::new(&png).is_file() || std::path::Path::new(&jpg).is_file(),
+                "missing card image {rel} for {}",
+                u.name
+            );
+        }
+    }
+
+    #[test]
+    fn upgrades_parse_and_cover_our_ships_slots() {
+        let ships = ShipDb::from_ron(&read_asset("ships.ron")).expect("ships.ron");
+        let upgrades = UpgradeDb::from_ron(&read_asset("upgrades.ron")).expect("upgrades.ron");
+        let mut ids = std::collections::HashSet::new();
+        for u in &upgrades.upgrades {
+            assert!(ids.insert(u.id), "duplicate upgrade id {:?}", u.id);
+            assert!(!u.text.is_empty(), "{} has no text", u.name);
+            if u.slot == Slot::Torpedo && u.attack.is_none() {
+                assert!(u.effect.is_some(), "{} torpedo without attack or effect", u.name);
+            }
+        }
+        // Every slot printed on our ships (plus the implicit ones) has cards.
+        for class in &ships.classes {
+            for slot in class.upgrade_bar.iter().copied().chain(Slot::implicit()) {
+                assert!(!upgrades.by_slot(slot).is_empty(), "no cards for {slot:?}");
+            }
+        }
+        // Spot checks against the card scans.
+        let proton = upgrades.upgrades.iter().find(|u| u.xws == "protontorpedoes").unwrap();
+        assert_eq!((proton.cost, proton.attack.unwrap().dice), (4, 4));
+        let vi = upgrades.upgrades.iter().find(|u| u.xws == "veteraninstincts").unwrap();
+        assert_eq!((vi.cost, vi.effect), (1, Some(crate::upgrade::UpgradeEffect::SkillPlus2)));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (89 tests),
+`cargo build` clean, `cargo test --workspace` green (90 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
@@ -100,6 +100,25 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 81
+  First Edition cards VERIFIED from the card scans: torpedoes (7), tech
+  (7), astromechs (17), modifications (14 usable by small ships; 15
+  large/other-ship mods deliberately not encoded), title Black One, and
+  37 elite pilot talents (Scum-only ones and Adaptability's second face
+  skipped). Each card: xws, slot, cost, unique/limited, restrictions
+  (Restriction enum: SmallShipOnly, ShipOnly(substring of xws),
+  FactionOnly, SkillAbove/AtMost, RequiresAction, LacksSlot,
+  RequiresSlots, AgilityBelow), optional SecondaryWeapon (dice, range,
+  TargetLock/Focus/Free, discard_to_fire), an UpgradeEffect tag and the
+  verbatim card text. NO effect enforced yet (implemented() false).
+  ShipClass.upgrade_bar lists printed slots (T-70: Astromech, Torpedo,
+  Tech; TIE/fo: Tech; TIE/ln: none); Modification + Title implicit
+  (Slot::implicit). Content::load_dir(dir) reads all four data files;
+  UpgradeDb::card_image → upgrades/<slot>/<xws>.png. Rulebook p.18-19
+  read: 100-pt squads, one card per icon, unique names once per side,
+  secondary weapons replace the primary attack (dice/range from card,
+  "Attack (target lock)" needs a lock on the defender).
+
 To try it: `cargo run -p sf-server` (copy the printed join string and
 password) then two `cargo run -p sf-client` instances — paste the join
 string into Server, type the password, create in one, join with the
@@ -111,12 +130,19 @@ and Server `ws://127.0.0.1:7777`.
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
    confirmed working by the user.
-3. **Squad builder** (rulebook p.18+ for squad points / upgrade rules):
-   pick faction → ships → pilots (show card image from the cards dir),
-   name callsigns, save squads locally, validate_squad() shared; lobby
-   sends the chosen squad. Then pilot abilities one by one (list above).
-   Still needed from the user: secondary weapons / upgrade cards roster
-   (the reference repo has images for all of them under images/upgrades). — upgrade cards / squad points, feeding the squad
+3. **Squad builder** — all data is in place. Steps: sf-core `Squad`
+   type (faction, Vec<SquadShip { pilot, upgrades: Vec<UpgradeId>,
+   callsign }>) + `validate_squad(squad, content, rules)` (points ≤ limit,
+   slots incl. implicit + BarGainsX effects, uniqueness per side incl.
+   same-name pilots, Limited once per ship, Restriction checks, source
+   packs allowed by the scenario); client builder screen (faction →
+   ship → pilot → upgrades, card image from the cards dir with text
+   fallback, callsigns, save/load squads in the config dir); lobby
+   carries the squad (ClientMsg::CreateGame/JoinGame gain a squad;
+   server validates and builds GameState from it, replacing the fixed
+   fleets). Then enforce effects/abilities one at a time with tests,
+   starting with stat mods (Hull/Shield Upgrade, Stealth Device, Veteran
+   Instincts, bar-gaining mods) and torpedoes. — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.

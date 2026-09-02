@@ -1334,12 +1334,7 @@ mod tests {
 
     fn content() -> Content {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data");
-        Content::from_ron(
-            &std::fs::read_to_string(format!("{dir}/ships.ron")).unwrap(),
-            &std::fs::read_to_string(format!("{dir}/maneuvers.ron")).unwrap(),
-            &std::fs::read_to_string(format!("{dir}/pilots.ron")).unwrap(),
-        )
-        .unwrap()
+        Content::load_dir(dir).unwrap()
     }
 
     fn board() -> Board {

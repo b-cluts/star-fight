@@ -16,6 +16,7 @@
             hull: 3,
             shields: 0,
             action_bar: [Focus, BarrelRoll, Evade],
+            upgrade_bar: [],
 
             sprite: "ships/tie-fighter.png",
             sprite_px: (461, 566),
@@ -38,6 +39,7 @@
             shields: 3,
             // First Edition T-70: no native barrel roll.
             action_bar: [Focus, TargetLock, Boost],
+            upgrade_bar: [Astromech, Torpedo, Tech],
 
             sprite: "ships/xwing-t70.png",
             sprite_px: (720, 809),
@@ -58,6 +60,7 @@
             hull: 3,
             shields: 1,
             action_bar: [Focus, TargetLock, BarrelRoll, Evade],
+            upgrade_bar: [Tech],
 
             // Placeholder art: shares the TIE/ln sprite until its own lands.
             sprite: "ships/tie-fighter.png",
