@@ -56,9 +56,6 @@ pub struct ShipClass {
     pub maneuver_set: ManeuverSetId,
     /// Primary weapon attack dice at standard range (front 90° arc).
     pub attack_dice: u8,
-    /// Pilot skill: lower skill MOVES first in the movement phase;
-    /// higher skill FIRES first in the combat phase.
-    pub pilot_skill: u8,
     /// Defense (agility) dice rolled against attacks.
     pub agility: u8,
     /// Hull points. Damage past the shields comes here, and only hull
@@ -67,9 +64,6 @@ pub struct ShipClass {
     /// Shield points: absorbed first, and while any remain the ship
     /// cannot suffer critical hits.
     pub shields: u8,
-    /// Squad-point cost (pilots and modifiers will add their own costs).
-    /// Lower squad total gets initiative choice at setup.
-    pub squad_points: u16,
     /// Actions this ship may perform (one per turn, after moving).
     pub action_bar: Vec<ActionKind>,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
@@ -90,6 +84,8 @@ pub struct ShipState {
     pub id: ShipId,
     pub owner: PlayerId,
     pub class: ShipClassId,
+    /// Pilot card flying this ship (skill, cost, ability).
+    pub pilot: crate::pilot::PilotId,
     /// Squad callsign, e.g. "Red-leader", "Obsidian-2". Server-assigned
     /// default; the owner may rename during Placement.
     pub callsign: String,

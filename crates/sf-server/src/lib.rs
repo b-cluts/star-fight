@@ -26,15 +26,21 @@ use tokio_tungstenite::tungstenite::Message;
 use sf_core::board::Board;
 use sf_core::data::Content;
 use sf_core::game::{CombatStep, GameState, Phase};
+use sf_core::pilot::PilotId;
 use sf_core::ship::{PlayerId, ShipClassId};
 use sf_proto::PROTOCOL_VERSION;
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
-/// Sandbox-era fixed fleets: seat 0 flies two TIEs, seat 1 two X-Wings.
-/// (Fleet selection becomes part of the lobby later.)
+/// Sandbox-era fixed fleets: seat 0 flies two TIE/ln, seat 1 two T-70s,
+/// each with the class's basic pilot. (Squad selection becomes part of
+/// the lobby once the squad builder exists.)
 const FLEET_SOUTH: [ShipClassId; 2] = [ShipClassId(1), ShipClassId(1)];
 const FLEET_NORTH: [ShipClassId; 2] = [ShipClassId(2), ShipClassId(2)];
+
+fn basic_fleet(content: &Content, classes: &[ShipClassId]) -> Vec<PilotId> {
+    classes.iter().map(|k| content.pilots.basic_for(*k).expect("basic pilot").id).collect()
+}
 
 fn default_board() -> Board {
     Board { width: 20.0, height: 20.0, deploy_depth: 3.0 }
@@ -383,7 +389,7 @@ async fn session(
                     ServerMsg::Snapshot {
                         phase: gs.phase,
                         turn: gs.turn,
-                        ships: gs.snapshot_for(PlayerId(s as u32)),
+                        ships: gs.snapshot_for(&content, PlayerId(s as u32)),
                         committed: gs.committed,
                         initiative: gs.initiative.0 as u8,
                         squad_totals: gs.squad_totals,
@@ -474,7 +480,10 @@ async fn session(
                     let gs = GameState::new(
                         default_board(),
                         &content,
-                        [&FLEET_SOUTH, &FLEET_NORTH],
+                        [
+                            &basic_fleet(&content, &FLEET_SOUTH),
+                            &basic_fleet(&content, &FLEET_NORTH),
+                        ],
                         tie_roll,
                     )
                     .expect("valid content");
@@ -513,7 +522,7 @@ async fn session(
                                 ServerMsg::Snapshot {
                                     phase: gs.phase,
                                     turn: gs.turn,
-                                    ships: gs.snapshot_for(player),
+                                    ships: gs.snapshot_for(&content, player),
                                     committed: gs.committed,
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
@@ -530,7 +539,7 @@ async fn session(
                                 ServerMsg::Snapshot {
                                     phase: gs.phase,
                                     turn: gs.turn,
-                                    ships: gs.snapshot_for(player),
+                                    ships: gs.snapshot_for(&content, player),
                                     committed: gs.committed,
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,

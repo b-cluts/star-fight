@@ -11,11 +11,9 @@
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
             maneuver_set: 1,
             attack_dice: 2,
-            pilot_skill: 1,
             agility: 3, // no shields — dodging is all it has
             hull: 3,
             shields: 0,
-            squad_points: 12, // provisional
             action_bar: [Focus, BarrelRoll, Evade],
 
             sprite: "ships/tie-fighter.png",
@@ -33,18 +31,36 @@
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
             maneuver_set: 2,
             attack_dice: 3,
-            pilot_skill: 2,
             agility: 2,
             hull: 3,
             shields: 3,
-            squad_points: 24, // provisional
-            action_bar: [Focus, TargetLock, BarrelRoll, Boost],
+            // First Edition T-70: no native barrel roll.
+            action_bar: [Focus, TargetLock, Boost],
 
             sprite: "ships/xwing-t70.png",
             sprite_px: (720, 809),
             // Nose tip measured at pixel row 1, centered on x = 362.
             anchor_px: (362, 1),
             portrait: None,
+        ),
+        (
+            id: 3,
+            name: "TIE/fo Fighter",
+            faction: Empire, // First Order
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 3,
+            attack_dice: 2,
+            agility: 3,
+            hull: 3,
+            shields: 1,
+            action_bar: [Focus, TargetLock, BarrelRoll, Evade],
+
+            // Placeholder art: shares the TIE/ln sprite until its own lands.
+            sprite: "ships/tie-fighter.png",
+            sprite_px: (461, 566),
+            anchor_px: (230, 0),
+            portrait: Some("portraits/tie-fighter.png"),
         ),
     ],
 )

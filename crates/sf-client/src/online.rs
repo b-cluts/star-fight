@@ -1131,9 +1131,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];
         let mut line = format!(
-            "{} ({}) — hull {}/{} shields {}/{} stress {} focus {} evade {}",
+            "{} ({}, {} PS{}) — hull {}/{} shields {}/{} stress {} focus {} evade {}",
             view.callsign,
             class.name,
+            view.pilot,
+            view.skill,
             view.hull,
             class.hull,
             view.shields,

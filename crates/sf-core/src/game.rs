@@ -16,6 +16,7 @@ use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose};
 use crate::maneuver::{self, Difficulty, Maneuver};
+use crate::pilot::PilotId;
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
 
@@ -235,6 +236,10 @@ pub struct ShipView {
     pub owner: PlayerId,
     pub class: ShipClassId,
     pub callsign: String,
+    /// Pilot card name and printed skill (crits may lower the effective
+    /// skill; see `pilot_skill`).
+    pub pilot: String,
+    pub skill: u8,
     pub pose: Option<Pose>,
     pub hull: u8,
     pub shields: u8,
@@ -267,22 +272,26 @@ pub struct GameState {
 }
 
 impl GameState {
-    /// `fleets[0]` deploys South (seat 0), `fleets[1]` North (seat 1).
+    /// `fleets[0]` deploys South (seat 0), `fleets[1]` North (seat 1);
+    /// each entry is a pilot card, which implies the ship class.
     /// `tie_roll` is one red die drawn by the server, used only when the
     /// squad totals are equal.
     pub fn new(
         board: Board,
         content: &Content,
-        fleets: [&[ShipClassId]; 2],
+        fleets: [&[PilotId]; 2],
         tie_roll: crate::dice::AttackFace,
     ) -> Result<Self, String> {
+        let pilot_of =
+            |id: PilotId| content.pilots.pilot(id).ok_or_else(|| format!("unknown pilot {id:?}"));
         // Squad names follow each fleet's faction (first ship decides).
         let factions: Vec<crate::ship::Faction> = fleets
             .iter()
             .map(|fleet| {
                 fleet
                     .first()
-                    .and_then(|id| content.ships.class(*id))
+                    .and_then(|id| content.pilots.pilot(*id))
+                    .and_then(|p| content.ships.class(p.class))
                     .map(|c| c.faction)
                     .unwrap_or(crate::ship::Faction::RebelAlliance)
             })
@@ -290,7 +299,9 @@ impl GameState {
         let squads = crate::ship::squad_names(&factions);
         let mut ships = Vec::new();
         for (seat, fleet) in fleets.iter().enumerate() {
-            for (n, &class_id) in fleet.iter().enumerate() {
+            for (n, &pilot_id) in fleet.iter().enumerate() {
+                let pilot = pilot_of(pilot_id)?;
+                let class_id = pilot.class;
                 let class = content
                     .ships
                     .class(class_id)
@@ -304,6 +315,7 @@ impl GameState {
                     id: ShipId(ships.len() as u32),
                     owner: PlayerId(seat as u32),
                     class: class_id,
+                    pilot: pilot_id,
                     callsign: crate::ship::default_callsign(squad, n),
                     pose: None,
                     hull: class.hull,
@@ -323,8 +335,8 @@ impl GameState {
         for (seat, fleet) in fleets.iter().enumerate() {
             squad_totals[seat] = fleet
                 .iter()
-                .map(|id| content.ships.class(*id).expect("checked above").squad_points as u32)
-                .sum();
+                .map(|id| pilot_of(*id).map(|p| p.cost as u32))
+                .sum::<Result<_, _>>()?;
         }
         let initiative = PlayerId(initiative_seat(squad_totals, tie_roll) as u32);
         Ok(Self {
@@ -353,7 +365,7 @@ impl GameState {
         if s.crits.contains(&CritEffect::DamagedCockpit) {
             0
         } else {
-            self.class_of(content, s).pilot_skill
+            content.pilots.pilot(s.pilot).map(|p| p.skill).unwrap_or(0)
         }
     }
 
@@ -831,6 +843,8 @@ impl GameState {
                     maneuver::Steer::KTurn => Some(maneuver::Steer::Straight),
                     maneuver::Steer::TallonLeft => Some(maneuver::Steer::TurnLeft),
                     maneuver::Steer::TallonRight => Some(maneuver::Steer::TurnRight),
+                    maneuver::Steer::SegnorLeft => Some(maneuver::Steer::BankLeft),
+                    maneuver::Steer::SegnorRight => Some(maneuver::Steer::BankRight),
                     _ => None,
                 };
                 if let Some(steer) = degraded
@@ -1276,7 +1290,9 @@ impl GameState {
     }
 
     /// What `viewer` is allowed to see right now.
-    pub fn snapshot_for(&self, viewer: PlayerId) -> Vec<ShipView> {
+    pub fn snapshot_for(&self, content: &Content, viewer: PlayerId) -> Vec<ShipView> {
+        let pilot_name = |id| content.pilots.pilot(id).map(|p| p.name.clone()).unwrap_or_default();
+        let pilot_skill = |id| content.pilots.pilot(id).map(|p| p.skill).unwrap_or(0);
         self.ships
             .iter()
             .map(|s| {
@@ -1286,6 +1302,8 @@ impl GameState {
                     owner: s.owner,
                     class: s.class,
                     callsign: s.callsign.clone(),
+                    pilot: pilot_name(s.pilot),
+                    skill: pilot_skill(s.pilot),
                     pose: if own || self.phase != Phase::Placement { s.pose } else { None },
                     hull: s.hull,
                     shields: s.shields,
@@ -1319,6 +1337,7 @@ mod tests {
         Content::from_ron(
             &std::fs::read_to_string(format!("{dir}/ships.ron")).unwrap(),
             &std::fs::read_to_string(format!("{dir}/maneuvers.ron")).unwrap(),
+            &std::fs::read_to_string(format!("{dir}/pilots.ron")).unwrap(),
         )
         .unwrap()
     }
@@ -1327,8 +1346,20 @@ mod tests {
         Board { width: 20.0, height: 20.0, deploy_depth: 3.0 }
     }
 
+    /// Basic (cheapest generic) pilot of each class — the sandbox-era
+    /// fixed fleets.
+    fn fleet(c: &Content, classes: &[ShipClassId]) -> Vec<PilotId> {
+        classes.iter().map(|k| c.pilots.basic_for(*k).unwrap().id).collect()
+    }
+
     fn new_1v1(c: &Content) -> GameState {
-        GameState::new(board(), c, [&[TIE], &[XWING]], crate::dice::AttackFace::Hit).unwrap()
+        GameState::new(
+            board(),
+            c,
+            [&fleet(c, &[TIE]), &fleet(c, &[XWING])],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap()
     }
 
     /// Index of a maneuver on a class's dial.
@@ -1352,13 +1383,15 @@ mod tests {
         let mut gs = GameState::new(
             board(),
             &c,
-            [&[TIE, TIE][..], &[XWING, XWING][..]],
+            [&fleet(&c, &[TIE, TIE]), &fleet(&c, &[XWING, XWING])],
             crate::dice::AttackFace::Hit,
         )
         .unwrap();
         let names: Vec<&str> = gs.ships.iter().map(|s| s.callsign.as_str()).collect();
         assert_eq!(names, ["Obsidian-leader", "Obsidian-2", "Red-leader", "Red-2"]);
-        assert_eq!(gs.snapshot_for(P1)[3].callsign, "Red-2");
+        assert_eq!(gs.snapshot_for(&c, P1)[3].callsign, "Red-2");
+        assert_eq!(gs.snapshot_for(&c, P1)[3].pilot, "Blue Squadron Novice");
+        assert_eq!(gs.snapshot_for(&c, P1)[3].skill, 2);
 
         assert_eq!(gs.rename(P1, ShipId(3), "  Rogue-3 "), Ok(()));
         assert_eq!(gs.ships[3].callsign, "Rogue-3");
@@ -1416,12 +1449,12 @@ mod tests {
         );
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.0, FRAC_PI_2)).unwrap();
         // P1 cannot see P0's pose during placement; P0 can.
-        assert!(gs.snapshot_for(P1)[0].pose.is_none());
-        assert!(gs.snapshot_for(P0)[0].pose.is_some());
+        assert!(gs.snapshot_for(&c, P1)[0].pose.is_none());
+        assert!(gs.snapshot_for(&c, P0)[0].pose.is_some());
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
         assert_eq!(gs.phase, Phase::Planning);
         // Everything visible once placement ends.
-        assert!(gs.snapshot_for(P1)[0].pose.is_some());
+        assert!(gs.snapshot_for(&c, P1)[0].pose.is_some());
     }
 
     #[test]
@@ -1431,7 +1464,7 @@ mod tests {
         place_both(&c, &mut gs);
         gs.plan_maneuver(&c, P0, ShipId(0), straight2(&c, TIE)).unwrap();
         // Opponent never sees the plan.
-        assert!(gs.snapshot_for(P1)[0].plan.is_none());
+        assert!(gs.snapshot_for(&c, P1)[0].plan.is_none());
         gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
         assert_eq!(gs.commit_plans(&c, P0, &mut || 7).unwrap(), None);
         let moves = gs.commit_plans(&c, P1, &mut || 7).unwrap().unwrap().moves;
@@ -1630,9 +1663,13 @@ mod tests {
         let c = content();
         // Two TIEs south, one X-Wing north; TIE #0 flies straight through
         // the space occupied by TIE #1 and lands cleanly beyond it.
-        let mut gs =
-            GameState::new(board(), &c, [&[TIE, TIE], &[XWING]], crate::dice::AttackFace::Hit)
-                .unwrap();
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&fleet(&c, &[TIE, TIE]), &fleet(&c, &[XWING])],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 1.15, FRAC_PI_2)).unwrap();
         // Blocker faces east across #0's path (hull y 2.0-3.0).
         gs.place_ship(&c, P0, ShipId(1), Pose::new(10.0, 2.5, 0.0)).unwrap();
@@ -2005,8 +2042,13 @@ mod tests {
     fn equal_skill_fires_simultaneously_and_initiative_wins_mutual_kill() {
         let c = content();
         // TIE mirror match: equal squads, tie roll Hit → P0 has initiative.
-        let mut gs =
-            GameState::new(board(), &c, [&[TIE], &[TIE]], crate::dice::AttackFace::Hit).unwrap();
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&fleet(&c, &[TIE]), &fleet(&c, &[TIE])],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
         assert_eq!(gs.initiative, P0);
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
@@ -2039,9 +2081,13 @@ mod tests {
     #[test]
     fn declare_target_prompt_when_several_enemies_in_arc() {
         let c = content();
-        let mut gs =
-            GameState::new(board(), &c, [&[TIE], &[XWING, XWING]], crate::dice::AttackFace::Hit)
-                .unwrap();
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&fleet(&c, &[TIE]), &fleet(&c, &[XWING, XWING])],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
         // TIE south; two X-Wings north, both ending inside its arc at R3
         // (#1 a hair nearer than #2).
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();

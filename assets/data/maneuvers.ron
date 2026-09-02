@@ -57,5 +57,35 @@
                 (steer: KTurn, distance: 4, difficulty: Hard),
             ],
         ),
+        (
+            id: 3, // TIE/fo dial (First Edition card)
+            maneuvers: [
+                // Speed 1: turns white, banks green.
+                (steer: TurnLeft,  distance: 1, difficulty: Normal),
+                (steer: BankLeft,  distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Easy),
+                (steer: TurnRight, distance: 1, difficulty: Normal),
+                // Speed 2: turns white, banks and straight green.
+                (steer: TurnLeft,  distance: 2, difficulty: Normal),
+                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: Straight,  distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: TurnRight, distance: 2, difficulty: Normal),
+                // Speed 3: straight green, everything else white; red
+                // Segnor's loops (bank then flip).
+                (steer: TurnLeft,  distance: 3, difficulty: Normal),
+                (steer: BankLeft,  distance: 3, difficulty: Normal),
+                (steer: Straight,  distance: 3, difficulty: Easy),
+                (steer: BankRight, distance: 3, difficulty: Normal),
+                (steer: TurnRight, distance: 3, difficulty: Normal),
+                (steer: SegnorLeft,  distance: 3, difficulty: Hard),
+                (steer: SegnorRight, distance: 3, difficulty: Hard),
+                // Speed 4: straight white, Koiogran red.
+                (steer: Straight, distance: 4, difficulty: Normal),
+                (steer: KTurn,    distance: 4, difficulty: Hard),
+                // Speed 5: straight white.
+                (steer: Straight, distance: 5, difficulty: Normal),
+            ],
+        ),
     ],
 )

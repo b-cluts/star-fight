@@ -26,6 +26,10 @@ pub enum Steer {
     /// 180° in place — ends facing backward. Speeds 1..=5 geometrically;
     /// which speeds a ship may fly comes from its dial.
     KTurn,
+    /// Segnor's loop: fly a bank template, then flip 180° in place — ends
+    /// facing back the way it came, offset to the flank. Speeds as banks.
+    SegnorLeft,
+    SegnorRight,
 }
 
 /// Maneuver difficulty, color-coded as on the physical dials. Stress rules
@@ -110,6 +114,11 @@ pub fn segments(m: Maneuver) -> Result<Vec<Segment>, BadManeuver> {
         Steer::KTurn => {
             let ahead = templates::straight_length(m.distance).ok_or(bad)?;
             vec![Segment::Line(ahead), Segment::Rotate(PI)]
+        }
+        Steer::SegnorLeft | Steer::SegnorRight => {
+            let radius = templates::bank_radius(m.distance).ok_or(bad)?;
+            let sign = if m.steer == Steer::SegnorLeft { 1.0 } else { -1.0 };
+            vec![Segment::Arc { radius, sweep: sign * FRAC_PI_4 }, Segment::Rotate(PI)]
         }
     })
 }
@@ -199,18 +208,35 @@ mod tests {
     }
 
     #[test]
+    fn segnor_loop_is_bank_then_flip() {
+        let bank = apply(Pose::new(0.0, 0.0, 0.0), m(Steer::BankLeft, 3)).unwrap();
+        let p = apply(Pose::new(0.0, 0.0, 0.0), m(Steer::SegnorLeft, 3)).unwrap();
+        assert!(approx(p.anchor.x, bank.anchor.x));
+        assert!(approx(p.anchor.y, bank.anchor.y));
+        // Bank left = +45°, then a half turn: heading ends at 45° - 180°.
+        let want = (FRAC_PI_4 + PI).rem_euclid(2.0 * PI);
+        assert!(approx(p.heading.rem_euclid(2.0 * PI), want), "heading {}", p.heading);
+    }
+
+    #[test]
     fn left_and_right_are_mirrors() {
         for (l, r, max) in [
             (Steer::BankLeft, Steer::BankRight, 3),
             (Steer::TurnLeft, Steer::TurnRight, 4),
             (Steer::TallonLeft, Steer::TallonRight, 4),
+            (Steer::SegnorLeft, Steer::SegnorRight, 3),
         ] {
             for speed in 1..=max {
                 let pl = apply(Pose::new(0.0, 0.0, 0.0), m(l, speed)).unwrap();
                 let pr = apply(Pose::new(0.0, 0.0, 0.0), m(r, speed)).unwrap();
                 assert!(approx(pl.anchor.x, pr.anchor.x));
                 assert!(approx(pl.anchor.y, -pr.anchor.y));
-                assert!(approx(pl.heading, -pr.heading));
+                assert!(
+                    approx(pl.heading.rem_euclid(2.0 * PI), (-pr.heading).rem_euclid(2.0 * PI)),
+                    "left {l:?} speed {speed}: pl.heading={}, pr.heading={}",
+                    pl.heading,
+                    pr.heading
+                );
             }
         }
     }
@@ -243,6 +269,7 @@ mod tests {
         assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::TallonRight, 5)).is_err());
         assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::BankRight, 0)).is_err());
         assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::KTurn, 6)).is_err());
+        assert!(apply(Pose::new(0.0, 0.0, 0.0), m(Steer::SegnorLeft, 4)).is_err());
     }
 
     #[test]

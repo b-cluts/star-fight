@@ -5,6 +5,7 @@ use ron::extensions::Extensions;
 use serde::{Deserialize, Serialize};
 
 use crate::maneuver::{ManeuverSet, ManeuverSetId};
+use crate::pilot::{Pilot, PilotId, Source};
 use crate::ship::{ShipClass, ShipClassId};
 
 /// RON parser configured so ID newtypes (`ShipClassId(1)`) can be written
@@ -35,11 +36,51 @@ impl ShipDb {
 pub struct Content {
     pub ships: ShipDb,
     pub dials: ManeuverDb,
+    pub pilots: PilotDb,
 }
 
 impl Content {
-    pub fn from_ron(ships: &str, dials: &str) -> Result<Self, ron::error::SpannedError> {
-        Ok(Self { ships: ShipDb::from_ron(ships)?, dials: ManeuverDb::from_ron(dials)? })
+    pub fn from_ron(
+        ships: &str,
+        dials: &str,
+        pilots: &str,
+    ) -> Result<Self, ron::error::SpannedError> {
+        Ok(Self {
+            ships: ShipDb::from_ron(ships)?,
+            dials: ManeuverDb::from_ron(dials)?,
+            pilots: PilotDb::from_ron(pilots)?,
+        })
+    }
+}
+
+/// Contents of `assets/data/pilots.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PilotDb {
+    pub pilots: Vec<Pilot>,
+}
+
+impl PilotDb {
+    pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
+        parser().from_str(s)
+    }
+
+    pub fn pilot(&self, id: PilotId) -> Option<&Pilot> {
+        self.pilots.iter().find(|p| p.id == id)
+    }
+
+    /// The cheapest (basic, non-unique) pilot of a class — what fixed
+    /// fleets fly until the squad builder exists.
+    pub fn basic_for(&self, class: ShipClassId) -> Option<&Pilot> {
+        self.pilots.iter().filter(|p| p.class == class && !p.unique).min_by_key(|p| p.cost)
+    }
+
+    /// Pilots of a class, optionally restricted to some source packs.
+    pub fn roster(&self, class: ShipClassId, sources: Option<&[Source]>) -> Vec<&Pilot> {
+        self.pilots
+            .iter()
+            .filter(|p| p.class == class)
+            .filter(|p| sources.is_none_or(|s| s.contains(&p.source)))
+            .collect()
     }
 }
 
@@ -68,6 +109,35 @@ mod tests {
     fn read_asset(name: &str) -> String {
         let path = format!("{}/../../assets/data/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    }
+
+    #[test]
+    fn pilots_reference_real_classes_and_core_rosters_exist() {
+        let ships = ShipDb::from_ron(&read_asset("ships.ron")).expect("ships.ron");
+        let pilots = PilotDb::from_ron(&read_asset("pilots.ron")).expect("pilots.ron");
+        let mut ids = std::collections::HashSet::new();
+        for p in &pilots.pilots {
+            assert!(ids.insert(p.id), "duplicate pilot id {:?}", p.id);
+            assert!(ships.class(p.class).is_some(), "{} flies an unknown class", p.name);
+            assert!((1..=12).contains(&p.skill), "{} skill out of range", p.name);
+            assert!(p.cost > 0);
+        }
+        for class in &ships.classes {
+            let basic = pilots
+                .basic_for(class.id)
+                .unwrap_or_else(|| panic!("{} has no pilots", class.name));
+            assert!(!basic.unique && basic.ability.is_none(), "{} basic pilot", class.name);
+        }
+        // The Force Awakens core set: 4 T-70 pilots, 6 TIE/fo pilots.
+        assert_eq!(pilots.roster(ShipClassId(2), Some(&[Source::CoreSet])).len(), 4);
+        assert_eq!(pilots.roster(ShipClassId(3), Some(&[Source::CoreSet])).len(), 6);
+        // TIE/fo pilots pay 3 points over the TIE/ln at equal skill (1, 3, 4).
+        for (ln, fo) in [(112, 306), (111, 305), (110, 304)] {
+            let a = pilots.pilot(PilotId(ln)).unwrap();
+            let b = pilots.pilot(PilotId(fo)).unwrap();
+            assert_eq!(a.skill, b.skill);
+            assert_eq!(a.cost + 3, b.cost);
+        }
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod dice;
 pub mod game;
 pub mod geometry;
 pub mod maneuver;
+pub mod pilot;
 pub mod rules;
 pub mod ship;
 pub mod templates;

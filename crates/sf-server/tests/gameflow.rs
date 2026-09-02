@@ -25,6 +25,7 @@ fn content() -> Content {
     Content::from_ron(
         &std::fs::read_to_string(format!("{dir}/ships.ron")).unwrap(),
         &std::fs::read_to_string(format!("{dir}/maneuvers.ron")).unwrap(),
+        &std::fs::read_to_string(format!("{dir}/pilots.ron")).unwrap(),
     )
     .unwrap()
 }

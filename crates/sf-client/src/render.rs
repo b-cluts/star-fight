@@ -134,6 +134,8 @@ pub fn steer_name(s: Steer) -> &'static str {
         Steer::TallonLeft => "Tallon Roll Left",
         Steer::TallonRight => "Tallon Roll Right",
         Steer::KTurn => "Koiogran Turn",
+        Steer::SegnorLeft => "Segnor's Loop Left",
+        Steer::SegnorRight => "Segnor's Loop Right",
     }
 }
 

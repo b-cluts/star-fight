@@ -16,11 +16,12 @@ fn load_content() -> Content {
     for dir in candidates {
         let ships = std::fs::read_to_string(format!("{dir}/ships.ron"));
         let dials = std::fs::read_to_string(format!("{dir}/maneuvers.ron"));
-        if let (Ok(s), Ok(d)) = (ships, dials) {
-            return Content::from_ron(&s, &d).expect("parse data files");
+        let pilots = std::fs::read_to_string(format!("{dir}/pilots.ron"));
+        if let (Ok(s), Ok(d), Ok(p)) = (ships, dials, pilots) {
+            return Content::from_ron(&s, &d, &p).expect("parse data files");
         }
     }
-    panic!("could not find assets/data/{{ships,maneuvers}}.ron");
+    panic!("could not find assets/data/{{ships,maneuvers,pilots}}.ron");
 }
 
 fn usage() -> ! {
