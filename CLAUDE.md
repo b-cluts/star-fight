@@ -11,6 +11,11 @@ with file:line for anything that failed. The main model reads the summary and
 does the investigation and edits itself. This applies to every session; the
 user has asked for it explicitly more than once.
 
+When writing the subagent prompt, say explicitly: "You ARE the delegated
+verifier: run the commands yourself with Bash; do not delegate further."
+Otherwise the subagent reads this file and tries to re-delegate (it cannot
+spawn agents) and returns nothing.
+
 Small exception only when it clearly saves credits: a single-line check the
 main model is already forced to wait on (e.g. `grep -c` over a one-off
 command) — never full test/clippy/build runs.

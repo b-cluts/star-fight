@@ -10,6 +10,11 @@ sf-proto = { path = "../sf-proto" }
 tokio = { version = "1", features = ["rt", "net", "sync", "time", "io-util", "macros"] }
 tokio-tungstenite = "0.23"
 futures-util = "0.3"
+# M4 security: pinned-certificate TLS (ring provider only).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+# Clipboard paste for the join string / fingerprint fields.
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 # Trimmed feature set: 2D sprites, UI text, gizmos, states, PNG — no audio/3D/gltf.
 bevy = { version = "0.16", default-features = false, features = [
     "bevy_asset",

@@ -1,30 +1,43 @@
-//! Main menu: name / server address / join code fields, and
-//! Create / Join / Sandbox actions.
+//! Main menu: name / server / password / fingerprint / join code fields,
+//! and Create / Join / Sandbox actions. The Server field accepts the
+//! `starfight://host:port/#fingerprint` join string printed by the server
+//! (Ctrl+V pastes); pins are remembered per host:port after the first
+//! successful connection.
 
-use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 
 use sf_proto::messages::ClientMsg;
+use sf_proto::tls::{Target, parse_target};
 
 use crate::online::Online;
 use crate::render::HudText;
-use crate::{net, Screen};
+use crate::{Screen, net, pins};
 
 #[derive(Resource)]
 pub struct MenuForm {
     pub name: String,
     pub addr: String,
+    pub password: String,
+    pub fingerprint: String,
     pub code: String,
     pub focus: Field,
     pub error: String,
 }
 
-impl Default for MenuForm {
-    fn default() -> Self {
+impl MenuForm {
+    /// Last-used name/server from the config file; a command-line join
+    /// string (`sf-client starfight://…`) overrides the server.
+    pub fn load(arg_addr: Option<String>) -> Self {
+        let saved = pins::load_menu();
         Self {
-            name: "pilot".into(),
-            addr: "ws://127.0.0.1:7777".into(),
+            name: saved.get("name").cloned().unwrap_or_else(|| "pilot".into()),
+            addr: arg_addr
+                .or_else(|| saved.get("server").cloned())
+                .unwrap_or_else(|| "127.0.0.1:7777".into()),
+            password: String::new(),
+            fingerprint: String::new(),
             code: String::new(),
             focus: Field::Name,
             error: String::new(),
@@ -36,8 +49,13 @@ impl Default for MenuForm {
 pub enum Field {
     Name,
     Addr,
+    Password,
+    Fingerprint,
     Code,
 }
+
+const FIELDS: [Field; 5] =
+    [Field::Name, Field::Addr, Field::Password, Field::Fingerprint, Field::Code];
 
 #[derive(Component, Clone, Copy)]
 pub enum MenuAction {
@@ -56,13 +74,10 @@ struct FieldLabel(Field);
 struct ErrorLabel;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<MenuForm>()
+    app.insert_resource(MenuForm::load(std::env::args().nth(1)))
         .add_systems(OnEnter(Screen::Menu), spawn_menu)
         .add_systems(OnExit(Screen::Menu), despawn_menu)
-        .add_systems(
-            Update,
-            (typing, buttons, refresh).chain().run_if(in_state(Screen::Menu)),
-        );
+        .add_systems(Update, (typing, buttons, refresh).chain().run_if(in_state(Screen::Menu)));
 }
 
 const IDLE: Color = Color::srgba(0.12, 0.14, 0.22, 0.92);
@@ -93,7 +108,7 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                 TextFont { font_size: 42.0, ..default() },
                 TextColor(Color::srgb(0.9, 0.9, 1.0)),
             ));
-            for field in [Field::Name, Field::Addr, Field::Code] {
+            for field in FIELDS {
                 root.spawn((
                     Button,
                     field,
@@ -149,7 +164,10 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                 TextColor(Color::srgb(1.0, 0.55, 0.5)),
             ));
             root.spawn((
-                Text::new("click a field to edit • Tab switches fields"),
+                Text::new(
+                    "click a field to edit • Tab switches fields • Ctrl+V pastes\n\
+                     Server takes the starfight://host:port/#fingerprint join string",
+                ),
                 TextFont { font_size: 13.0, ..default() },
                 TextColor(Color::srgba(0.8, 0.8, 0.9, 0.6)),
             ));
@@ -162,18 +180,34 @@ fn despawn_menu(mut commands: Commands, menu: Query<Entity, With<MenuTag>>) {
     }
 }
 
-fn typing(mut events: EventReader<KeyboardInput>, mut form: ResMut<MenuForm>) {
+fn typing(
+    mut events: EventReader<KeyboardInput>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut form: ResMut<MenuForm>,
+) {
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     for ev in events.read() {
         if ev.state != ButtonState::Pressed {
             continue;
         }
+        if ctrl {
+            if ev.key_code == KeyCode::KeyV {
+                let f = form.focus;
+                match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+                    Ok(text) => {
+                        let buf = field_mut(&mut form, f);
+                        buf.clear();
+                        buf.extend(text.trim().chars().filter(|c| !c.is_control()).take(200));
+                    }
+                    Err(e) => form.error = format!("clipboard: {e}"),
+                }
+            }
+            continue;
+        }
         match &ev.logical_key {
             Key::Tab => {
-                form.focus = match form.focus {
-                    Field::Name => Field::Addr,
-                    Field::Addr => Field::Code,
-                    Field::Code => Field::Name,
-                };
+                let i = FIELDS.iter().position(|f| *f == form.focus).unwrap_or(0);
+                form.focus = FIELDS[(i + 1) % FIELDS.len()];
             }
             Key::Backspace => {
                 let f = form.focus;
@@ -188,7 +222,7 @@ fn typing(mut events: EventReader<KeyboardInput>, mut form: ResMut<MenuForm>) {
                 let upper = f == Field::Code;
                 let buf = field_mut(&mut form, f);
                 for c in s.chars().filter(|c| !c.is_control()) {
-                    if buf.len() < 48 {
+                    if buf.len() < 200 {
                         buf.push(if upper { c.to_ascii_uppercase() } else { c });
                     }
                 }
@@ -202,8 +236,46 @@ fn field_mut(form: &mut MenuForm, f: Field) -> &mut String {
     match f {
         Field::Name => &mut form.name,
         Field::Addr => &mut form.addr,
+        Field::Password => &mut form.password,
+        Field::Fingerprint => &mut form.fingerprint,
         Field::Code => &mut form.code,
     }
+}
+
+/// Resolve the typed server + fingerprint against the remembered pin for
+/// that host:port. A remembered pin that contradicts the typed one is a
+/// hard error — never a silent re-pin.
+fn resolve_target(form: &MenuForm) -> Result<Target, String> {
+    // Plaintext ws:// needs no pin; otherwise a remembered pin can stand in
+    // for a missing fingerprint.
+    let mut target = match parse_target(&form.addr, &form.fingerprint) {
+        Ok(t) => t,
+        Err(e) if form.fingerprint.trim().is_empty() => {
+            let Ok(probe) = parse_target(&form.addr, "0000000000000000") else {
+                return Err(e);
+            };
+            match pins::pin_for(&probe.key()) {
+                Some(pin) => Target { fingerprint: Some(pin), ..probe },
+                None => return Err(e),
+            }
+        }
+        Err(e) => return Err(e),
+    };
+    if let (Some(typed), Some(saved)) = (&target.fingerprint, pins::pin_for(&target.key())) {
+        if saved.starts_with(typed.as_str()) {
+            target.fingerprint = Some(saved);
+        } else if !typed.starts_with(saved.as_str()) {
+            return Err(format!(
+                "FINGERPRINT CHANGED for {}: remembered {}… but given {}…. If the server was \
+                 reinstalled, delete its line in {}",
+                target.key(),
+                &saved[..16],
+                &typed[..16],
+                pins::pins_path().display()
+            ));
+        }
+    }
+    Ok(target)
 }
 
 fn buttons(
@@ -230,10 +302,17 @@ fn buttons(
                     form.error = "enter a name first".into();
                     continue;
                 }
+                let target = match resolve_target(&form) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        form.error = e;
+                        continue;
+                    }
+                };
                 let hello = ClientMsg::Hello {
                     proto_version: sf_proto::PROTOCOL_VERSION,
                     name: form.name.trim().into(),
-                    password: String::new(),
+                    password: form.password.clone(),
                 };
                 let second = match action {
                     MenuAction::Create => ClientMsg::CreateGame,
@@ -247,9 +326,11 @@ fn buttons(
                     MenuAction::Sandbox => unreachable!(),
                 };
                 form.error.clear();
+                pins::save_menu(form.name.trim(), form.addr.trim());
                 *online = Online::default();
-                online.status = format!("Connecting to {}…", form.addr.trim());
-                online.net = Some(net::connect(form.addr.trim().into(), vec![hello, second]));
+                online.status = format!("Connecting to {}…", target.key());
+                online.net = Some(net::connect(target.clone(), vec![hello, second]));
+                online.target = Some(target);
                 next.set(Screen::Online);
             }
         }
@@ -263,10 +344,13 @@ fn refresh(
     mut fields: Query<(&Field, &mut BackgroundColor), With<Button>>,
 ) {
     for (label, mut text) in &mut labels {
+        let masked = "•".repeat(form.password.chars().count());
         let (title, value) = match label.0 {
-            Field::Name => ("Name", &form.name),
-            Field::Addr => ("Server", &form.addr),
-            Field::Code => ("Game code", &form.code),
+            Field::Name => ("Name", form.name.clone()),
+            Field::Addr => ("Server", form.addr.clone()),
+            Field::Password => ("Password", masked),
+            Field::Fingerprint => ("Cert fingerprint", form.fingerprint.clone()),
+            Field::Code => ("Game code", form.code.clone()),
         };
         let cursor = if form.focus == label.0 { "_" } else { "" };
         text.0 = format!("{title}: {value}{cursor}");

@@ -8,13 +8,14 @@
 mod menu;
 mod net;
 mod online;
+mod pins;
 mod render;
 mod sandbox;
 mod starfield;
 
 use bevy::prelude::*;
-use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
 use bevy::render::RenderPlugin;
+use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
 
 use sf_core::board::Board;
 use sf_core::data::{ManeuverDb, ShipDb};

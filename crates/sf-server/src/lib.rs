@@ -1,26 +1,35 @@
 //! Star Fight server: WebSocket listener, lobby with join codes, and one
 //! task per game session owning the authoritative GameState.
 //!
-//! M3: plaintext WebSocket on localhost. M4 adds TLS with the pinned
-//! self-signed certificate and the server password check.
+//! M4: TLS with a pinned self-signed certificate (see `tls`), a server
+//! password checked in constant time, and rate-limited join attempts.
+//! Plaintext is still available for tests and local development
+//! (`ServerOpts::insecure`).
+
+pub mod tls;
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rand::distributions::Alphanumeric;
 use rand::Rng;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use rand::distributions::Alphanumeric;
+use subtle::ConstantTimeEq;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite::Message;
 
 use sf_core::board::Board;
 use sf_core::data::Content;
 use sf_core::game::{CombatStep, GameState, Phase};
 use sf_core::ship::{PlayerId, ShipClassId};
+use sf_proto::PROTOCOL_VERSION;
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
-use sf_proto::PROTOCOL_VERSION;
 
 /// Sandbox-era fixed fleets: seat 0 flies two TIEs, seat 1 two X-Wings.
 /// (Fleet selection becomes part of the lobby later.)
@@ -33,29 +42,113 @@ fn default_board() -> Board {
 
 type Lobby = Arc<Mutex<HashMap<String, mpsc::Sender<SessionCmd>>>>;
 
+/// Failed password attempts allowed per client address within
+/// [`RATE_WINDOW`] before further Hellos are refused outright.
+pub const RATE_LIMIT: u32 = 5;
+pub const RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Transport and admission settings.
+#[derive(Clone)]
+pub struct ServerOpts {
+    /// TLS identity; `None` accepts plaintext `ws://` (tests / dev only).
+    pub tls: Option<Arc<rustls::ServerConfig>>,
+    /// Required in every Hello; `None` disables the check.
+    pub password: Option<String>,
+}
+
+impl ServerOpts {
+    /// Plaintext, no password — for tests and local development.
+    pub fn insecure() -> Self {
+        Self { tls: None, password: None }
+    }
+}
+
+/// Shared admission state: failed-password counters per address.
+#[derive(Default)]
+struct Admission {
+    failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+}
+
+impl Admission {
+    async fn blocked(&self, ip: IpAddr) -> bool {
+        let mut map = self.failures.lock().await;
+        match map.get(&ip) {
+            Some((n, since)) if since.elapsed() < RATE_WINDOW => *n >= RATE_LIMIT,
+            Some(_) => {
+                map.remove(&ip);
+                false
+            }
+            None => false,
+        }
+    }
+
+    async fn failed(&self, ip: IpAddr) {
+        let mut map = self.failures.lock().await;
+        let e = map.entry(ip).or_insert((0, Instant::now()));
+        if e.1.elapsed() >= RATE_WINDOW {
+            *e = (0, Instant::now());
+        }
+        e.0 += 1;
+    }
+
+    async fn succeeded(&self, ip: IpAddr) {
+        self.failures.lock().await.remove(&ip);
+    }
+}
+
+/// Constant-time password check (no early exit on the first differing byte).
+fn password_ok(expected: &str, given: &str) -> bool {
+    expected.len() == given.len() && bool::from(expected.as_bytes().ct_eq(given.as_bytes()))
+}
+
 enum SessionCmd {
-    Join {
-        name: String,
-        resp: oneshot::Sender<Result<(u8, mpsc::Receiver<ServerMsg>), String>>,
-    },
-    Msg {
-        seat: u8,
-        msg: ClientMsg,
-    },
-    Disconnect {
-        seat: u8,
-    },
+    Join { name: String, resp: oneshot::Sender<Result<(u8, mpsc::Receiver<ServerMsg>), String>> },
+    Msg { seat: u8, msg: ClientMsg },
+    Disconnect { seat: u8 },
 }
 
 /// Accept connections forever. Callers bind the listener (tests use an
 /// ephemeral port).
-pub async fn run(listener: TcpListener, content: Arc<Content>) {
+pub async fn run(listener: TcpListener, content: Arc<Content>, opts: ServerOpts) {
     let lobby: Lobby = Arc::new(Mutex::new(HashMap::new()));
+    let admission = Arc::new(Admission::default());
+    let acceptor = opts.tls.clone().map(TlsAcceptor::from);
     loop {
-        let Ok((stream, addr)) = listener.accept().await else { continue };
+        let Ok((stream, addr)) = listener.accept().await else {
+            continue;
+        };
         println!("connection from {addr}");
-        tokio::spawn(handle_conn(stream, lobby.clone(), content.clone()));
+        let ctx = Conn {
+            lobby: lobby.clone(),
+            content: content.clone(),
+            admission: admission.clone(),
+            password: opts.password.clone(),
+            ip: addr.ip(),
+        };
+        match &acceptor {
+            Some(acceptor) => {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls) => handle_conn(tls, ctx).await,
+                        Err(e) => println!("TLS handshake with {addr} failed: {e}"),
+                    }
+                });
+            }
+            None => {
+                tokio::spawn(handle_conn(stream, ctx));
+            }
+        }
     }
+}
+
+/// Per-connection context handed to `handle_conn`.
+struct Conn {
+    lobby: Lobby,
+    content: Arc<Content>,
+    admission: Arc<Admission>,
+    password: Option<String>,
+    ip: IpAddr,
 }
 
 fn rand_string(len: usize) -> String {
@@ -66,15 +159,21 @@ fn rand_string(len: usize) -> String {
         .collect()
 }
 
-async fn handle_conn(stream: TcpStream, lobby: Lobby, content: Arc<Content>) {
-    let Ok(ws) = tokio_tungstenite::accept_async(stream).await else { return };
+async fn handle_conn<S>(stream: S, ctx: Conn)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let Conn { lobby, content, admission, password, ip } = ctx;
+    let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
+        return;
+    };
     let (mut tx, mut rx) = ws.split();
 
     // 1. Handshake.
     let name = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => match decode::<ClientMsg>(&t) {
-                Ok(ClientMsg::Hello { proto_version, name, password: _ }) => {
+                Ok(ClientMsg::Hello { proto_version, name, password: given }) => {
                     if proto_version != PROTOCOL_VERSION {
                         let _ = tx
                             .send(Message::Text(encode(&ServerMsg::Error {
@@ -84,6 +183,27 @@ async fn handle_conn(stream: TcpStream, lobby: Lobby, content: Arc<Content>) {
                             })))
                             .await;
                         return;
+                    }
+                    if let Some(expected) = &password {
+                        if admission.blocked(ip).await {
+                            let _ = tx
+                                .send(Message::Text(encode(&ServerMsg::Error {
+                                    message: "too many failed password attempts — try again later"
+                                        .into(),
+                                })))
+                                .await;
+                            return;
+                        }
+                        if !password_ok(expected, &given) {
+                            admission.failed(ip).await;
+                            let _ = tx
+                                .send(Message::Text(encode(&ServerMsg::Error {
+                                    message: "wrong server password".into(),
+                                })))
+                                .await;
+                            return;
+                        }
+                        admission.succeeded(ip).await;
                     }
                     let _ = tx
                         .send(Message::Text(encode(&ServerMsg::Welcome {
@@ -121,7 +241,8 @@ async fn handle_conn(stream: TcpStream, lobby: Lobby, content: Arc<Content>) {
                     tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone()));
                     lobby.lock().await.insert(code.clone(), cmd_tx.clone());
                     let (resp_tx, resp_rx) = oneshot::channel();
-                    let _ = cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
+                    let _ =
+                        cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
                     match resp_rx.await {
                         Ok(Ok((seat, rx_srv))) => {
                             let _ = tx
@@ -152,7 +273,8 @@ async fn handle_conn(stream: TcpStream, lobby: Lobby, content: Arc<Content>) {
                         continue;
                     };
                     let (resp_tx, resp_rx) = oneshot::channel();
-                    let _ = cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
+                    let _ =
+                        cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
                     match resp_rx.await {
                         Ok(Ok((seat, rx_srv))) => {
                             // Game now full: no more joins under this code.
@@ -284,7 +406,10 @@ async fn session(
                         for s in 0..players.len() as u8 {
                             send_to!(
                                 s,
-                                ServerMsg::AttackResult { attack: rec.clone(), events: events.clone() }
+                                ServerMsg::AttackResult {
+                                    attack: rec.clone(),
+                                    events: events.clone()
+                                }
                             );
                         }
                     }
@@ -292,7 +417,10 @@ async fn session(
                         let owner = p.owner.0 as u8;
                         let candidates: Vec<(sf_core::ship::ShipId, u8)> =
                             p.candidates.iter().map(|(id, r, _)| (*id, *r)).collect();
-                        send_to!(owner, ServerMsg::ChooseTarget { attacker: p.attacker, candidates });
+                        send_to!(
+                            owner,
+                            ServerMsg::ChooseTarget { attacker: p.attacker, candidates }
+                        );
                         send_to!(1 - owner, ServerMsg::OpponentChoosing { attacker: p.attacker });
                         break;
                     }
@@ -308,7 +436,10 @@ async fn session(
                             for s in 0..players.len() as u8 {
                                 send_to!(
                                     s,
-                                    ServerMsg::GameOver { winner, reason: "fleet destroyed".into() }
+                                    ServerMsg::GameOver {
+                                        winner,
+                                        reason: "fleet destroyed".into()
+                                    }
                                 );
                             }
                             game_over = true;
@@ -402,38 +533,34 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
-                    ClientMsg::CommitPlans => match gs.commit_plans_begin(
-                        &content,
-                        player,
-                        &mut || rand::random::<u8>(),
-                    ) {
-                        Ok(None) => snapshots!(&*gs),
-                        Ok(Some(act)) => {
-                            let (moves, events) = (act.moves, act.events);
-                            streamed = events.len();
-                            for s in 0..players.len() as u8 {
-                                send_to!(
-                                    s,
-                                    ServerMsg::MovementResult {
-                                        moves: moves.clone(),
-                                        events: events.clone(),
-                                    }
-                                );
+                    ClientMsg::CommitPlans => {
+                        match gs.commit_plans_begin(&content, player, &mut || rand::random::<u8>())
+                        {
+                            Ok(None) => snapshots!(&*gs),
+                            Ok(Some(act)) => {
+                                let (moves, events) = (act.moves, act.events);
+                                streamed = events.len();
+                                for s in 0..players.len() as u8 {
+                                    send_to!(
+                                        s,
+                                        ServerMsg::MovementResult {
+                                            moves: moves.clone(),
+                                            events: events.clone(),
+                                        }
+                                    );
+                                }
+                                drive_combat!(gs);
+                                if game_over {
+                                    break;
+                                }
                             }
-                            drive_combat!(gs);
-                            if game_over {
-                                break;
-                            }
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
-                        Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
-                    },
+                    }
                     ClientMsg::DeclareTarget { target } => {
-                        match gs.declare_target(
-                            &content,
-                            player,
-                            target,
-                            &mut || rand::random::<u8>(),
-                        ) {
+                        match gs
+                            .declare_target(&content, player, target, &mut || rand::random::<u8>())
+                        {
                             Ok(rec) => {
                                 let all = gs.combat_events();
                                 let events = all[streamed.min(all.len())..].to_vec();
@@ -474,10 +601,13 @@ async fn session(
             SessionCmd::Disconnect { seat } => {
                 if game.is_some() {
                     let winner = 1 - seat;
-                    send_to!(winner, ServerMsg::GameOver {
-                        winner: Some(winner),
-                        reason: "opponent disconnected".into(),
-                    });
+                    send_to!(
+                        winner,
+                        ServerMsg::GameOver {
+                            winner: Some(winner),
+                            reason: "opponent disconnected".into(),
+                        }
+                    );
                 }
                 break;
             }

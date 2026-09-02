@@ -17,9 +17,8 @@ use sf_core::ship::{ShipClassId, ShipId};
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
-type Ws = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn content() -> Content {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data");
@@ -73,7 +72,7 @@ async fn two_clients_play_a_full_turn() {
     let c = content();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    tokio::spawn(sf_server::run(listener, Arc::new(content())));
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
 
     let url = format!("ws://127.0.0.1:{port}");
     let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
@@ -140,8 +139,7 @@ async fn two_clients_play_a_full_turn() {
         (&mut b, [(2, 8.0, 18.0, -FRAC_PI_2), (3, 12.0, 18.0, -FRAC_PI_2)]),
     ] {
         for (id, x, y, h) in placements {
-            send(ws, &ClientMsg::PlaceShip { ship_id: ShipId(id), pose: Pose::new(x, y, h) })
-                .await;
+            send(ws, &ClientMsg::PlaceShip { ship_id: ShipId(id), pose: Pose::new(x, y, h) }).await;
         }
     }
 
@@ -167,8 +165,7 @@ async fn two_clients_play_a_full_turn() {
             .await;
     }
     for id in [2u32, 3] {
-        send(&mut b, &ClientMsg::PlanManeuver { ship_id: ShipId(id), maneuver_index: xw_s2 })
-            .await;
+        send(&mut b, &ClientMsg::PlanManeuver { ship_id: ShipId(id), maneuver_index: xw_s2 }).await;
     }
     send(&mut a, &ClientMsg::CommitPlans).await;
     send(&mut b, &ClientMsg::CommitPlans).await;

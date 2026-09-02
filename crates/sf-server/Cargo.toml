@@ -10,6 +10,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync",
 tokio-tungstenite = "0.23"
 futures-util = "0.3"
 rand = "0.8"
+# M4 security: TLS with a persisted self-signed certificate, constant-time
+# password comparison. ring provider only (no aws-lc build dependency).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+subtle = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }

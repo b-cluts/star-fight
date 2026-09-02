@@ -15,9 +15,10 @@ use sf_core::rules;
 use sf_core::ship::ShipId;
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
-use crate::net::{NetEvent, NetHandle};
-use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, ShowArcs};
 use crate::Screen;
+use crate::net::{NetEvent, NetHandle};
+use crate::pins;
+use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, ShowArcs};
 
 /// Path samples flown per second during resolution animation
 /// (samples are 0.1 units apart → 4 units/second).
@@ -42,11 +43,19 @@ pub struct Snap {
 #[derive(Clone)]
 pub enum AnimItem {
     Move(MoveRecord),
-    Attack { rec: AttackRecord, line: String },
+    Attack {
+        rec: AttackRecord,
+        line: String,
+    },
     /// The server asks us to declare a target for `attacker`.
-    Prompt { attacker: u32, candidates: Vec<(u32, u8)> },
+    Prompt {
+        attacker: u32,
+        candidates: Vec<(u32, u8)>,
+    },
     /// The opponent is declaring a target for their `attacker`.
-    Waiting { attacker: u32 },
+    Waiting {
+        attacker: u32,
+    },
     /// Combat finished: adopt the post-turn snapshot after this.
     TurnEnd,
 }
@@ -91,6 +100,8 @@ impl Anim {
 #[derive(Resource, Default)]
 pub struct Online {
     pub net: Option<NetHandle>,
+    /// Where we connected (host:port + pin), for remembering the pin.
+    pub target: Option<sf_proto::tls::Target>,
     pub seat: Option<u8>,
     pub code: Option<String>,
     pub opponent: String,
@@ -143,14 +154,22 @@ pub struct OnlineTag;
 pub struct OnlineShip(pub u32);
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Online>()
-        .add_systems(OnExit(Screen::Online), exit_online)
-        .add_systems(
-            Update,
-            (poll_net, sync_ships, animate, placement_input, planning_input, target_input, leave_keys, draw, hud)
-                .chain()
-                .run_if(in_state(Screen::Online)),
-        );
+    app.init_resource::<Online>().add_systems(OnExit(Screen::Online), exit_online).add_systems(
+        Update,
+        (
+            poll_net,
+            sync_ships,
+            animate,
+            placement_input,
+            planning_input,
+            target_input,
+            leave_keys,
+            draw,
+            hud,
+        )
+            .chain()
+            .run_if(in_state(Screen::Online)),
+    );
 }
 
 fn exit_online(
@@ -261,6 +280,11 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online.status = format!("Server: {message}");
                 }
             },
+            NetEvent::Secured(fp) => {
+                if let Some(t) = &online.target {
+                    pins::remember_pin(&t.key(), &fp);
+                }
+            }
             NetEvent::Closed(e) => {
                 if online.over.is_none() {
                     online.over = Some(format!("Connection closed: {e}"));
@@ -278,11 +302,8 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
     }
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
-    let (y, heading) = if seat == 0 {
-        (1.5, FRAC_PI_2)
-    } else {
-        (game.board.height - 1.5, -FRAC_PI_2)
-    };
+    let (y, heading) =
+        if seat == 0 { (1.5, FRAC_PI_2) } else { (game.board.height - 1.5, -FRAC_PI_2) };
     let mut seeds = Vec::new();
     let mut x = 5.0;
     for view in snap.ships.iter().filter(|s| s.owner.0 == seat as u32) {
@@ -340,7 +361,9 @@ fn target_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
-    let Some((_, candidates)) = online.prompt.clone() else { return };
+    let Some((_, candidates)) = online.prompt.clone() else {
+        return;
+    };
     let mut choice: Option<u32> = None;
     let digits = [
         KeyCode::Digit1,
@@ -363,8 +386,12 @@ fn target_input(
         && let (Some(a), Some(snap)) = (&online.anim, &online.snap)
     {
         for (id, _) in &candidates {
-            let Some(p) = a.end_pose(*id, snap) else { continue };
-            let Some(view) = snap.ships.iter().find(|v| v.id.0 == *id) else { continue };
+            let Some(p) = a.end_pose(*id, snap) else {
+                continue;
+            };
+            let Some(view) = snap.ships.iter().find(|v| v.id.0 == *id) else {
+                continue;
+            };
             let fp = game.ships.classes[game.class_index(view.class)].footprint;
             if rules::point_in_footprint(p, fp, cur) {
                 choice = Some(*id);
@@ -403,7 +430,9 @@ fn sync_ships(
         let class = &game.ships.classes[class_idx];
         match existing.get(&view.id.0) {
             Some(&e) => {
-                let Ok((_, _, mut sprite, mut tf, mut vis)) = ships_q.get_mut(e) else { continue };
+                let Ok((_, _, mut sprite, mut tf, mut vis)) = ships_q.get_mut(e) else {
+                    continue;
+                };
                 if animating {
                     continue;
                 }
@@ -549,9 +578,13 @@ fn placement_input(
         .map(|s| s.ships.iter().filter(|v| v.owner.0 == seat as u32).cloned().collect())
         .unwrap_or_default();
 
-    if buttons.just_pressed(MouseButton::Left) && let Some(cur) = cursor.0 {
+    if buttons.just_pressed(MouseButton::Left)
+        && let Some(cur) = cursor.0
+    {
         for view in &own_views {
-            let Some(pose) = online.effective_pose(view) else { continue };
+            let Some(pose) = online.effective_pose(view) else {
+                continue;
+            };
             let fp = game.ships.classes[game.class_index(view.class)].footprint;
             if rules::point_in_footprint(pose, fp, cur) {
                 online.drag = Some((view.id.0, pose.anchor - cur));
@@ -569,15 +602,19 @@ fn placement_input(
     if let (Some((id, off)), Some(cur)) = (online.drag, cursor.0) {
         let view = own_views.iter().find(|v| v.id.0 == id);
         if let Some(base) = view.and_then(|v| online.effective_pose(v)) {
-            online
-                .overrides
-                .insert(id, Pose { anchor: cur + off, heading: base.heading });
+            online.overrides.insert(id, Pose { anchor: cur + off, heading: base.heading });
         }
     }
 
     // Rotation on the dragged (else hovered) own ship.
     let scroll: f32 = wheel.read().map(|e| e.y).sum();
-    let mut steps = if scroll > 0.0 { 1.0f64 } else if scroll < 0.0 { -1.0 } else { 0.0 };
+    let mut steps = if scroll > 0.0 {
+        1.0f64
+    } else if scroll < 0.0 {
+        -1.0
+    } else {
+        0.0
+    };
     if keys.just_pressed(KeyCode::KeyQ) {
         steps += 1.0;
     }
@@ -651,7 +688,9 @@ fn planning_input(
 
     let dial_len = {
         let Some(snap) = &online.snap else { return };
-        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else { return };
+        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
+            return;
+        };
         let class = &game.ships.classes[game.class_index(view.class)];
         game.dial(class).len()
     };
@@ -675,7 +714,9 @@ fn planning_input(
     // 6 target lock (then click an enemy ship).
     let bar = {
         let Some(snap) = &online.snap else { return };
-        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else { return };
+        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
+            return;
+        };
         game.ships.classes[game.class_index(view.class)].action_bar.clone()
     };
     let plan_action = |online: &mut Online, action: PlannedAction| {
@@ -751,13 +792,19 @@ fn draw_attack_fx(
     rec: &sf_core::game::AttackRecord,
 ) {
     use sf_core::ship::Faction;
-    let Some(atk_pose) = anim.end_pose(rec.attacker.0, snap) else { return };
-    let Some(def_pose) = anim.end_pose(rec.defender.0, snap) else { return };
+    let Some(atk_pose) = anim.end_pose(rec.attacker.0, snap) else {
+        return;
+    };
+    let Some(def_pose) = anim.end_pose(rec.defender.0, snap) else {
+        return;
+    };
     let (atk_view, def_view) = (
         snap.ships.iter().find(|v| v.id.0 == rec.attacker.0),
         snap.ships.iter().find(|v| v.id.0 == rec.defender.0),
     );
-    let (Some(atk_view), Some(def_view)) = (atk_view, def_view) else { return };
+    let (Some(atk_view), Some(def_view)) = (atk_view, def_view) else {
+        return;
+    };
     let atk_class = &game.ships.classes[game.class_index(atk_view.class)];
     let def_class = &game.ships.classes[game.class_index(def_view.class)];
 
@@ -766,8 +813,7 @@ fn draw_attack_fx(
         Faction::Empire => Color::srgb(0.25, 1.0, 0.3),
     };
     let start = game.to_world(atk_pose.anchor);
-    let target =
-        game.to_world(sf_core::combat::base_center(def_pose, def_class.footprint));
+    let target = game.to_world(sf_core::combat::base_center(def_pose, def_class.footprint));
     let hit = rec.hits + rec.crits > 0;
     let to_target = target - start;
     let dist = to_target.length().max(1.0);
@@ -869,13 +915,17 @@ fn draw(
 ) {
     bullseye.0 = None;
     render::draw_board(&mut gizmos, &game);
-    let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else { return };
+    let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else {
+        return;
+    };
     *gvis = Visibility::Hidden;
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
 
     for view in &snap.ships {
-        let Some(pose) = online.effective_pose(view) else { continue };
+        let Some(pose) = online.effective_pose(view) else {
+            continue;
+        };
         if view.destroyed && online.anim.is_none() {
             continue;
         }
@@ -890,18 +940,13 @@ fn draw(
         // Placement legality tint for own provisional poses.
         if own && snap.phase == Phase::Placement {
             let zone_seat = if seat == 0 { Seat::South } else { Seat::North };
-            if rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[]).is_err()
-            {
+            if rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[]).is_err() {
                 color = Color::srgb(1.0, 0.35, 0.35);
             }
         }
         render::draw_base(&mut gizmos, &game, pose, class.footprint, color);
         if own && view.plan.is_some() && snap.phase == Phase::Planning {
-            gizmos.circle_2d(
-                game.to_world(pose.anchor),
-                4.0,
-                Color::srgb(0.4, 1.0, 0.9),
-            );
+            gizmos.circle_2d(game.to_world(pose.anchor), 4.0, Color::srgb(0.4, 1.0, 0.9));
         }
     }
 
@@ -949,7 +994,9 @@ fn draw(
         return;
     }
     let Some(sel) = online.sel else { return };
-    let Some(view) = snap.ships.iter().find(|v| v.id.0 == sel) else { return };
+    let Some(view) = snap.ships.iter().find(|v| v.id.0 == sel) else {
+        return;
+    };
     let Some(pose) = view.pose else { return };
     let class_idx = game.class_index(view.class);
     let class = &game.ships.classes[class_idx];
@@ -958,7 +1005,9 @@ fn draw(
         return;
     }
     let man = dial[online.dial_idx.min(dial.len() - 1)];
-    let Ok(path) = maneuver::sample_path(pose, man) else { return };
+    let Ok(path) = maneuver::sample_path(pose, man) else {
+        return;
+    };
     let end = *path.last().unwrap();
     let color = render::difficulty_color(man.difficulty);
     render::draw_path(&mut gizmos, &game, &path, color);
@@ -976,12 +1025,10 @@ fn draw(
     *gvis = Visibility::Visible;
 }
 
-fn hud(
-    online: Res<Online>,
-    game: Res<Game>,
-    mut hud: Query<&mut Text, With<HudText>>,
-) {
-    let Ok(mut text) = hud.single_mut() else { return };
+fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudText>>) {
+    let Ok(mut text) = hud.single_mut() else {
+        return;
+    };
     if let Some(over) = &online.over {
         text.0 = format!("{over}\nEsc: back to menu");
         return;
@@ -999,14 +1046,23 @@ fn hud(
     );
     let mut lines = vec![format!(
         "TURN {} | {:?} | initiative: {init} ({} vs {} pts) | {committed}",
-        snap.turn, snap.phase, snap.totals[seat as usize], snap.totals[1 - seat as usize],
+        snap.turn,
+        snap.phase,
+        snap.totals[seat as usize],
+        snap.totals[1 - seat as usize],
     )];
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];
         let mut line = format!(
             "{} — hull {}/{} shields {}/{} stress {} focus {} evade {}",
-            class.name, view.hull, class.hull, view.shields, class.shields, view.stress,
-            view.focus, view.evade
+            class.name,
+            view.hull,
+            class.hull,
+            view.shields,
+            class.shields,
+            view.stress,
+            view.focus,
+            view.evade
         );
         if let Some(l) = view.lock {
             line.push_str(&format!(" lock #{}", l.0));
@@ -1037,7 +1093,9 @@ fn hud(
         lines.push(line);
     }
     let help = match snap.phase {
-        Phase::Placement => "drag ships • Q/E or scroll rotates • A: submit all • +/- zoom, right-drag pan, Home reset",
+        Phase::Placement => {
+            "drag ships • Q/E or scroll rotates • A: submit all • +/- zoom, right-drag pan, Home reset"
+        }
         Phase::Planning => {
             "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
         }
