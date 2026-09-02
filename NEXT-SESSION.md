@@ -5,9 +5,9 @@
 `cargo build` clean, `cargo test --workspace` green (95 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
-core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
-sits at the repo root, gitignored — read further pages on demand;
-p.18+ covers upgrade cards / squad building, not yet read).
+core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
+the repo root, gitignored — read pages on demand; p.20 obstacles, p.20
+team play and p.21-24 missions are read but NOT implemented).
 
 What exists end-to-end:
 - Menu (over procedural starfield) → Offline Sandbox or Create/Join game.
@@ -155,13 +155,41 @@ and Server `ws://127.0.0.1:7777`.
    UI, the HUD text can get long with many ships; scenario rules are
    fixed at 100 pts / all sources (SquadRules::default) — a lobby
    setting later.
-4. **Enforce effects one at a time with tests**: stat mods first (Hull
-   Upgrade, Shield Upgrade, Stealth Device, Veteran Instincts,
-   Adaptability, bar-gaining mods → action_bar at game start), then
-   torpedoes (secondary attack choice in the Declare step: needs a
-   ClientMsg/prompt for "primary or torpedo"), then pilot abilities in
-   the order listed above. — upgrade cards / squad points, feeding the squad
-   builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
+4. **START HERE — enforce card effects one at a time, each with tests
+   and its own commit**, flipping `implemented()` to true per variant
+   (pilot.rs PilotAbility / upgrade.rs UpgradeEffect) so the data test
+   can later assert what is live. Suggested order:
+   a. Game-start stat mods in GameState::from_squads: HullPlus1,
+      ShieldPlus1, AgilityPlus1DiscardWhenHit (Stealth Device — also
+      discard on hit in perform_attack_on), SkillPlus2 (Veteran
+      Instincts), SkillPlus1OrMinus1 (Adaptability: builder must choose
+      the face — add a `variant`/side to SquadShip or two data entries),
+      bar-gaining mods (BarGainsTargetLock/Boost/BarrelRoll/Talent →
+      effective action bar; plan_action must consult it, not the class).
+      Pilot skill lookups already go through one fn (game.rs pilot_skill)
+      — add the modifiers there.
+   b. Dice-modifying pilot abilities in the attack pipeline (game.rs
+      perform_attack_on + combat.rs/dice.rs token policy): Poe
+      FocusToResult, Mauler/Backstabber/Scourge/Zeta Leader extra dice,
+      Winged Gundark hit→crit, Jess rerolls, Dark Curse denial,
+      Howlrunner friendly reroll, Omega Ace/Leader; then EPTs Wired,
+      Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
+      Opportunist, Outmaneuver, Trick Shot; tech Weapons Guidance /
+      Sensor Cluster; astromech R3/R7.
+   c. Torpedoes: attack choice (primary vs each ready torpedo) in the
+      Declare Target step — extend PendingAttack/ChooseTarget with weapon
+      options and DeclareTarget with a weapon id; range/lock
+      requirements; discard (Extra Munitions tokens, Munitions Failsafe);
+      Guidance Chips.
+   d. Token/stress abilities (Red Ace, Night Beast, Nien Nunb, Epsilon
+      Leader, Chaser, Wingman, Cool Hand, R2-D2, R5-P9, Comm Relay…),
+      then movement ones (Snap free boost, Blue Ace/Zeta Ace templates,
+      Ello Asty/Adrenaline Rush/Stay on Target colours, BB-8, R2
+      Astromech, Twin Ion Engine, Push the Limit free action), Epsilon
+      Ace skill 12, Wampa, damage-card ones (Determination, Integrated
+      Astromech, R5 Astromech, Draw Their Fire). Youngster/Squad Leader/
+      Swarm Tactics/Decoy need multi-ship hooks; Seismic Torpedo and
+      Trick Shot need obstacles (p.20, not implemented).
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.
 
@@ -174,7 +202,9 @@ and Server `ws://127.0.0.1:7777`.
 
 main.rs (Screen state: Menu/Sandbox/Online, global setup, two cameras),
 render.rs (Game resource, ship_visual, draw helpers, bullseye shade,
-ViewCtl pan/zoom + minimap), menu.rs (fields, paste, pin resolution),
+ViewCtl pan/zoom + minimap, UiFont/apply_font), menu.rs (fields, paste,
+pin resolution, squad picker), squad_builder.rs (Screen::Squad, Builder
+resource, saved squads + current_squad.ron),
 online.rs (server mirror; Anim is a queue of AnimItem:
 Move/Attack/Prompt/Waiting/TurnEnd; never mutates game state locally;
 remembers the pin on NetEvent::Secured), sandbox.rs, net.rs (background
