@@ -30,6 +30,7 @@ struct ShipEnt {
     seat: Seat,
     pose: Pose,
     id: ShipId,
+    callsign: String,
 }
 
 pub fn plugin(app: &mut App) {
@@ -66,13 +67,18 @@ fn enter_sandbox(
         (1, Seat::North, Pose::new(8.0, 18.0, -FRAC_PI_2)),
         (1, Seat::North, Pose::new(12.0, 18.0, -FRAC_PI_2)),
     ];
+    let squads = sf_core::ship::squad_names(&[
+        game.ships.classes[fleet[0].0].faction,
+        game.ships.classes[fleet[2].0].faction,
+    ]);
     for (n, (class_idx, seat, pose)) in fleet.into_iter().enumerate() {
         let class = &game.ships.classes[class_idx];
         let (size, transform) = render::ship_visual(class, pose, &game, 1.0);
+        let callsign = sf_core::ship::default_callsign(squads[n / 2], n % 2);
         commands.spawn((
             Sprite { image: art.0[class_idx].clone(), custom_size: Some(size), ..default() },
             transform,
-            ShipEnt { class_idx, seat, pose, id: ShipId(n as u32) },
+            ShipEnt { class_idx, seat, pose, id: ShipId(n as u32), callsign },
             SandboxTag,
         ));
     }
@@ -248,9 +254,15 @@ fn draw_overlays(
     ships: Query<(Entity, &ShipEnt)>,
     mut ghost: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<Ghost>>,
     mut bullseye: ResMut<render::BullseyePreview>,
+    cursor: Res<CursorUnits>,
+    mut hover: ResMut<render::Hover>,
 ) {
     bullseye.0 = None;
     render::draw_board(&mut gizmos, &game);
+    hover.0 = render::hovered(
+        cursor.0,
+        ships.iter().map(|(_, s)| (s.callsign.as_str(), &game.ships.classes[s.class_idx], s.pose)),
+    );
     for (entity, ship) in &ships {
         let class = &game.ships.classes[ship.class_idx];
         let color = match (ship.seat, sel.ship == Some(entity)) {

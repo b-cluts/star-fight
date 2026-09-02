@@ -22,6 +22,11 @@ pub enum ClientMsg {
         ship_id: ShipId,
         pose: Pose,
     },
+    /// Placement phase only: give an own ship its squad callsign.
+    Rename {
+        ship_id: ShipId,
+        callsign: String,
+    },
     PlanManeuver {
         ship_id: ShipId,
         /// Index into the ship's dial.

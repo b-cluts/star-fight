@@ -76,6 +76,7 @@ fn main() {
         .insert_resource(render::ShowArcs(true))
         .insert_resource(render::BullseyePreview::default())
         .insert_resource(render::ViewCtl::default())
+        .insert_resource(render::Hover::default())
         .init_state::<Screen>()
         .add_systems(Startup, global_setup)
         .add_systems(
@@ -87,6 +88,7 @@ fn main() {
                 render::apply_bullseye,
                 render::view_input,
                 render::apply_view,
+                render::apply_hover,
             ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin))
@@ -156,6 +158,17 @@ fn global_setup(
         Transform::default(),
         Visibility::Hidden,
         render::BullseyeShade,
+    ));
+
+    // Hover name tag (world space, above the ship under the cursor).
+    commands.spawn((
+        Text2d::new(""),
+        TextFont { font_size: 15.0, ..default() },
+        TextColor(Color::srgb(1.0, 0.95, 0.7)),
+        TextLayout::new_with_justify(JustifyText::Center),
+        Transform::default(),
+        Visibility::Hidden,
+        render::HoverLabel,
     ));
 
     // Shared HUD text.

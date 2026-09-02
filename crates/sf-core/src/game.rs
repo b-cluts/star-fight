@@ -104,6 +104,8 @@ pub enum Rejection {
     NoPendingAttack,
     /// Not one of the eligible targets for the pending attack.
     BadTarget,
+    /// Callsign empty, too long, or already used by another ship.
+    BadCallsign(String),
 }
 
 impl std::fmt::Display for Rejection {
@@ -123,6 +125,7 @@ impl std::fmt::Display for Rejection {
             Rejection::AlreadyCommitted => "plans already committed this turn",
             Rejection::NoPendingAttack => "no attack is waiting for a target",
             Rejection::BadTarget => "that ship is not an eligible target",
+            Rejection::BadCallsign(why) => return write!(f, "bad callsign: {why}"),
         };
         f.write_str(s)
     }
@@ -231,6 +234,7 @@ pub struct ShipView {
     pub id: ShipId,
     pub owner: PlayerId,
     pub class: ShipClassId,
+    pub callsign: String,
     pub pose: Option<Pose>,
     pub hull: u8,
     pub shields: u8,
@@ -272,9 +276,21 @@ impl GameState {
         fleets: [&[ShipClassId]; 2],
         tie_roll: crate::dice::AttackFace,
     ) -> Result<Self, String> {
+        // Squad names follow each fleet's faction (first ship decides).
+        let factions: Vec<crate::ship::Faction> = fleets
+            .iter()
+            .map(|fleet| {
+                fleet
+                    .first()
+                    .and_then(|id| content.ships.class(*id))
+                    .map(|c| c.faction)
+                    .unwrap_or(crate::ship::Faction::RebelAlliance)
+            })
+            .collect();
+        let squads = crate::ship::squad_names(&factions);
         let mut ships = Vec::new();
         for (seat, fleet) in fleets.iter().enumerate() {
-            for &class_id in *fleet {
+            for (n, &class_id) in fleet.iter().enumerate() {
                 let class = content
                     .ships
                     .class(class_id)
@@ -283,10 +299,12 @@ impl GameState {
                     .dials
                     .set(class.maneuver_set)
                     .ok_or_else(|| format!("{} has no dial", class.name))?;
+                let squad = squads[seat];
                 ships.push(ShipState {
                     id: ShipId(ships.len() as u32),
                     owner: PlayerId(seat as u32),
                     class: class_id,
+                    callsign: crate::ship::default_callsign(squad, n),
                     pose: None,
                     hull: class.hull,
                     shields: class.shields,
@@ -339,8 +357,31 @@ impl GameState {
         }
     }
 
-    fn label(&self, content: &Content, i: usize) -> String {
-        format!("{} #{}", self.class_of(content, &self.ships[i]).name, self.ships[i].id.0)
+    fn label(&self, _content: &Content, i: usize) -> String {
+        self.ships[i].callsign.clone()
+    }
+
+    /// Rename an own ship during Placement (squad formation). Callsigns
+    /// must be unique across the game so the narration stays unambiguous.
+    pub fn rename(
+        &mut self,
+        player: PlayerId,
+        ship: ShipId,
+        callsign: &str,
+    ) -> Result<(), Rejection> {
+        if self.phase != Phase::Placement {
+            return Err(Rejection::WrongPhase);
+        }
+        let i = self.ship_index(ship)?;
+        if self.ships[i].owner != player {
+            return Err(Rejection::NotYourShip);
+        }
+        let name = crate::ship::validate_callsign(callsign).map_err(Rejection::BadCallsign)?;
+        if self.ships.iter().any(|s| s.id != ship && s.callsign.eq_ignore_ascii_case(&name)) {
+            return Err(Rejection::BadCallsign(format!("{name} is already taken")));
+        }
+        self.ships[i].callsign = name;
+        Ok(())
     }
 
     /// One point of normal damage: shields absorb first, then hull.
@@ -1244,6 +1285,7 @@ impl GameState {
                     id: s.id,
                     owner: s.owner,
                     class: s.class,
+                    callsign: s.callsign.clone(),
                     pose: if own || self.phase != Phase::Placement { s.pose } else { None },
                     hull: s.hull,
                     shields: s.shields,
@@ -1302,6 +1344,38 @@ mod tests {
     fn place_both(c: &Content, gs: &mut GameState) {
         gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.0, FRAC_PI_2)).unwrap();
         gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
+    }
+
+    #[test]
+    fn callsigns_default_and_rename_during_placement() {
+        let c = content();
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&[TIE, TIE][..], &[XWING, XWING][..]],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
+        let names: Vec<&str> = gs.ships.iter().map(|s| s.callsign.as_str()).collect();
+        assert_eq!(names, ["Obsidian-leader", "Obsidian-2", "Red-leader", "Red-2"]);
+        assert_eq!(gs.snapshot_for(P1)[3].callsign, "Red-2");
+
+        assert_eq!(gs.rename(P1, ShipId(3), "  Rogue-3 "), Ok(()));
+        assert_eq!(gs.ships[3].callsign, "Rogue-3");
+        assert_eq!(gs.rename(P0, ShipId(3), "Mine"), Err(Rejection::NotYourShip));
+        assert!(matches!(gs.rename(P0, ShipId(0), "   "), Err(Rejection::BadCallsign(_))));
+        assert!(matches!(gs.rename(P0, ShipId(0), "red-LEADER"), Err(Rejection::BadCallsign(_))));
+        // Narration uses the callsign.
+        assert_eq!(gs.label(&c, 3), "Rogue-3");
+
+        for (p, id, y, h) in [(P0, 0, 2.0, FRAC_PI_2), (P0, 1, 2.0, FRAC_PI_2)] {
+            gs.place_ship(&c, p, ShipId(id), Pose::new(6.0 + id as f64 * 4.0, y, h)).unwrap();
+        }
+        for (id, x) in [(2u32, 6.0), (3, 10.0)] {
+            gs.place_ship(&c, P1, ShipId(id), Pose::new(x, 18.0, -FRAC_PI_2)).unwrap();
+        }
+        assert_eq!(gs.phase, Phase::Planning);
+        assert_eq!(gs.rename(P0, ShipId(0), "Late"), Err(Rejection::WrongPhase));
     }
 
     #[test]

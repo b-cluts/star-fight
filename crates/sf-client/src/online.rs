@@ -125,6 +125,15 @@ pub struct Online {
     pub prompt: Option<(u32, Vec<(u32, u8)>)>,
     /// Opponent's ship currently declaring a target (for the HUD).
     pub waiting_on: Option<u32>,
+    /// Placement: callsign being typed for (ship, buffer).
+    pub rename: Option<(u32, String)>,
+}
+
+/// Callsign of a ship in the current snapshot ("ship" if unknown).
+fn callsign(snap: Option<&Snap>, id: u32) -> String {
+    snap.and_then(|s| s.ships.iter().find(|v| v.id.0 == id))
+        .map(|v| v.callsign.clone())
+        .unwrap_or_else(|| format!("ship #{id}"))
 }
 
 impl Online {
@@ -160,6 +169,7 @@ pub fn plugin(app: &mut App) {
             poll_net,
             sync_ships,
             animate,
+            rename_input,
             placement_input,
             planning_input,
             target_input,
@@ -318,24 +328,10 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
 }
 
 /// One-line narration of an attack for the combat log / HUD.
-fn attack_line(online: &Online, game: &Game, a: &AttackRecord) -> String {
-    let name = |id: u32| {
-        online
-            .snap
-            .as_ref()
-            .and_then(|s| s.ships.iter().find(|v| v.id.0 == id))
-            .map(|v| game.ships.classes[game.class_index(v.class)].name.clone())
-            .unwrap_or_else(|| "ship".into())
-    };
+fn attack_line(online: &Online, _game: &Game, a: &AttackRecord) -> String {
+    let name = |id: u32| callsign(online.snap.as_ref(), id);
     let landed = a.hits + a.crits;
-    let mut line = format!(
-        "{} #{} → {} #{} @R{}: ",
-        name(a.attacker.0),
-        a.attacker.0,
-        name(a.defender.0),
-        a.defender.0,
-        a.range
-    );
+    let mut line = format!("{} → {} @R{}: ", name(a.attacker.0), name(a.defender.0), a.range);
     if landed == 0 {
         line.push_str("miss");
     } else {
@@ -559,6 +555,52 @@ fn animate(
     }
 }
 
+/// Typing a callsign during Placement: Enter sends it, Esc cancels.
+fn rename_input(
+    mut online: ResMut<Online>,
+    mut events: EventReader<bevy::input::keyboard::KeyboardInput>,
+) {
+    use bevy::input::ButtonState;
+    use bevy::input::keyboard::Key;
+    if online.rename.is_none() {
+        events.clear();
+        return;
+    }
+    for ev in events.read() {
+        if ev.state != ButtonState::Pressed {
+            continue;
+        }
+        match &ev.logical_key {
+            Key::Enter => {
+                if let Some((id, buf)) = online.rename.take() {
+                    online.send(ClientMsg::Rename { ship_id: ShipId(id), callsign: buf });
+                }
+            }
+            Key::Escape => online.rename = None,
+            Key::Backspace => {
+                if let Some((_, buf)) = &mut online.rename {
+                    buf.pop();
+                }
+            }
+            Key::Space => {
+                if let Some((_, buf)) = &mut online.rename {
+                    buf.push(' ');
+                }
+            }
+            Key::Character(s) => {
+                if let Some((_, buf)) = &mut online.rename {
+                    for c in s.chars().filter(|c| !c.is_control()) {
+                        if buf.chars().count() < sf_core::ship::CALLSIGN_MAX {
+                            buf.push(c);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn placement_input(
     mut online: ResMut<Online>,
     game: Res<Game>,
@@ -567,7 +609,11 @@ fn placement_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut wheel: EventReader<bevy::input::mouse::MouseWheel>,
 ) {
-    if online.phase() != Some(Phase::Placement) || online.anim.is_some() || online.over.is_some() {
+    if online.phase() != Some(Phase::Placement)
+        || online.anim.is_some()
+        || online.over.is_some()
+        || online.rename.is_some()
+    {
         wheel.clear();
         return;
     }
@@ -639,6 +685,22 @@ fn placement_input(
                     online.send(ClientMsg::PlaceShip { ship_id: ShipId(id), pose });
                 }
             }
+        }
+    }
+
+    // N: rename the selected (else hovered) own ship.
+    if keys.just_pressed(KeyCode::KeyN) {
+        let hovered = cursor.0.and_then(|cur| {
+            own_views.iter().find_map(|v| {
+                let pose = online.effective_pose(v)?;
+                let fp = game.ships.classes[game.class_index(v.class)].footprint;
+                rules::point_in_footprint(pose, fp, cur).then_some(v.id.0)
+            })
+        });
+        if let Some(id) = online.sel.or(hovered) {
+            let current = callsign(online.snap.as_ref(), id);
+            online.sel = Some(id);
+            online.rename = Some((id, current));
         }
     }
 
@@ -880,7 +942,7 @@ fn draw_volley(
     }
 }
 
-fn action_name(a: PlannedAction) -> String {
+fn action_name(snap: Option<&Snap>, a: PlannedAction) -> String {
     match a {
         PlannedAction::Pass => "Pass".into(),
         PlannedAction::Focus => "Focus".into(),
@@ -890,7 +952,7 @@ fn action_name(a: PlannedAction) -> String {
         PlannedAction::Boost(BoostDir::Straight) => "Boost".into(),
         PlannedAction::Boost(BoostDir::BankLeft) => "Boost L".into(),
         PlannedAction::Boost(BoostDir::BankRight) => "Boost R".into(),
-        PlannedAction::TargetLock(id) => format!("Lock #{}", id.0),
+        PlannedAction::TargetLock(id) => format!("Lock {}", callsign(snap, id.0)),
     }
 }
 
@@ -912,8 +974,11 @@ fn draw(
     art: Res<ClassArt>,
     mut ghost: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<Ghost>>,
     mut bullseye: ResMut<render::BullseyePreview>,
+    cursor: Res<CursorUnits>,
+    mut hover: ResMut<render::Hover>,
 ) {
     bullseye.0 = None;
+    hover.0 = None;
     render::draw_board(&mut gizmos, &game);
     let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else {
         return;
@@ -921,6 +986,18 @@ fn draw(
     *gvis = Visibility::Hidden;
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
+    // Name tag for the ship under the cursor (post-move pose while a turn
+    // animates, provisional pose while placing).
+    hover.0 = render::hovered(
+        cursor.0,
+        snap.ships.iter().filter(|v| !v.destroyed).filter_map(|v| {
+            let pose = match &online.anim {
+                Some(a) => a.end_pose(v.id.0, snap)?,
+                None => online.effective_pose(v)?,
+            };
+            Some((v.callsign.as_str(), &game.ships.classes[game.class_index(v.class)], pose))
+        }),
+    );
 
     for view in &snap.ships {
         let Some(pose) = online.effective_pose(view) else {
@@ -1054,7 +1131,8 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];
         let mut line = format!(
-            "{} — hull {}/{} shields {}/{} stress {} focus {} evade {}",
+            "{} ({}) — hull {}/{} shields {}/{} stress {} focus {} evade {}",
+            view.callsign,
             class.name,
             view.hull,
             class.hull,
@@ -1065,14 +1143,14 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             view.evade
         );
         if let Some(l) = view.lock {
-            line.push_str(&format!(" lock #{}", l.0));
+            line.push_str(&format!(" lock {}", callsign(Some(snap), l.0)));
         }
         if !view.crits.is_empty() {
             let names: Vec<&str> = view.crits.iter().map(|c| c.name()).collect();
             line.push_str(&format!(" | crits: {}", names.join(", ")));
         }
         if let Some(a) = view.planned_action {
-            line.push_str(&format!(" | action: {}", action_name(a)));
+            line.push_str(&format!(" | action: {}", action_name(Some(snap), a)));
         }
         if snap.phase == Phase::Planning {
             let dial = game.dial(class);
@@ -1094,7 +1172,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
     }
     let help = match snap.phase {
         Phase::Placement => {
-            "drag ships • Q/E or scroll rotates • A: submit all • +/- zoom, right-drag pan, Home reset"
+            "drag ships • Q/E or scroll rotates • N: rename • A: submit all • +/- zoom, right-drag pan, Home reset"
         }
         Phase::Planning => {
             "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
@@ -1103,14 +1181,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         Phase::GameOver => "game over",
     };
     lines.push(help.into());
+    if let Some((_, buf)) = &online.rename {
+        lines.push(format!("CALLSIGN: {buf}_   (Enter confirms, Esc cancels)"));
+    }
     if let Some(a) = &online.anim {
-        let name = |id: u32| {
-            snap.ships
-                .iter()
-                .find(|v| v.id.0 == id)
-                .map(|v| game.ships.classes[game.class_index(v.class)].name.clone())
-                .unwrap_or_default()
-        };
+        let name = |id: u32| callsign(Some(snap), id);
         match &a.current {
             Some(AnimItem::Move(mv)) => {
                 let result = match mv.action_result {
@@ -1125,7 +1200,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     name(mv.ship.0),
                     render::steer_name(mv.maneuver.steer),
                     mv.maneuver.distance,
-                    action_name(mv.action),
+                    action_name(Some(snap), mv.action),
                 ));
             }
             Some(AnimItem::Attack { line, .. }) => lines.push(line.clone()),
@@ -1133,12 +1208,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                 let opts: Vec<String> = candidates
                     .iter()
                     .enumerate()
-                    .map(|(n, (id, r))| format!("{}) {} #{} R{}", n + 1, name(*id), id, r))
+                    .map(|(n, (id, r))| format!("{}) {} R{}", n + 1, name(*id), r))
                     .collect();
                 lines.push(format!(
-                    "DECLARE TARGET for {} #{}: click a highlighted ship or press  {}",
+                    "DECLARE TARGET for {}: click a highlighted ship or press  {}",
                     name(*attacker),
-                    attacker,
                     opts.join("   ")
                 ));
             }
@@ -1147,7 +1221,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if let Some(w) = online.waiting_on
             && a.current.is_none()
         {
-            lines.push(format!("Opponent is declaring a target for their {} #{w}…", name(w)));
+            lines.push(format!("Opponent is declaring a target for their {}…", name(w)));
         }
     }
     if online.anim.is_none() && !online.combat_log.is_empty() {

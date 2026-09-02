@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (83 tests),
+`cargo build` clean, `cargo test --workspace` green (86 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
@@ -54,6 +54,18 @@ What exists end-to-end:
   per IP blocks Hello. Tests: sf-proto unit tests + sf-server
   tests/security.rs.
 
+- CALLSIGNS + HOVER (session 4, done, not yet playtested): every ship
+  has a squad callsign (ShipState/ShipView.callsign). Defaults per
+  fleet faction: first Rebel squad Red, second Gold; Imperial Obsidian
+  then Onyx; first ship "-leader", then "-2", "-3"… (ship.rs
+  squad_names/default_callsign). During Placement, N renames the
+  selected/hovered own ship (type, Enter sends ClientMsg::Rename, Esc
+  cancels; ≤20 chars, unique ignoring case, GameState::rename). Hovering
+  a ship shows a world-space name tag (callsign + class) in sandbox and
+  online (render::Hover/hovered/apply_hover, Text2d HoverLabel). Combat
+  log, HUD status line, lock label and the Declare Target prompt use
+  callsigns instead of "#id".
+
 To try it: `cargo run -p sf-server` (copy the printed join string and
 password) then two `cargo run -p sf-client` instances — paste the join
 string into Server, type the password, create in one, join with the
@@ -62,11 +74,11 @@ and Server `ws://127.0.0.1:7777`.
 
 ## NEXT TASK
 
-1. ~~Playtest M4~~ done 2026-09-02: joining over TLS worked. Fix applied
-   after it: menu field text now wraps at any character so the long join
-   string stays inside the field (not yet re-checked visually by the
-   user).
-2. **Rulebook p.18+** — upgrade cards / squad points, feeding the squad
+1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
+2. **Playtest callsigns**: hover name tag in sandbox + online, N-rename
+   during placement, callsigns in log/prompt.
+3. **Rulebook p.18+** (user is researching the roster first: basic and
+   unique pilots, secondary weapons, upgrades) — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.
@@ -115,15 +127,9 @@ pins.txt + last-used menu values), starfield.rs.
 
 ## TODO backlog (user requests)
 
-- **Ship callsigns + hover tooltip** (requested 2026-09-02): during squad
-  formation the player names each ship with a squad callsign — squad name
-  plus number, "leader" for the squad leader (e.g. Obsidian-leader,
-  Obsidian-2, Red-leader, Red-2). In play, hovering the mouse over a ship
-  shows its name. Plan: `callsign: String` on the fleet entry / ShipState /
-  ShipView (server-assigned defaults like "Red-1" until the squad builder
-  exists), a hover tooltip in the client (cursor-in-footprint → small text
-  label near the ship, both sandbox and online), and callsigns replacing
-  "#id" in the combat log / HUD / Declare Target prompt.
+- ~~Ship callsigns + hover tooltip~~ done 2026-09-02 (see above). When
+  the squad builder exists, naming moves from the Placement N-key into
+  the builder (callsign becomes a field of the squad entry).
 
 ## Open items / needed from the user
 

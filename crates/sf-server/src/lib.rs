@@ -499,6 +499,12 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
+                    ClientMsg::Rename { ship_id, callsign } => {
+                        match gs.rename(player, ship_id, &callsign) {
+                            Ok(()) => snapshots!(&*gs),
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
                     ClientMsg::PlanAction { ship_id, action } => {
                         match gs.plan_action(&content, player, ship_id, action) {
                             // Plans are secret: only the planner's view changes.

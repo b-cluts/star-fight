@@ -355,3 +355,42 @@ pub fn apply_view(
         Color::srgba(1.0, 1.0, 1.0, 0.8),
     );
 }
+
+/// World-space name tag shown next to the ship under the cursor.
+#[derive(Component)]
+pub struct HoverLabel;
+
+/// Set each frame by the active screen: (text, ship anchor in units,
+/// footprint) of the hovered ship, if any.
+#[derive(Resource, Default)]
+pub struct Hover(pub Option<(String, GVec2, Footprint)>);
+
+/// Ship under the cursor among `(callsign, class, pose)` triples.
+pub fn hovered<'a, I>(cursor: Option<GVec2>, ships: I) -> Option<(String, GVec2, Footprint)>
+where
+    I: IntoIterator<Item = (&'a str, &'a ShipClass, Pose)>,
+{
+    let cur = cursor?;
+    ships.into_iter().find_map(|(name, class, pose)| {
+        rules::point_in_footprint(pose, class.footprint, cur)
+            .then(|| (format!("{name}\n{}", class.name), pose.anchor, class.footprint))
+    })
+}
+
+/// Position the name tag just above the hovered ship (or hide it).
+pub fn apply_hover(
+    hover: Res<Hover>,
+    game: Res<Game>,
+    mut label: Query<(&mut Text2d, &mut Transform, &mut Visibility), With<HoverLabel>>,
+) {
+    let Ok((mut text, mut tf, mut vis)) = label.single_mut() else { return };
+    match &hover.0 {
+        Some((name, anchor, fp)) => {
+            text.0 = name.clone();
+            let w = game.to_world(*anchor);
+            tf.translation = Vec3::new(w.x, w.y + (fp.length as f32 * 0.5 + 0.55) * PX, 8.0);
+            *vis = Visibility::Visible;
+        }
+        None => *vis = Visibility::Hidden,
+    }
+}
