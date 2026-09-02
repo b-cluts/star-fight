@@ -173,14 +173,14 @@ async fn two_clients_play_a_full_turn() {
     send(&mut a, &ClientMsg::CommitPlans).await;
     send(&mut b, &ClientMsg::CommitPlans).await;
 
-    // Both clients get the identical resolved turn.
+    // Both clients get the identical resolved Activation phase.
     let moves_a = recv_until(&mut a, |m| match m {
-        ServerMsg::TurnResult { moves, .. } => Some(moves),
+        ServerMsg::MovementResult { moves, .. } => Some(moves),
         _ => None,
     })
     .await;
     let moves_b = recv_until(&mut b, |m| match m {
-        ServerMsg::TurnResult { moves, .. } => Some(moves),
+        ServerMsg::MovementResult { moves, .. } => Some(moves),
         _ => None,
     })
     .await;

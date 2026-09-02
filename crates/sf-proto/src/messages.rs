@@ -33,6 +33,10 @@ pub enum ClientMsg {
         action: PlannedAction,
     },
     CommitPlans,
+    /// Answer to ChooseTarget: which eligible enemy to attack.
+    DeclareTarget {
+        target: ShipId,
+    },
     Resign,
     Ping,
 }
@@ -69,11 +73,31 @@ pub enum ServerMsg {
     Rejected {
         reason: String,
     },
-    /// Both sides committed: the revealed, resolved turn.
-    TurnResult {
+    /// Both sides committed: the Activation phase (moves + actions) has
+    /// resolved. Combat follows as a stream of AttackResult / ChooseTarget
+    /// / OpponentChoosing messages, closed by TurnEnd.
+    MovementResult {
         moves: Vec<MoveRecord>,
-        attacks: Vec<AttackRecord>,
-        /// Narrated side effects (crit draws, burns, collisions).
+        events: Vec<String>,
+    },
+    /// One attack resolved in the Combat phase.
+    AttackResult {
+        attack: AttackRecord,
+        /// Narrated side effects since the previous message.
+        events: Vec<String>,
+    },
+    /// Your ship has several eligible targets: answer with DeclareTarget.
+    ChooseTarget {
+        attacker: ShipId,
+        /// (enemy ship, range band)
+        candidates: Vec<(ShipId, u8)>,
+    },
+    /// The opponent is declaring a target for one of their ships.
+    OpponentChoosing {
+        attacker: ShipId,
+    },
+    /// Combat and the End phase are done; a Snapshot follows.
+    TurnEnd {
         events: Vec<String>,
     },
     GameOver {

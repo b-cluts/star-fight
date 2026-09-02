@@ -24,6 +24,9 @@ use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
 pub enum Phase {
     Placement,
     Planning,
+    /// Combat is being resolved step by step (may be waiting on a
+    /// player's Declare Target choice).
+    Combat,
     GameOver,
 }
 
@@ -99,6 +102,10 @@ pub enum Rejection {
     /// All surviving ships need a plan before committing.
     PlansIncomplete,
     AlreadyCommitted,
+    /// No attack is waiting for a target right now.
+    NoPendingAttack,
+    /// Not one of the eligible targets for the pending attack.
+    BadTarget,
 }
 
 impl std::fmt::Display for Rejection {
@@ -116,6 +123,8 @@ impl std::fmt::Display for Rejection {
             Rejection::StressedRedForbidden => "stressed ships cannot fly red maneuvers",
             Rejection::PlansIncomplete => "every surviving ship needs a maneuver first",
             Rejection::AlreadyCommitted => "plans already committed this turn",
+            Rejection::NoPendingAttack => "no attack is waiting for a target",
+            Rejection::BadTarget => "that ship is not an eligible target",
         };
         f.write_str(s)
     }
@@ -176,6 +185,47 @@ pub struct TurnRecords {
     pub events: Vec<String>,
 }
 
+/// What the Activation phase produced (returned by `commit_plans_begin`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivationRecords {
+    pub moves: Vec<MoveRecord>,
+    pub events: Vec<String>,
+}
+
+/// An attack whose owner must Declare Target (core rules p.10): more than
+/// one enemy is eligible.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingAttack {
+    pub attacker: ShipId,
+    pub owner: PlayerId,
+    /// (target, range band, base distance) for every eligible enemy.
+    pub candidates: Vec<(ShipId, u8, f64)>,
+}
+
+/// Step-by-step Combat phase bookkeeping (lives in `GameState.combat`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CombatState {
+    /// Remaining pilot-skill groups, highest first.
+    groups: Vec<Vec<ShipId>>,
+    /// Attackers still to act in the current group (alive at its start).
+    current: Vec<ShipId>,
+    pub pending: Option<PendingAttack>,
+    attacks: Vec<AttackRecord>,
+    events: Vec<String>,
+    moves: Vec<MoveRecord>,
+}
+
+/// Result of advancing the Combat phase one step.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CombatStep {
+    /// The owner must choose among several eligible targets.
+    NeedTarget(PendingAttack),
+    /// One attack resolved (single eligible target, or a declared one).
+    Attack(AttackRecord),
+    /// Combat and the End phase are complete.
+    Done(TurnRecords),
+}
+
 /// Per-player view of a ship. During Placement, opponent poses are hidden;
 /// plans are only ever visible on the viewer's own ships.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +260,8 @@ pub struct GameState {
     pub initiative: PlayerId,
     /// Squad-point totals per seat, for display.
     pub squad_totals: [u32; 2],
+    /// Present while the Combat phase is being stepped through.
+    pub combat: Option<CombatState>,
 }
 
 impl GameState {
@@ -268,6 +320,7 @@ impl GameState {
             winner: None,
             initiative,
             squad_totals,
+            combat: None,
         })
     }
 
@@ -473,15 +526,41 @@ impl GameState {
     }
 
     /// Commit the player's plans. When both players have committed, the
-    /// turn resolves immediately and the records are returned. `roll`
-    /// supplies raw d8 values for combat dice (the server's RNG; tests
-    /// script it for deterministic outcomes).
+    /// whole turn resolves with the automatic target policy (locked ship,
+    /// else nearest eligible) — used by tests and offline play. Servers
+    /// wanting the interactive Declare Target step use
+    /// `commit_plans_begin` + `combat_step` + `declare_target` instead.
     pub fn commit_plans(
         &mut self,
         content: &Content,
         player: PlayerId,
         roll: &mut dyn FnMut() -> u8,
     ) -> Result<Option<TurnRecords>, Rejection> {
+        if self.commit_plans_begin(content, player, roll)?.is_none() {
+            return Ok(None);
+        }
+        loop {
+            match self.combat_step(content, roll)? {
+                CombatStep::NeedTarget(p) => {
+                    let choice = self.auto_target(&p).expect("candidates are non-empty");
+                    self.declare_target(content, p.owner, choice, roll)?;
+                }
+                CombatStep::Attack(_) => {}
+                CombatStep::Done(rec) => return Ok(Some(rec)),
+            }
+        }
+    }
+
+    /// Commit the player's plans. When both players have committed, the
+    /// Activation phase resolves immediately (movement + actions, plus
+    /// Console Fire burns) and the game enters `Phase::Combat`; the
+    /// returned moves and events can be sent to clients right away.
+    pub fn commit_plans_begin(
+        &mut self,
+        content: &Content,
+        player: PlayerId,
+        roll: &mut dyn FnMut() -> u8,
+    ) -> Result<Option<ActivationRecords>, Rejection> {
         if self.phase != Phase::Planning {
             return Err(Rejection::WrongPhase);
         }
@@ -497,17 +576,165 @@ impl GameState {
             return Err(Rejection::PlansIncomplete);
         }
         self.committed[seat] = true;
-        if self.committed == [true, true] {
-            Ok(Some(self.resolve(content, roll)))
-        } else {
-            Ok(None)
+        if self.committed != [true, true] {
+            return Ok(None);
+        }
+        let (moves, events) = self.resolve_movement(content, roll);
+
+        // Combat order: highest pilot skill first (initiative breaks
+        // ties), grouped by skill; each group's survivors are fixed when
+        // the group starts (the simultaneous-attack rule).
+        let combatants: Vec<(ShipId, u8, PlayerId)> = self
+            .ships
+            .iter()
+            .filter(|s| !s.destroyed && s.pose.is_some())
+            .map(|s| (s.id, self.effective_skill(content, s), s.owner))
+            .collect();
+        let skill_of = |id: ShipId| {
+            combatants.iter().find(|(s, _, _)| *s == id).map(|(_, k, _)| *k).unwrap_or(0)
+        };
+        let mut groups: Vec<Vec<ShipId>> = Vec::new();
+        for id in combat_order(&combatants, self.initiative) {
+            match groups.last_mut() {
+                Some(g) if skill_of(g[0]) == skill_of(id) => g.push(id),
+                _ => groups.push(vec![id]),
+            }
+        }
+        self.phase = Phase::Combat;
+        self.combat = Some(CombatState {
+            groups,
+            current: Vec::new(),
+            pending: None,
+            attacks: Vec::new(),
+            events: events.clone(),
+            moves: moves.clone(),
+        });
+        Ok(Some(ActivationRecords { moves, events }))
+    }
+
+    /// Narrated events of the turn so far (for streaming deltas).
+    pub fn combat_events(&self) -> &[String] {
+        self.combat.as_ref().map(|c| c.events.as_slice()).unwrap_or(&[])
+    }
+
+    /// Advance the Combat phase until it needs a Declare Target choice,
+    /// resolves one attack, or finishes the turn (End phase applied).
+    pub fn combat_step(
+        &mut self,
+        content: &Content,
+        roll: &mut dyn FnMut() -> u8,
+    ) -> Result<CombatStep, Rejection> {
+        if self.phase != Phase::Combat {
+            return Err(Rejection::WrongPhase);
+        }
+        loop {
+            let cs = self.combat.as_mut().ok_or(Rejection::WrongPhase)?;
+            if let Some(p) = &cs.pending {
+                return Ok(CombatStep::NeedTarget(p.clone()));
+            }
+            if cs.current.is_empty() {
+                if cs.groups.is_empty() {
+                    let cs = self.combat.take().expect("checked above");
+                    self.finish_turn();
+                    return Ok(CombatStep::Done(TurnRecords {
+                        moves: cs.moves,
+                        attacks: cs.attacks,
+                        events: cs.events,
+                    }));
+                }
+                let group = cs.groups.remove(0);
+                let ships = &self.ships;
+                cs.current = group
+                    .into_iter()
+                    .filter(|&id| ships.iter().any(|s| s.id == id && !s.destroyed))
+                    .collect();
+                continue;
+            }
+            let attacker = cs.current.remove(0);
+            let Some(a_idx) = self.ships.iter().position(|s| s.id == attacker) else {
+                continue;
+            };
+            let owner = self.ships[a_idx].owner;
+            let candidates = self.attack_candidates(content, a_idx);
+            match candidates.len() {
+                0 => continue,
+                1 => {
+                    let (target, range, _) = candidates[0];
+                    let d_idx = self.ships.iter().position(|s| s.id == target).expect("candidate");
+                    let mut ev = Vec::new();
+                    let rec = self.perform_attack_on(content, a_idx, d_idx, range, roll, &mut ev);
+                    let cs = self.combat.as_mut().expect("in combat");
+                    cs.events.extend(ev);
+                    cs.attacks.push(rec.clone());
+                    return Ok(CombatStep::Attack(rec));
+                }
+                _ => {
+                    let p = PendingAttack { attacker, owner, candidates };
+                    self.combat.as_mut().expect("in combat").pending = Some(p.clone());
+                    return Ok(CombatStep::NeedTarget(p));
+                }
+            }
         }
     }
 
-    /// Reveal and fly all plans in movement order (lowest pilot skill
-    /// first), perform actions, then fight the Combat phase (highest
-    /// skill first) and the End phase.
-    fn resolve(&mut self, content: &Content, roll: &mut dyn FnMut() -> u8) -> TurnRecords {
+    /// The owner's Declare Target choice for the pending attack.
+    pub fn declare_target(
+        &mut self,
+        content: &Content,
+        player: PlayerId,
+        target: ShipId,
+        roll: &mut dyn FnMut() -> u8,
+    ) -> Result<AttackRecord, Rejection> {
+        if self.phase != Phase::Combat {
+            return Err(Rejection::WrongPhase);
+        }
+        let pending = self
+            .combat
+            .as_ref()
+            .and_then(|c| c.pending.clone())
+            .ok_or(Rejection::NoPendingAttack)?;
+        if pending.owner != player {
+            return Err(Rejection::NotYourShip);
+        }
+        let &(_, range, _) = pending
+            .candidates
+            .iter()
+            .find(|(id, _, _)| *id == target)
+            .ok_or(Rejection::BadTarget)?;
+        let a_idx = self.ship_index(pending.attacker)?;
+        let d_idx = self.ship_index(target)?;
+        let mut ev = Vec::new();
+        let rec = self.perform_attack_on(content, a_idx, d_idx, range, roll, &mut ev);
+        let cs = self.combat.as_mut().expect("checked above");
+        cs.pending = None;
+        cs.events.extend(ev);
+        cs.attacks.push(rec.clone());
+        Ok(rec)
+    }
+
+    /// Automatic target policy: the locked ship if eligible, else the
+    /// nearest candidate.
+    pub fn auto_target(&self, p: &PendingAttack) -> Option<ShipId> {
+        let lock = self.ships.iter().find(|s| s.id == p.attacker).and_then(|s| s.lock);
+        p.candidates
+            .iter()
+            .find(|(id, _, _)| Some(*id) == lock)
+            .or_else(|| {
+                p.candidates.iter().min_by(|a, b| {
+                    a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)
+                })
+            })
+            .map(|(id, _, _)| *id)
+    }
+
+    /// Activation phase: reveal and fly all plans in movement order
+    /// (lowest pilot skill first) with their actions, then the Console
+    /// Fire burns that open the Combat phase.
+    fn resolve_movement(
+        &mut self,
+        content: &Content,
+        roll: &mut dyn FnMut() -> u8,
+    ) -> (Vec<MoveRecord>, Vec<String>) {
         let order = movement_order(
             &self
                 .ships
@@ -737,46 +964,11 @@ impl GameState {
             }
         }
 
-        // Combat phase: highest pilot skill fires first (initiative breaks
-        // ties). Ships of equal skill fire "simultaneously": everyone alive
-        // when their skill group starts still gets their shot, even if
-        // destroyed within the group.
-        let mut attacks = Vec::new();
-        let combatants: Vec<(ShipId, u8, PlayerId)> = self
-            .ships
-            .iter()
-            .filter(|s| !s.destroyed && s.pose.is_some())
-            .map(|s| (s.id, self.effective_skill(content, s), s.owner))
-            .collect();
-        let order = combat_order(&combatants, self.initiative);
-        let skill_of = |id: ShipId| {
-            combatants.iter().find(|(s, _, _)| *s == id).map(|(_, k, _)| *k).unwrap_or(0)
-        };
-        let mut g = 0;
-        while g < order.len() {
-            let group_skill = skill_of(order[g]);
-            let group_end = order[g..]
-                .iter()
-                .position(|&id| skill_of(id) != group_skill)
-                .map(|p| g + p)
-                .unwrap_or(order.len());
-            // Alive at group start = allowed to attack this group.
-            let allowed: Vec<ShipId> = order[g..group_end]
-                .iter()
-                .copied()
-                .filter(|&id| {
-                    let i = self.ship_index(id).expect("ordered ids exist");
-                    !self.ships[i].destroyed
-                })
-                .collect();
-            for id in allowed {
-                if let Some(rec) = self.perform_attack(content, id, roll, &mut events) {
-                    attacks.push(rec);
-                }
-            }
-            g = group_end;
-        }
+        (records, events)
+    }
 
+    /// End phase and turn bookkeeping once combat is complete.
+    fn finish_turn(&mut self) {
         // End phase: unspent focus and evade tokens are removed from all
         // ships; target locks persist, except locks on ships that are now
         // destroyed. Timed crits (Weapons Failure) tick down here.
@@ -820,40 +1012,23 @@ impl GameState {
                 self.winner = Some(self.initiative);
             }
         }
-        TurnRecords { moves: records, attacks, events }
     }
 
-    /// One attack, auto-resolved: target = locked ship if eligible, else
-    /// the nearest enemy with any part of its base in the firing arc at
-    /// range 1-3 (touching bases cannot be targeted). Token policy: spend
-    /// the lock to reroll misses, focus when eyes matter, evade when
-    /// damage would otherwise land.
-    fn perform_attack(
-        &mut self,
-        content: &Content,
-        attacker: ShipId,
-        roll: &mut dyn FnMut() -> u8,
-        events: &mut Vec<String>,
-    ) -> Option<AttackRecord> {
-        let a_idx = self.ship_index(attacker).ok()?;
-        // Weapons Failure: no attack this round or next.
+    /// Eligible targets for an attacker: enemy, alive, any part of its
+    /// base in the firing arc, range 1-3, bases not touching. Empty when
+    /// the attacker's weapons have failed.
+    fn attack_candidates(&self, content: &Content, a_idx: usize) -> Vec<(ShipId, u8, f64)> {
         if self.ships[a_idx]
             .crits
             .iter()
             .any(|c| matches!(c, CritEffect::WeaponsFailure { .. }))
         {
-            return None;
+            return Vec::new();
         }
-        let a_pose = self.ships[a_idx].pose?;
-        let (a_fp, a_dice) = {
-            let c = self.class_of(content, &self.ships[a_idx]);
-            (c.footprint, c.attack_dice)
-        };
+        let Some(a_pose) = self.ships[a_idx].pose else { return Vec::new() };
+        let a_fp = self.class_of(content, &self.ships[a_idx]).footprint;
         let a_corners = rules::footprint_corners(a_pose, a_fp);
-
-        // Eligible targets: enemy, alive, any base point in arc, range 1-3,
-        // not touching.
-        let mut candidates: Vec<(ShipId, u8, f64)> = Vec::new();
+        let mut candidates = Vec::new();
         for s in &self.ships {
             if s.owner == self.ships[a_idx].owner || s.destroyed {
                 continue;
@@ -881,16 +1056,25 @@ impl GameState {
             };
             candidates.push((s.id, band, dist));
         }
-        let locked = self.ships[a_idx].lock;
-        let &(defender, range, _) = candidates
-            .iter()
-            .find(|(id, _, _)| Some(*id) == locked)
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-            })?;
-        let d_idx = self.ship_index(defender).ok()?;
+        candidates
+    }
+
+    /// Resolve one declared attack (dice, token spending, damage, crits).
+    /// Token policy: spend the lock to reroll misses, focus when eyes
+    /// matter, evade when damage would otherwise land.
+    fn perform_attack_on(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        range: u8,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) -> AttackRecord {
+        let attacker = self.ships[a_idx].id;
+        let defender = self.ships[d_idx].id;
+        let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
+        let a_dice = self.class_of(content, &self.ships[a_idx]).attack_dice;
 
         // Roll attack dice (+1 at range 1). Weapon Malfunction drops one
         // die per copy; a Blinded Pilot fires 0 dice once, then recovers.
@@ -1041,7 +1225,7 @@ impl GameState {
             }
         }
 
-        Some(AttackRecord {
+        AttackRecord {
             attacker,
             defender,
             range,
@@ -1058,7 +1242,7 @@ impl GameState {
             hull_lost,
             crits_to_hull,
             defender_destroyed: self.ships[d_idx].destroyed,
-        })
+        }
     }
 
     /// Concede. Returns the winner.
@@ -1837,6 +2021,68 @@ mod tests {
         assert!(rec.attacks.iter().all(|a| a.defender_destroyed));
         assert_eq!(gs.phase, Phase::GameOver);
         assert_eq!(gs.winner, Some(P0), "initiative wins the mutual kill");
+    }
+
+    #[test]
+    fn declare_target_prompt_when_several_enemies_in_arc() {
+        let c = content();
+        let mut gs = GameState::new(
+            board(),
+            &c,
+            [&[TIE], &[XWING, XWING]],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
+        // TIE south; two X-Wings north, both ending inside its arc at R3
+        // (#1 a hair nearer than #2).
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(9.0, 17.5, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(11.5, 17.5, -FRAC_PI_2)).unwrap();
+        let s5 = dial_index(&c, TIE, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
+        });
+        let s4 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 4
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), s5).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), s4).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(2), s4).unwrap();
+        let mut miss = || 7u8;
+        assert_eq!(gs.commit_plans_begin(&c, P0, &mut miss).unwrap(), None);
+        let act = gs.commit_plans_begin(&c, P1, &mut miss).unwrap().unwrap();
+        assert_eq!(act.moves.len(), 3);
+        assert_eq!(gs.phase, Phase::Combat);
+        // X-Wings (skill 2) fire first; each sees only the TIE → automatic.
+        assert!(matches!(gs.combat_step(&c, &mut miss).unwrap(), CombatStep::Attack(_)));
+        assert!(matches!(gs.combat_step(&c, &mut miss).unwrap(), CombatStep::Attack(_)));
+        // The TIE sees both X-Wings: the game must ask its owner.
+        let CombatStep::NeedTarget(p) = gs.combat_step(&c, &mut miss).unwrap() else {
+            panic!("expected a Declare Target prompt")
+        };
+        assert_eq!((p.attacker, p.owner), (ShipId(0), P0));
+        let mut ids: Vec<u32> = p.candidates.iter().map(|c| c.0 .0).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+        // Stepping again re-issues the prompt; only the owner may answer,
+        // and only with an eligible enemy.
+        assert!(matches!(gs.combat_step(&c, &mut miss).unwrap(), CombatStep::NeedTarget(_)));
+        assert_eq!(
+            gs.declare_target(&c, P1, ShipId(2), &mut miss),
+            Err(Rejection::NotYourShip)
+        );
+        assert_eq!(
+            gs.declare_target(&c, P0, ShipId(0), &mut miss),
+            Err(Rejection::BadTarget)
+        );
+        // Pick the farther X-Wing — overriding the auto policy's nearest.
+        let rec = gs.declare_target(&c, P0, ShipId(2), &mut miss).unwrap();
+        assert_eq!(rec.defender, ShipId(2));
+        let CombatStep::Done(all) = gs.combat_step(&c, &mut miss).unwrap() else {
+            panic!("expected the turn to finish")
+        };
+        assert_eq!(all.attacks.len(), 3);
+        assert_eq!(gs.phase, Phase::Planning);
+        assert_eq!(gs.turn, 2);
     }
 
     #[test]

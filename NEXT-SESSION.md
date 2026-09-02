@@ -58,9 +58,11 @@ starfield.rs.
 - POLICY: clippy warnings are errors — `cargo clippy --workspace -- -D
   warnings` must stay at zero. sf-client has a documented crate-level
   allow for type_complexity + too_many_arguments only (Bevy idiom).
-- Workflow: delegate noisy verification (build/clippy/test) to a Haiku
-  subagent reporting summaries; main model does edits. Check crates
-  individually (feature unification across crates can mask breaks).
+- WORKFLOW RULE (user asked repeatedly, now also in CLAUDE.md): ALWAYS
+  delegate cargo check/build/test/clippy/fmt to a Haiku subagent that
+  reports PASS/FAIL + error excerpts; never run them inline on the main
+  model; main model investigates and edits. Check crates individually
+  when feature unification could mask breaks.
 - Frequent small commits, one concern each; tests scripted via the
   `roll: &mut dyn FnMut() -> u8` d8 injection (7=blank, 0=hit/evade).
 

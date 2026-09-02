@@ -455,6 +455,20 @@ past and fade).
 - **Runtime ship state** (with game state in M3): current hull/shields, stress tokens,
   action tokens (Focus / Target Lock / Evade), assigned pilot, active modifiers.
 
+### Declare Target (interactive combat step)
+
+Combat is resolved **step by step** on the server (`commit_plans_begin` →
+`combat_step` / `declare_target`). Attacks with zero or one eligible target resolve
+automatically; when an attacker has **several** enemies in arc and range, the server
+pauses, sends `ChooseTarget` to the owner (and `OpponentChoosing` to the other side),
+and resumes when `DeclareTarget` arrives. Each resolved attack is streamed as an
+`AttackResult`; `MovementResult` opens the sequence and `TurnEnd` closes it. The
+client keeps a playback queue (moves → attacks → prompt → …) so the prompt is only
+shown once movement has animated and positions are visible; the player answers by
+clicking a highlighted ship or pressing its number. Token spending (lock/focus/evade)
+remains automatic. Tests and offline play use `commit_plans`, which drives the same
+machine with the locked-else-nearest policy.
+
 ### Turn structure (phase machine in `game.rs`)
 
 ```

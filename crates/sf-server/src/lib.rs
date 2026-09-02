@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use sf_core::board::Board;
 use sf_core::data::Content;
-use sf_core::game::{GameState, Phase};
+use sf_core::game::{CombatStep, GameState, Phase};
 use sf_core::ship::{PlayerId, ShipClassId};
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
@@ -241,6 +241,10 @@ async fn session(
     let mut players: Vec<(String, mpsc::Sender<ServerMsg>)> = Vec::new();
     let mut game: Option<GameState> = None;
 
+    // Combat streaming: how many narrated events have gone out this turn,
+    // and whether the game just ended (macros can't `break` the loop).
+    let mut streamed = 0usize;
+    let mut game_over = false;
     macro_rules! send_to {
         ($seat:expr, $msg:expr) => {
             if let Some((_, tx)) = players.get($seat as usize) {
@@ -263,6 +267,61 @@ async fn session(
                         squad_totals: gs.squad_totals,
                     }
                 );
+            }
+        };
+    }
+
+    /// Advance combat, streaming each attack; stop at a Declare Target
+    /// prompt (sent to its owner) or at the end of the turn.
+    macro_rules! drive_combat {
+        ($gs:expr) => {
+            loop {
+                match $gs.combat_step(&content, &mut || rand::random::<u8>()) {
+                    Ok(CombatStep::Attack(rec)) => {
+                        let all = $gs.combat_events();
+                        let events = all[streamed.min(all.len())..].to_vec();
+                        streamed = all.len();
+                        for s in 0..players.len() as u8 {
+                            send_to!(
+                                s,
+                                ServerMsg::AttackResult { attack: rec.clone(), events: events.clone() }
+                            );
+                        }
+                    }
+                    Ok(CombatStep::NeedTarget(p)) => {
+                        let owner = p.owner.0 as u8;
+                        let candidates: Vec<(sf_core::ship::ShipId, u8)> =
+                            p.candidates.iter().map(|(id, r, _)| (*id, *r)).collect();
+                        send_to!(owner, ServerMsg::ChooseTarget { attacker: p.attacker, candidates });
+                        send_to!(1 - owner, ServerMsg::OpponentChoosing { attacker: p.attacker });
+                        break;
+                    }
+                    Ok(CombatStep::Done(rec)) => {
+                        let events = rec.events[streamed.min(rec.events.len())..].to_vec();
+                        streamed = 0;
+                        for s in 0..players.len() as u8 {
+                            send_to!(s, ServerMsg::TurnEnd { events: events.clone() });
+                        }
+                        snapshots!(&*$gs);
+                        if $gs.phase == Phase::GameOver {
+                            let winner = $gs.winner.map(|p| p.0 as u8);
+                            for s in 0..players.len() as u8 {
+                                send_to!(
+                                    s,
+                                    ServerMsg::GameOver { winner, reason: "fleet destroyed".into() }
+                                );
+                            }
+                            game_over = true;
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        for s in 0..players.len() as u8 {
+                            send_to!(s, ServerMsg::Error { message: format!("combat error: {e}") });
+                        }
+                        break;
+                    }
+                }
             }
         };
     }
@@ -343,40 +402,59 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
-                    ClientMsg::CommitPlans => match gs.commit_plans(
+                    ClientMsg::CommitPlans => match gs.commit_plans_begin(
                         &content,
                         player,
                         &mut || rand::random::<u8>(),
                     ) {
                         Ok(None) => snapshots!(&*gs),
-                        Ok(Some(rec)) => {
+                        Ok(Some(act)) => {
+                            let (moves, events) = (act.moves, act.events);
+                            streamed = events.len();
                             for s in 0..players.len() as u8 {
                                 send_to!(
                                     s,
-                                    ServerMsg::TurnResult {
-                                        moves: rec.moves.clone(),
-                                        attacks: rec.attacks.clone(),
-                                        events: rec.events.clone(),
+                                    ServerMsg::MovementResult {
+                                        moves: moves.clone(),
+                                        events: events.clone(),
                                     }
                                 );
                             }
-                            snapshots!(&*gs);
-                            if gs.phase == Phase::GameOver {
-                                let winner = gs.winner.map(|p| p.0 as u8);
-                                for s in 0..players.len() as u8 {
-                                    send_to!(
-                                        s,
-                                        ServerMsg::GameOver {
-                                            winner,
-                                            reason: "fleet destroyed".into(),
-                                        }
-                                    );
-                                }
+                            drive_combat!(gs);
+                            if game_over {
                                 break;
                             }
                         }
                         Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                     },
+                    ClientMsg::DeclareTarget { target } => {
+                        match gs.declare_target(
+                            &content,
+                            player,
+                            target,
+                            &mut || rand::random::<u8>(),
+                        ) {
+                            Ok(rec) => {
+                                let all = gs.combat_events();
+                                let events = all[streamed.min(all.len())..].to_vec();
+                                streamed = all.len();
+                                for s in 0..players.len() as u8 {
+                                    send_to!(
+                                        s,
+                                        ServerMsg::AttackResult {
+                                            attack: rec.clone(),
+                                            events: events.clone(),
+                                        }
+                                    );
+                                }
+                                drive_combat!(gs);
+                                if game_over {
+                                    break;
+                                }
+                            }
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
                     ClientMsg::Resign => {
                         let winner = gs.resign(player);
                         for s in 0..players.len() as u8 {
