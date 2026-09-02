@@ -3,3 +3,5 @@ tls_cert.pem
 tls_key.pem
 # User's rulebook reference — large and not ours to redistribute.
 core_rules_en.pdf
+tls_cert.pem
+tls_key.pem

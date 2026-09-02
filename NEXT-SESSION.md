@@ -1,9 +1,10 @@
-# Where we left off (2026-09-02, session 3)
+# Where we left off (2026-09-02, session 4)
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (75 tests),
-`cargo clippy --workspace -- -D warnings` clean. Rulebook coverage:
+`cargo build` clean, `cargo test --workspace` green (83 tests),
+`cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
+clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
 sits at the repo root, gitignored — read further pages on demand;
 p.18+ covers upgrade cards / squad building, not yet read).
@@ -36,35 +37,50 @@ What exists end-to-end:
 - Camera view (session 3): +/- zoom, right-drag pan, Home resets; an
   inset minimap (bottom-right, second camera) appears automatically
   whenever the board doesn't fully fit the main view.
+- M4 SECURITY (session 4, done, NOT yet playtested by the user):
+  pinned self-signed TLS + server password + rate limiting. Server mints
+  tls_cert.pem/tls_key.pem on first run (gitignored, --tls-dir), prints
+  the SHA-256 fingerprint, the password (--password or random) and the
+  join string `starfight://host:port/#<fp>`; `--insecure` keeps
+  plaintext ws:// with no password for local testing. Client: menu has
+  Name / Server / Password / Cert fingerprint / Game code; the Server
+  field takes the join string (Ctrl+V pastes via arboard; also accepted
+  as `sf-client <join-string>` CLI arg); a ≥16-hex prefix pins; the full
+  fingerprint is remembered per host:port in the config dir
+  (~/.config/starfight/pins.txt on Linux) after the first handshake, and
+  a contradicting pin later is a hard error naming that file. Shared
+  code: sf-proto::tls (fingerprint, parse_target, PinnedCert verifier).
+  Server: ServerOpts, constant-time compare (subtle), 5 failures/minute
+  per IP blocks Hello. Tests: sf-proto unit tests + sf-server
+  tests/security.rs.
 
-To try it: `cargo run -p sf-server` then two `cargo run -p sf-client`
-instances — create in one, join with the code in the other.
+To try it: `cargo run -p sf-server` (copy the printed join string and
+password) then two `cargo run -p sf-client` instances — paste the join
+string into Server, type the password, create in one, join with the
+code in the other. Quick local loop without TLS: `sf-server --insecure`
+and Server `ws://127.0.0.1:7777`.
 
-## NEXT TASK: M4 security (decided 2026-09-02)
+## NEXT TASK
 
-Playtest of Declare Target + minimap done and approved by the user
-("gameplay was good", minimap "looks good"). Next is item 2 below.
-
-1. ~~Playtest~~ done. Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC /
-   ATTACK_DUR in online.rs, MINI_PX in render.rs.
-2. **M4 — security**: TLS with pinned self-signed cert + server password,
-   mirroring ../hex-ship-game (design in ARCHITECTURE.md §4): server
-   generates/persists cert, prints SHA-256 fingerprint + join string
-   `starfight://host:port/#<fp>`; client custom rustls verifier (≥16 hex
-   prefix), remembered pins in config (changed pin = hard error),
-   constant-time password check, menu gains password + fingerprint
-   fields. Hello already carries password (currently ignored).
-3. **Rulebook p.18+** — upgrade cards / squad points, feeding the squad
+1. **Playtest M4** with the user (two clients, real join string; check
+   the pin file gets written; try a wrong password). Verify Ctrl+V works
+   on their Wayland desktop (arboard `wayland-data-control` feature; if
+   it fails, the CLI-argument route still works).
+2. **Rulebook p.18+** — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
+   Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
+   online.rs, MINI_PX in render.rs.
 
 ## Client structure (crates/sf-client/src/)
 
 main.rs (Screen state: Menu/Sandbox/Online, global setup, two cameras),
 render.rs (Game resource, ship_visual, draw helpers, bullseye shade,
-ViewCtl pan/zoom + minimap), menu.rs, online.rs (server mirror; Anim is a
-queue of AnimItem: Move/Attack/Prompt/Waiting/TurnEnd; never mutates
-game state locally), sandbox.rs, net.rs (background thread + channels),
-starfield.rs.
+ViewCtl pan/zoom + minimap), menu.rs (fields, paste, pin resolution),
+online.rs (server mirror; Anim is a queue of AnimItem:
+Move/Attack/Prompt/Waiting/TurnEnd; never mutates game state locally;
+remembers the pin on NetEvent::Secured), sandbox.rs, net.rs (background
+thread + channels; pinned TLS via tokio-rustls), pins.rs (config dir:
+pins.txt + last-used menu values), starfield.rs.
 
 ## Housekeeping / workflow
 
@@ -75,7 +91,10 @@ starfield.rs.
   delegate cargo check/build/test/clippy/fmt to a Haiku subagent that
   reports PASS/FAIL + error excerpts; never run them inline on the main
   model; main model investigates and edits. Check crates individually
-  when feature unification could mask breaks.
+  when feature unification could mask breaks. Tell the subagent
+  explicitly that IT is the verifier and must not delegate further —
+  otherwise it reads CLAUDE.md, tries to re-delegate, and returns
+  nothing (happened 2026-09-02).
 - Frequent small commits, one concern each; tests scripted via the
   `roll: &mut dyn FnMut() -> u8` d8 injection (7=blank, 0=hit/evade).
 

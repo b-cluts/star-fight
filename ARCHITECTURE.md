@@ -126,6 +126,13 @@ Proven in the sibling `hex-ship-game` project; repeated here with refinements.
 - **Later, if a public server with a domain ever exists**: the verifier is pluggable —
   add normal WebPKI validation alongside pinning without touching anything else.
 
+Implemented (M4, 2026-09-02): `sf-proto::tls` holds the shared pieces (fingerprint,
+join-string parser, `PinnedCert` verifier, pinned client config; ring provider only),
+`sf-server::tls` the persisted identity (`--tls-dir`, `--insecure` for plaintext dev),
+`sf-client::pins` the remembered pins and last-used menu values in the platform config
+directory. Password check uses `subtle` constant-time comparison; five failures per
+address per minute block further Hellos. Covered by `sf-server/tests/security.rs`.
+
 ### Protocol
 
 - Single TLS WebSocket connection per client, kept open for the whole session.
