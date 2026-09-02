@@ -13,6 +13,8 @@ mod sandbox;
 mod starfield;
 
 use bevy::prelude::*;
+use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
+use bevy::render::RenderPlugin;
 
 use sf_core::board::Board;
 use sf_core::data::{ManeuverDb, ShipDb};
@@ -46,6 +48,16 @@ fn main() {
     App::new()
         .add_plugins(
             DefaultPlugins
+                // Vulkan / Metal / DX12 only: skipping the OpenGL probe avoids
+                // a spurious EGL "eglCreateContext" error at startup on
+                // Mesa/V3D (Raspberry Pi) and a wasted context creation.
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        backends: Some(Backends::PRIMARY),
+                        ..default()
+                    }),
+                    ..default()
+                })
                 .set(AssetPlugin { file_path: assets, ..default() })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
