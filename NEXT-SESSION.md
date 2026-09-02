@@ -149,8 +149,8 @@ and Server `ws://127.0.0.1:7777`.
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
    confirmed working by the user.
-3. **Playtest the squad builder** (build two squads, save, pick from
-   the menu with ◀ ▶, create/join, check callsigns/pilots/totals in the
+3. ~~Playtest the squad builder~~ user: "builder appears to work well"
+   (2026-09-02). Still worth a check: pick from the menu with < >, create/join, check callsigns/pilots/totals in the
    HUD; check the card image shows). Known rough edges: keyboard-only
    UI, the HUD text can get long with many ships; scenario rules are
    fixed at 100 pts / all sources (SquadRules::default) — a lobby
@@ -164,6 +164,11 @@ and Server `ws://127.0.0.1:7777`.
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.
+
+- FONT (session 4): assets/fonts/DejaVuSansMono.ttf (license alongside)
+  is applied to every text entity by render::apply_font (Bevy's built-in
+  subset font lacks arrows/triangles — they rendered as boxes). Any glyph
+  DejaVu Sans Mono has is safe in UI strings now.
 
 ## Client structure (crates/sf-client/src/)
 

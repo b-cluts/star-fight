@@ -399,3 +399,15 @@ pub fn apply_hover(
         None => *vis = Visibility::Hidden,
     }
 }
+
+/// The one UI font (DejaVu Sans Mono, bundled in assets/fonts): full
+/// Latin plus arrows, triangles and box drawing, unlike Bevy's built-in
+/// subset font. Applied to every text entity as it appears.
+#[derive(Resource)]
+pub struct UiFont(pub Handle<Font>);
+
+pub fn apply_font(font: Res<UiFont>, mut texts: Query<&mut TextFont, Added<TextFont>>) {
+    for mut t in &mut texts {
+        t.font = font.0.clone();
+    }
+}

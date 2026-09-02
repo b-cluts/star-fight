@@ -496,6 +496,12 @@ fn input(
     }
 }
 
+/// Brackets around the selected cell (ASCII: the default font has no
+/// arrow/triangle glyphs).
+fn open_close(on: bool) -> (&'static str, &'static str) {
+    if on { ("[", "]") } else { (" ", " ") }
+}
+
 fn sanitize(name: &str) -> String {
     let s: String = name
         .chars()
@@ -553,7 +559,7 @@ fn show(
             .collect::<Vec<_>>()
             .join("   ")
             + "   F: faction   Delete: remove ship",
-        "↑/↓ ship  ←/→ column  Q/E change  N: callsign  M: squad name  S: save  L: load next  Esc: back".into(),
+        "Up/Down: ship  Left/Right: column  Q/E: change  N: callsign  M: squad name  S: save  L: load next  Esc: back".into(),
         String::new(),
     ];
     for (i, r) in b.rows.iter().enumerate() {
@@ -561,20 +567,20 @@ fn show(
         let class = pilot.and_then(|p| content.ships.class(p.class));
         let sel = i == b.row;
         let mut cells: Vec<String> = Vec::new();
+        let (o, c) = open_close(sel && b.col == 0);
         cells.push(format!(
-            "{}{} PS{} ({})",
-            if sel && b.col == 0 { "▶" } else { " " },
+            "{o}{} PS{} ({}){c}",
             pilot.map(|p| p.name.as_str()).unwrap_or("?"),
             pilot.map(|p| p.skill).unwrap_or(0),
             pilot.map(|p| p.cost).unwrap_or(0)
         ));
         for (k, (slot, pick)) in r.slots.iter().enumerate() {
-            let mark = if sel && b.col == k + 1 { "▶" } else { " " };
+            let (o, c) = open_close(sel && b.col == k + 1);
             let text = match pick.and_then(|u| content.upgrades.upgrade(u)) {
                 Some(u) => format!("{} ({})", u.name, u.cost),
-                None => format!("[{slot:?}]"),
+                None => format!("-{slot:?}-"),
             };
-            cells.push(format!("{mark}{text}"));
+            cells.push(format!("{o}{text}{c}"));
         }
         let callsign = if r.callsign.is_empty() {
             "(default callsign)".to_string()

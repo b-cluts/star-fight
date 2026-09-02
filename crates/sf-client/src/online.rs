@@ -331,7 +331,7 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
 fn attack_line(online: &Online, _game: &Game, a: &AttackRecord) -> String {
     let name = |id: u32| callsign(online.snap.as_ref(), id);
     let landed = a.hits + a.crits;
-    let mut line = format!("{} → {} @R{}: ", name(a.attacker.0), name(a.defender.0), a.range);
+    let mut line = format!("{} -> {} @R{}: ", name(a.attacker.0), name(a.defender.0), a.range);
     if landed == 0 {
         line.push_str("miss");
     } else {
@@ -1177,7 +1177,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             "drag ships • Q/E or scroll rotates • N: rename • A: submit all • +/- zoom, right-drag pan, Home reset"
         }
         Phase::Planning => {
-            "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
+            "Tab: ship • Left/Right+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
         }
         Phase::Combat => "combat resolving…",
         Phase::GameOver => "game over",

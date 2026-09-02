@@ -184,7 +184,7 @@ fn spawn_menu(
             },))
                 .with_children(|row| {
                     for (action, label) in
-                        [(MenuAction::PrevSquad, "◀"), (MenuAction::NextSquad, "▶")]
+                        [(MenuAction::PrevSquad, "<"), (MenuAction::NextSquad, ">")]
                     {
                         if matches!(action, MenuAction::NextSquad) {
                             row.spawn((
@@ -414,7 +414,7 @@ fn refresh(
             None if saved.is_empty() => "no saved squads yet".into(),
             None => format!("{} saved squads", saved.len()),
         };
-        t.0 = format!("{}\n{pos} — ◀ ▶ picks the squad to fly", builder.summary(&game));
+        t.0 = format!("{}\n{pos} — < > picks the squad to fly", builder.summary(&game));
     }
     for (label, mut text) in &mut labels {
         let masked = "•".repeat(form.password.chars().count());

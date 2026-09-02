@@ -358,7 +358,7 @@ fn update_hud(
                 })
                 .unwrap_or_default();
             format!(
-                "SANDBOX FLIGHT — {} | [{}/{}] {} {} ({}){status}\nTab: ship  ←/→: dial  Enter: fly  F: arcs  P: placement  Esc: menu",
+                "SANDBOX FLIGHT — {} | [{}/{}] {} {} ({}){status}\nTab: ship  Left/Right: dial  Enter: fly  F: arcs  P: placement  Esc: menu",
                 class.name,
                 idx + 1,
                 dial.len(),

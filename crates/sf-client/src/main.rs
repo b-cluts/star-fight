@@ -90,6 +90,7 @@ fn main() {
                 render::view_input,
                 render::apply_view,
                 render::apply_hover,
+                render::apply_font,
             ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin, squad_builder::plugin))
@@ -102,6 +103,7 @@ fn global_setup(
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
 ) {
+    commands.insert_resource(render::UiFont(asset_server.load("fonts/DejaVuSansMono.ttf")));
     commands.spawn((Camera2d, render::MainCam, IsDefaultUiCamera));
     // Inset overview: activated by apply_view only when the board doesn't
     // fit the main view (zoomed/panned or oversized boards).
