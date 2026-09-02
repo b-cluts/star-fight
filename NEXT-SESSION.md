@@ -54,7 +54,7 @@ What exists end-to-end:
   per IP blocks Hello. Tests: sf-proto unit tests + sf-server
   tests/security.rs.
 
-- CALLSIGNS + HOVER (session 4, done, not yet playtested): every ship
+- CALLSIGNS + HOVER (session 4, done, playtested OK): every ship
   has a squad callsign (ShipState/ShipView.callsign). Defaults per
   fleet faction: first Rebel squad Red, second Gold; Imperial Obsidian
   then Onyx; first ship "-leader", then "-2", "-3"… (ship.rs
@@ -109,8 +109,8 @@ and Server `ws://127.0.0.1:7777`.
 ## NEXT TASK
 
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
-2. **Playtest callsigns**: hover name tag in sandbox + online, N-rename
-   during placement, callsigns in log/prompt (HUD now also shows pilot).
+2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
+   confirmed working by the user.
 3. **Squad builder** (rulebook p.18+ for squad points / upgrade rules):
    pick faction → ships → pilots (show card image from the cards dir),
    name callsigns, save squads locally, validate_squad() shared; lobby
