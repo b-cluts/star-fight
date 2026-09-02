@@ -109,29 +109,15 @@ mod tests {
 
     #[test]
     fn engine_and_thrust_make_maneuvers_red() {
-        let turn = Maneuver {
-            steer: Steer::TurnLeft,
-            distance: 2,
-            difficulty: Difficulty::Normal,
-        };
-        let bank = Maneuver {
-            steer: Steer::BankRight,
-            distance: 1,
-            difficulty: Difficulty::Easy,
-        };
+        let turn = Maneuver { steer: Steer::TurnLeft, distance: 2, difficulty: Difficulty::Normal };
+        let bank = Maneuver { steer: Steer::BankRight, distance: 1, difficulty: Difficulty::Easy };
         assert_eq!(effective_difficulty(&[], &turn), Difficulty::Normal);
-        assert_eq!(
-            effective_difficulty(&[CritEffect::DamagedEngine], &turn),
-            Difficulty::Hard
-        );
+        assert_eq!(effective_difficulty(&[CritEffect::DamagedEngine], &turn), Difficulty::Hard);
         assert_eq!(
             effective_difficulty(&[CritEffect::DamagedEngine], &bank),
             Difficulty::Easy,
             "engine damage leaves banks alone"
         );
-        assert_eq!(
-            effective_difficulty(&[CritEffect::ThrustControlFire], &bank),
-            Difficulty::Hard
-        );
+        assert_eq!(effective_difficulty(&[CritEffect::ThrustControlFire], &bank), Difficulty::Hard);
     }
 }

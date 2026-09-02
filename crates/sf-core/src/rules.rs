@@ -108,10 +108,8 @@ pub fn check_path(
     fp: Footprint,
     others: &[(ShipId, Pose, Footprint)],
 ) -> Option<PathObstruction> {
-    let other_corners: Vec<(ShipId, [Vec2; 4])> = others
-        .iter()
-        .map(|&(id, pose, ofp)| (id, footprint_corners(pose, ofp)))
-        .collect();
+    let other_corners: Vec<(ShipId, [Vec2; 4])> =
+        others.iter().map(|&(id, pose, ofp)| (id, footprint_corners(pose, ofp))).collect();
     for &pose in path {
         let corners = footprint_corners(pose, fp);
         if !within_board(board, &corners) {
@@ -129,7 +127,7 @@ pub fn check_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maneuver::{sample_path, Difficulty, Maneuver, Steer};
+    use crate::maneuver::{Difficulty, Maneuver, Steer, sample_path};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     const FP_SMALL: Footprint = Footprint { length: 1.0, width: 1.0 };
@@ -184,26 +182,40 @@ mod tests {
     #[test]
     fn placement_inside_south_zone_ok() {
         // Anchor at y=2 facing north: hull spans y in [1,2], inside depth 3.
-        let r = placement_legal(&board(), Seat::South, Pose::new(10.0, 2.0, FRAC_PI_2), FP_SMALL, &[]);
+        let r =
+            placement_legal(&board(), Seat::South, Pose::new(10.0, 2.0, FRAC_PI_2), FP_SMALL, &[]);
         assert_eq!(r, Ok(()));
     }
 
     #[test]
     fn placement_outside_zone_rejected() {
-        let r = placement_legal(&board(), Seat::South, Pose::new(10.0, 5.0, FRAC_PI_2), FP_SMALL, &[]);
+        let r =
+            placement_legal(&board(), Seat::South, Pose::new(10.0, 5.0, FRAC_PI_2), FP_SMALL, &[]);
         assert_eq!(r, Err(PlacementError::OutOfZone));
     }
 
     #[test]
     fn placement_on_teammate_rejected() {
         let placed = [(ShipId(7), Pose::new(10.0, 2.0, FRAC_PI_2), FP_SMALL)];
-        let r = placement_legal(&board(), Seat::South, Pose::new(10.3, 2.0, FRAC_PI_2), FP_SMALL, &placed);
+        let r = placement_legal(
+            &board(),
+            Seat::South,
+            Pose::new(10.3, 2.0, FRAC_PI_2),
+            FP_SMALL,
+            &placed,
+        );
         assert_eq!(r, Err(PlacementError::OverlapsShip(ShipId(7))));
     }
 
     #[test]
     fn north_zone_is_far_band() {
-        let r = placement_legal(&board(), Seat::North, Pose::new(10.0, 18.5, -FRAC_PI_2), FP_SMALL, &[]);
+        let r = placement_legal(
+            &board(),
+            Seat::North,
+            Pose::new(10.0, 18.5, -FRAC_PI_2),
+            FP_SMALL,
+            &[],
+        );
         assert_eq!(r, Ok(()));
     }
 

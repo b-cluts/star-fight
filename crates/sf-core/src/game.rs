@@ -9,11 +9,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::action::{self, ActionResult, PlannedAction};
-use crate::crit::{self, CritEffect};
 use crate::board::{Board, Seat};
 use crate::combat;
-use crate::dice::{AttackFace, DefenseFace};
+use crate::crit::{self, CritEffect};
 use crate::data::Content;
+use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose};
 use crate::maneuver::{self, Difficulty, Maneuver};
 use crate::rules;
@@ -61,11 +61,9 @@ fn substitute_non_red(dial: &[Maneuver], crits: &[CritEffect]) -> Option<Maneuve
     let pick = |pred: &dyn Fn(&Maneuver) -> bool| {
         dial.iter().filter(|m| pred(m)).min_by_key(|m| m.distance).copied()
     };
-    pick(&|m| {
-        eff(m) == Difficulty::Normal && m.steer == crate::maneuver::Steer::Straight
-    })
-    .or_else(|| pick(&|m| eff(m) == Difficulty::Normal))
-    .or_else(|| pick(&|m| eff(m) != Difficulty::Hard))
+    pick(&|m| eff(m) == Difficulty::Normal && m.steer == crate::maneuver::Steer::Straight)
+        .or_else(|| pick(&|m| eff(m) == Difficulty::Normal))
+        .or_else(|| pick(&|m| eff(m) != Difficulty::Hard))
 }
 
 /// Movement phase order: LOWEST pilot skill moves first. At equal skill
@@ -436,15 +434,14 @@ impl GameState {
             .ships
             .iter()
             .filter(|s| s.owner == player && s.id != ship_id)
-            .filter_map(|s| {
-                s.pose.map(|p| (s.id, p, self.class_of(content, s).footprint))
-            })
+            .filter_map(|s| s.pose.map(|p| (s.id, p, self.class_of(content, s).footprint)))
             .collect();
-        rules::placement_legal(&self.board, Self::seat_of(player), pose, fp, &own_placed)
-            .map_err(|e| match e {
+        rules::placement_legal(&self.board, Self::seat_of(player), pose, fp, &own_placed).map_err(
+            |e| match e {
                 rules::PlacementError::OutOfZone => Rejection::OutOfZone,
                 rules::PlacementError::OverlapsShip(_) => Rejection::OverlapsShip,
-            })?;
+            },
+        )?;
         self.ships[i].pose = Some(pose);
         if self.ships.iter().all(|s| s.pose.is_some()) {
             self.phase = Phase::Planning;
@@ -474,8 +471,7 @@ impl GameState {
             return Err(Rejection::ShipDestroyed);
         }
         let class = self.class_of(content, &self.ships[i]);
-        let dial =
-            &content.dials.set(class.maneuver_set).expect("validated in new()").maneuvers;
+        let dial = &content.dials.set(class.maneuver_set).expect("validated in new()").maneuvers;
         let man = *dial.get(index as usize).ok_or(Rejection::BadManeuverIndex)?;
         // Crits can make normally-white maneuvers red (Damaged Engine /
         // Thrust Control Fire) — the stress rule uses the effective color.
@@ -568,10 +564,8 @@ impl GameState {
         if self.committed[seat] {
             return Err(Rejection::AlreadyCommitted);
         }
-        let incomplete = self
-            .ships
-            .iter()
-            .any(|s| s.owner == player && !s.destroyed && s.plan.is_none());
+        let incomplete =
+            self.ships.iter().any(|s| s.owner == player && !s.destroyed && s.plan.is_none());
         if incomplete {
             return Err(Rejection::PlansIncomplete);
         }
@@ -720,9 +714,9 @@ impl GameState {
             .iter()
             .find(|(id, _, _)| Some(*id) == lock)
             .or_else(|| {
-                p.candidates.iter().min_by(|a, b| {
-                    a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)
-                })
+                p.candidates
+                    .iter()
+                    .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
             })
             .map(|(id, _, _)| *id)
     }
@@ -811,8 +805,7 @@ impl GameState {
                 bumped = true;
             }
             let end = used_path[stop];
-            let fled =
-                !rules::within_board(&self.board, &rules::footprint_corners(end, fp));
+            let fled = !rules::within_board(&self.board, &rules::footprint_corners(end, fp));
 
             {
                 let ship = &mut self.ships[i];
@@ -836,16 +829,14 @@ impl GameState {
             {
                 let label = self.label(content, i);
                 self.damage_point(i);
-                let died =
-                    if self.ships[i].destroyed { " — DESTROYED" } else { "" };
+                let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
                 events.push(format!("{label}: Stunned Pilot — 1 damage from the collision{died}"));
             }
             let destroyed = self.ships[i].destroyed;
 
             // Perform Action step: one action, right after moving. Stress,
             // bumping, destruction, or damaged sensors all forfeit it.
-            let planned =
-                self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
+            let planned = self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
             let action_result = if destroyed {
                 ActionResult::Failed
             } else if self.ships[i].stress > 0 {
@@ -918,10 +909,7 @@ impl GameState {
                                     self.ships[i].pose.expect("just set"),
                                     fp,
                                 );
-                                combat::range_band_between(
-                                    &my,
-                                    &rules::footprint_corners(tp, tfp),
-                                )
+                                combat::range_band_between(&my, &rules::footprint_corners(tp, tfp))
                             })
                             .is_some();
                         if in_range {
@@ -972,8 +960,7 @@ impl GameState {
         // End phase: unspent focus and evade tokens are removed from all
         // ships; target locks persist, except locks on ships that are now
         // destroyed. Timed crits (Weapons Failure) tick down here.
-        let dead: Vec<ShipId> =
-            self.ships.iter().filter(|s| s.destroyed).map(|s| s.id).collect();
+        let dead: Vec<ShipId> = self.ships.iter().filter(|s| s.destroyed).map(|s| s.id).collect();
         for ship in &mut self.ships {
             ship.focus = 0;
             ship.evade = 0;
@@ -992,9 +979,7 @@ impl GameState {
 
         self.committed = [false, false];
         self.turn += 1;
-        let alive = |p: u32| {
-            self.ships.iter().any(|s| s.owner == PlayerId(p) && !s.destroyed)
-        };
+        let alive = |p: u32| self.ships.iter().any(|s| s.owner == PlayerId(p) && !s.destroyed);
         match (alive(0), alive(1)) {
             (true, true) => self.phase = Phase::Planning,
             (true, false) => {
@@ -1018,11 +1003,7 @@ impl GameState {
     /// base in the firing arc, range 1-3, bases not touching. Empty when
     /// the attacker's weapons have failed.
     fn attack_candidates(&self, content: &Content, a_idx: usize) -> Vec<(ShipId, u8, f64)> {
-        if self.ships[a_idx]
-            .crits
-            .iter()
-            .any(|c| matches!(c, CritEffect::WeaponsFailure { .. }))
-        {
+        if self.ships[a_idx].crits.iter().any(|c| matches!(c, CritEffect::WeaponsFailure { .. })) {
             return Vec::new();
         }
         let Some(a_pose) = self.ships[a_idx].pose else { return Vec::new() };
@@ -1311,13 +1292,11 @@ mod tests {
     /// Index of a maneuver on a class's dial.
     fn dial_index(c: &Content, class: ShipClassId, m: fn(&Maneuver) -> bool) -> u8 {
         let set = c.ships.class(class).unwrap().maneuver_set;
-        c.dials.set(set).unwrap().maneuvers.iter().position(|x| m(x)).unwrap() as u8
+        c.dials.set(set).unwrap().maneuvers.iter().position(m).unwrap() as u8
     }
 
     fn straight2(c: &Content, class: ShipClassId) -> u8 {
-        dial_index(c, class, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 2
-        })
+        dial_index(c, class, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 2)
     }
 
     fn place_both(c: &Content, gs: &mut GameState) {
@@ -1328,20 +1307,10 @@ mod tests {
     #[test]
     fn initiative_breaks_equal_pilot_skill() {
         // Mirror match: all skill 1; P1 holds initiative.
-        let ships = [
-            (ShipId(0), 1, P0),
-            (ShipId(1), 1, P0),
-            (ShipId(2), 1, P1),
-            (ShipId(3), 1, P1),
-        ];
-        assert_eq!(
-            movement_order(&ships, P1),
-            vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]
-        );
-        assert_eq!(
-            combat_order(&ships, P1),
-            vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]
-        );
+        let ships =
+            [(ShipId(0), 1, P0), (ShipId(1), 1, P0), (ShipId(2), 1, P1), (ShipId(3), 1, P1)];
+        assert_eq!(movement_order(&ships, P1), vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]);
+        assert_eq!(combat_order(&ships, P1), vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]);
     }
 
     #[test]
@@ -1407,9 +1376,8 @@ mod tests {
         let c = content();
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
-        let kturn3 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::KTurn && m.distance == 3
-        });
+        let kturn3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 3);
         gs.plan_maneuver(&c, P0, ShipId(0), kturn3).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
         gs.commit_plans(&c, P0, &mut || 7).unwrap();
@@ -1435,9 +1403,8 @@ mod tests {
         // TIE faces south toward its own edge.
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.0, -FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
-        let s3 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 3
-        });
+        let s3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 3);
         gs.plan_maneuver(&c, P0, ShipId(0), s3).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
         gs.commit_plans(&c, P0, &mut || 7).unwrap();
@@ -1452,9 +1419,8 @@ mod tests {
         let c = content();
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
-        let s5_tie = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5_tie =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4_xw = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1521,9 +1487,8 @@ mod tests {
         let c = content();
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
-        let kturn3 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::KTurn && m.distance == 3
-        });
+        let kturn3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 3);
         gs.plan_maneuver(&c, P0, ShipId(0), kturn3).unwrap();
         gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
@@ -1538,8 +1503,7 @@ mod tests {
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
         gs.plan_maneuver(&c, P0, ShipId(0), straight2(&c, TIE)).unwrap();
-        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(action::Side::Left))
-            .unwrap();
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(action::Side::Left)).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), straight2(&c, XWING)).unwrap();
         gs.commit_plans(&c, P0, &mut || 7).unwrap();
         let moves = gs.commit_plans(&c, P1, &mut || 7).unwrap().unwrap().moves;
@@ -1557,9 +1521,8 @@ mod tests {
         let mut gs = new_1v1(&c);
         // Far apart: lock fails at resolution.
         place_both(&c, &mut gs);
-        let s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4 = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1593,23 +1556,17 @@ mod tests {
         let c = content();
         // Two TIEs south, one X-Wing north; TIE #0 flies straight through
         // the space occupied by TIE #1 and lands cleanly beyond it.
-        let mut gs = GameState::new(
-            board(),
-            &c,
-            [&[TIE, TIE], &[XWING]],
-            crate::dice::AttackFace::Hit,
-        )
-        .unwrap();
+        let mut gs =
+            GameState::new(board(), &c, [&[TIE, TIE], &[XWING]], crate::dice::AttackFace::Hit)
+                .unwrap();
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 1.15, FRAC_PI_2)).unwrap();
         // Blocker faces east across #0's path (hull y 2.0-3.0).
         gs.place_ship(&c, P0, ShipId(1), Pose::new(10.0, 2.5, 0.0)).unwrap();
         gs.place_ship(&c, P1, ShipId(2), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
-        let s3 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 3
-        });
-        let s1 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 1
-        });
+        let s3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 3);
+        let s1 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 1);
         gs.plan_maneuver(&c, P0, ShipId(0), s3).unwrap();
         gs.plan_maneuver(&c, P0, ShipId(1), s1).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(2), straight2(&c, XWING)).unwrap();
@@ -1625,16 +1582,14 @@ mod tests {
         let c = content();
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
-        let tie_s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let tie_s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let tie_s2 = straight2(&c, TIE);
         let xw_s4 = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
-        let xw_k4 = dial_index(&c, XWING, |m| {
-            m.steer == crate::maneuver::Steer::KTurn && m.distance == 4
-        });
+        let xw_k4 =
+            dial_index(&c, XWING, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 4);
         // Turn 1: TIE 2→7, X-Wing 18→14.
         gs.plan_maneuver(&c, P0, ShipId(0), tie_s5).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), xw_s4).unwrap();
@@ -1698,9 +1653,8 @@ mod tests {
     fn fly_to_range3(c: &Content, gs: &mut GameState, rolls: &mut dyn FnMut() -> u8) {
         gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 = dial_index(c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5 =
+            dial_index(c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4 = dial_index(c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1716,8 +1670,7 @@ mod tests {
         // X-Wing (skill 2) fires first: 3 dice at R3, all blanks (6).
         // TIE defense: 3 agility + 1 (R3) = 4 dice (blanks). Then TIE
         // fires 2 dice: Hit (0) + Crit (3); X-Wing defense 2+1=3 blanks.
-        let mut rolls =
-            scripted(vec![6, 6, 6, 7, 7, 7, 7, 0, 3, 7, 7, 7]);
+        let mut rolls = scripted(vec![6, 6, 6, 7, 7, 7, 7, 0, 3, 7, 7, 7]);
         fly_to_range3(&c, &mut gs, &mut rolls);
         let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
         assert_eq!(rec.attacks.len(), 2);
@@ -1741,9 +1694,8 @@ mod tests {
         // the narrow bullseye lane, so defense tokens stay spendable.
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(12.0, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4 = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1772,9 +1724,8 @@ mod tests {
         let c = content();
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
-        let kturn3 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::KTurn && m.distance == 3
-        });
+        let kturn3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 3);
         // Plan the red K-turn while unstressed (legal), then simulate an
         // external stress source (future crit/ability) before it resolves.
         gs.plan_maneuver(&c, P0, ShipId(0), kturn3).unwrap();
@@ -1818,9 +1769,8 @@ mod tests {
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
         gs.ships[0].crits.push(crate::crit::CritEffect::DamagedEngine);
-        let turn2 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::TurnLeft && m.distance == 2
-        });
+        let turn2 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::TurnLeft && m.distance == 2);
         // Stressed: the now-effectively-red turn cannot be planned.
         gs.ships[0].stress = 1;
         assert_eq!(
@@ -1848,9 +1798,7 @@ mod tests {
         assert_eq!(rec.attacks.len(), 1);
         assert_eq!(rec.attacks[0].attacker, ShipId(0));
         // End phase ticked the effect down but it survives one more round.
-        assert!(gs.ships[1]
-            .crits
-            .contains(&crate::crit::CritEffect::WeaponsFailure { rounds: 1 }));
+        assert!(gs.ships[1].crits.contains(&crate::crit::CritEffect::WeaponsFailure { rounds: 1 }));
     }
 
     #[test]
@@ -1901,9 +1849,8 @@ mod tests {
         let mut gs = new_1v1(&c);
         place_both(&c, &mut gs);
         gs.ships[1].crits.push(crate::crit::CritEffect::StunnedPilot);
-        let s5_tie = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5_tie =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4_xw = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1958,9 +1905,8 @@ mod tests {
         // bullseye lane, so its evade token cannot be spent.
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4 = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -1985,22 +1931,15 @@ mod tests {
     fn equal_skill_fires_simultaneously_and_initiative_wins_mutual_kill() {
         let c = content();
         // TIE mirror match: equal squads, tie roll Hit → P0 has initiative.
-        let mut gs = GameState::new(
-            board(),
-            &c,
-            [&[TIE], &[TIE]],
-            crate::dice::AttackFace::Hit,
-        )
-        .unwrap();
+        let mut gs =
+            GameState::new(board(), &c, [&[TIE], &[TIE]], crate::dice::AttackFace::Hit).unwrap();
         assert_eq!(gs.initiative, P0);
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
-        let s1 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 1
-        });
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
+        let s1 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 1);
         // Every attack: 2 hits; every defense: 3 blanks.
         let mut rolls = scripted(vec![0, 0, 7, 7, 7]);
         // Turn 1: close to range 2 (hull gap 5); both take 2 hull damage.
@@ -2026,21 +1965,16 @@ mod tests {
     #[test]
     fn declare_target_prompt_when_several_enemies_in_arc() {
         let c = content();
-        let mut gs = GameState::new(
-            board(),
-            &c,
-            [&[TIE], &[XWING, XWING]],
-            crate::dice::AttackFace::Hit,
-        )
-        .unwrap();
+        let mut gs =
+            GameState::new(board(), &c, [&[TIE], &[XWING, XWING]], crate::dice::AttackFace::Hit)
+                .unwrap();
         // TIE south; two X-Wings north, both ending inside its arc at R3
         // (#1 a hair nearer than #2).
         gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(1), Pose::new(9.0, 17.5, -FRAC_PI_2)).unwrap();
         gs.place_ship(&c, P1, ShipId(2), Pose::new(11.5, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 = dial_index(&c, TIE, |m| {
-            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
-        });
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
         let s4 = dial_index(&c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
@@ -2060,20 +1994,14 @@ mod tests {
             panic!("expected a Declare Target prompt")
         };
         assert_eq!((p.attacker, p.owner), (ShipId(0), P0));
-        let mut ids: Vec<u32> = p.candidates.iter().map(|c| c.0 .0).collect();
+        let mut ids: Vec<u32> = p.candidates.iter().map(|c| c.0.0).collect();
         ids.sort();
         assert_eq!(ids, vec![1, 2]);
         // Stepping again re-issues the prompt; only the owner may answer,
         // and only with an eligible enemy.
         assert!(matches!(gs.combat_step(&c, &mut miss).unwrap(), CombatStep::NeedTarget(_)));
-        assert_eq!(
-            gs.declare_target(&c, P1, ShipId(2), &mut miss),
-            Err(Rejection::NotYourShip)
-        );
-        assert_eq!(
-            gs.declare_target(&c, P0, ShipId(0), &mut miss),
-            Err(Rejection::BadTarget)
-        );
+        assert_eq!(gs.declare_target(&c, P1, ShipId(2), &mut miss), Err(Rejection::NotYourShip));
+        assert_eq!(gs.declare_target(&c, P0, ShipId(0), &mut miss), Err(Rejection::BadTarget));
         // Pick the farther X-Wing — overriding the auto policy's nearest.
         let rec = gs.declare_target(&c, P0, ShipId(2), &mut miss).unwrap();
         assert_eq!(rec.defender, ShipId(2));

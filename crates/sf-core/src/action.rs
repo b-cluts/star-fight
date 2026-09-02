@@ -100,10 +100,7 @@ pub fn barrel_roll_pose(pose: Pose, fp: Footprint, side: Side) -> Pose {
         Side::Left => 1.0,
         Side::Right => -1.0,
     };
-    Pose {
-        anchor: pose.local_to_world(Vec2::new(0.0, sign * shift)),
-        heading: pose.heading,
-    }
+    Pose { anchor: pose.local_to_world(Vec2::new(0.0, sign * shift)), heading: pose.heading }
 }
 
 #[cfg(test)]
@@ -127,9 +124,6 @@ mod tests {
     fn pass_needs_no_bar_entry() {
         assert_eq!(PlannedAction::Pass.kind(), None);
         assert_eq!(PlannedAction::Focus.kind(), Some(ActionKind::Focus));
-        assert_eq!(
-            PlannedAction::TargetLock(ShipId(3)).kind(),
-            Some(ActionKind::TargetLock)
-        );
+        assert_eq!(PlannedAction::TargetLock(ShipId(3)).kind(), Some(ActionKind::TargetLock));
     }
 }

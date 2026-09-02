@@ -116,10 +116,8 @@ pub fn ship_visual(class: &ShipClass, pose: Pose, game: &Game, z: f32) -> (Vec2,
     let (ax, ay) = class.anchor_px;
     let upp = class.footprint.length / ih as f64; // units per sprite pixel
     let size = Vec2::new((iw as f64 * upp) as f32 * PX, class.footprint.length as f32 * PX);
-    let center_local = GVec2::new(
-        (ay as f64 - ih as f64 / 2.0) * upp,
-        (ax as f64 - iw as f64 / 2.0) * upp,
-    );
+    let center_local =
+        GVec2::new((ay as f64 - ih as f64 / 2.0) * upp, (ax as f64 - iw as f64 / 2.0) * upp);
     let world = game.to_world(pose.local_to_world(center_local));
     let transform = Transform::from_translation(world.extend(z))
         .with_rotation(Quat::from_rotation_z(pose.heading as f32 - FRAC_PI_2_F32));
@@ -158,11 +156,8 @@ pub fn difficulty_label(d: Difficulty) -> &'static str {
 /// Base outline plus a bright cyan front edge so facing always reads.
 pub fn draw_base(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footprint, color: Color) {
     let corners = rules::footprint_corners(pose, fp);
-    let pts: Vec<Vec2> = corners
-        .iter()
-        .chain(std::iter::once(&corners[0]))
-        .map(|&c| game.to_world(c))
-        .collect();
+    let pts: Vec<Vec2> =
+        corners.iter().chain(std::iter::once(&corners[0])).map(|&c| game.to_world(c)).collect();
     gizmos.linestrip_2d(pts, color);
     gizmos.line_2d(
         game.to_world(corners[0]),
@@ -181,11 +176,7 @@ pub fn draw_board(gizmos: &mut Gizmos, game: &Game) {
     for (y, color) in
         [(d, Color::srgba(0.3, 0.9, 0.4, 0.5)), (h - d, Color::srgba(0.9, 0.4, 0.3, 0.5))]
     {
-        gizmos.line_2d(
-            game.to_world(GVec2::new(0.0, y)),
-            game.to_world(GVec2::new(w, y)),
-            color,
-        );
+        gizmos.line_2d(game.to_world(GVec2::new(0.0, y)), game.to_world(GVec2::new(w, y)), color);
     }
 }
 
@@ -214,10 +205,8 @@ pub fn draw_firing_arc(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footpri
     let point_at = |angle: f64, r: f64| {
         game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
     };
-    let (a0, a1) = (
-        pose.heading - std::f64::consts::FRAC_PI_4,
-        pose.heading + std::f64::consts::FRAC_PI_4,
-    );
+    let (a0, a1) =
+        (pose.heading - std::f64::consts::FRAC_PI_4, pose.heading + std::f64::consts::FRAC_PI_4);
     for a in [a0, a1] {
         gizmos.line_2d(point_at(a, half_len), point_at(a, outer), color);
     }
@@ -225,10 +214,8 @@ pub fn draw_firing_arc(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footpri
         let r = half_len + band as f64 * sf_core::combat::RANGE_BAND_UNITS;
         let pts: Vec<Vec2> =
             (0..=24).map(|i| point_at(a0 + (a1 - a0) * i as f64 / 24.0, r)).collect();
-        gizmos.linestrip_2d(
-            pts,
-            if band == sf_core::combat::MAX_RANGE_BAND { color } else { faint },
-        );
+        gizmos
+            .linestrip_2d(pts, if band == sf_core::combat::MAX_RANGE_BAND { color } else { faint });
     }
 }
 
@@ -261,7 +248,6 @@ pub fn sync_board_quad(game: Res<Game>, mut quads: Query<&mut Sprite, With<Board
             Some(Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX));
     }
 }
-
 
 /// The player's main camera (pan/zoom); the minimap camera is separate.
 #[derive(Component)]

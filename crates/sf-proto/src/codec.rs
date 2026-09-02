@@ -1,7 +1,7 @@
 //! Wire encoding: JSON text frames over the WebSocket. (Compact binary
 //! can replace this behind the same two functions later.)
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 pub fn encode<T: Serialize>(msg: &T) -> String {
     serde_json::to_string(msg).expect("protocol types always serialize")

@@ -12,8 +12,8 @@ use sf_core::maneuver;
 use sf_core::rules::{self, PathObstruction};
 use sf_core::ship::ShipId;
 
-use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, Sel, ShowArcs};
 use crate::Screen;
+use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, Sel, ShowArcs};
 
 #[derive(Resource, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -123,7 +123,9 @@ fn placement_input(
         wheel.clear();
         return;
     }
-    if buttons.just_pressed(MouseButton::Left) && let Some(cur) = cursor.0 {
+    if buttons.just_pressed(MouseButton::Left)
+        && let Some(cur) = cursor.0
+    {
         for (entity, ship) in &ships {
             let fp = game.ships.classes[ship.class_idx].footprint;
             if rules::point_in_footprint(ship.pose, fp, cur) {
@@ -226,8 +228,8 @@ fn sync_ship_transforms(
         let (size, tf) = render::ship_visual(class, ship.pose, &game, 1.0);
         *transform = tf;
         sprite.custom_size = Some(size);
-        let legal = rules::placement_legal(&game.board, ship.seat, ship.pose, class.footprint, &[])
-            .is_ok();
+        let legal =
+            rules::placement_legal(&game.board, ship.seat, ship.pose, class.footprint, &[]).is_ok();
         sprite.color = if *mode == Mode::Placement && !legal {
             Color::srgb(1.0, 0.4, 0.4)
         } else {
