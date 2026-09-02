@@ -12,7 +12,8 @@ use sf_proto::messages::ClientMsg;
 use sf_proto::tls::{Target, parse_target};
 
 use crate::online::Online;
-use crate::render::HudText;
+use crate::render::{Game, HudText};
+use crate::squad_builder::Builder;
 use crate::{Screen, net, pins};
 
 #[derive(Resource)]
@@ -62,6 +63,7 @@ pub enum MenuAction {
     Create,
     Join,
     Sandbox,
+    Squad,
 }
 
 #[derive(Component)]
@@ -72,6 +74,9 @@ struct FieldLabel(Field);
 
 #[derive(Component)]
 struct ErrorLabel;
+
+#[derive(Component)]
+struct SquadLabel;
 
 pub fn plugin(app: &mut App) {
     app.insert_resource(MenuForm::load(std::env::args().nth(1)))
@@ -143,6 +148,7 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                         (MenuAction::Create, "Create Game"),
                         (MenuAction::Join, "Join Game"),
                         (MenuAction::Sandbox, "Offline Sandbox"),
+                        (MenuAction::Squad, "Squad Builder"),
                     ] {
                         row.spawn((
                             Button,
@@ -162,6 +168,12 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                         });
                     }
                 });
+            root.spawn((
+                Text::new(""),
+                SquadLabel,
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.8, 0.9, 1.0)),
+            ));
             root.spawn((
                 Text::new(""),
                 ErrorLabel,
@@ -291,6 +303,8 @@ fn buttons(
     mut form: ResMut<MenuForm>,
     mut online: ResMut<Online>,
     mut next: ResMut<NextState<Screen>>,
+    builder: Res<Builder>,
+    game: Res<Game>,
 ) {
     for (interaction, field, action) in &interactions {
         if *interaction != Interaction::Pressed {
@@ -302,6 +316,7 @@ fn buttons(
         let Some(action) = action else { continue };
         match action {
             MenuAction::Sandbox => next.set(Screen::Sandbox),
+            MenuAction::Squad => next.set(Screen::Squad),
             MenuAction::Create | MenuAction::Join => {
                 if form.name.trim().is_empty() {
                     form.error = "enter a name first".into();
@@ -319,16 +334,17 @@ fn buttons(
                     name: form.name.trim().into(),
                     password: form.password.clone(),
                 };
+                let squad = builder.squad_for_play(&game);
                 let second = match action {
-                    MenuAction::Create => ClientMsg::CreateGame { squad: None },
+                    MenuAction::Create => ClientMsg::CreateGame { squad },
                     MenuAction::Join => {
                         if form.code.trim().is_empty() {
                             form.error = "enter the game code to join".into();
                             continue;
                         }
-                        ClientMsg::JoinGame { code: form.code.trim().into(), squad: None }
+                        ClientMsg::JoinGame { code: form.code.trim().into(), squad }
                     }
-                    MenuAction::Sandbox => unreachable!(),
+                    MenuAction::Sandbox | MenuAction::Squad => unreachable!(),
                 };
                 form.error.clear();
                 pins::save_menu(form.name.trim(), form.addr.trim());
@@ -344,10 +360,16 @@ fn buttons(
 
 fn refresh(
     form: Res<MenuForm>,
-    mut labels: Query<(&FieldLabel, &mut Text), Without<ErrorLabel>>,
-    mut error: Query<&mut Text, With<ErrorLabel>>,
+    builder: Res<Builder>,
+    game: Res<Game>,
+    mut labels: Query<(&FieldLabel, &mut Text), (Without<ErrorLabel>, Without<SquadLabel>)>,
+    mut error: Query<&mut Text, (With<ErrorLabel>, Without<SquadLabel>)>,
+    mut squad: Query<&mut Text, (With<SquadLabel>, Without<ErrorLabel>)>,
     mut fields: Query<(&Field, &mut BackgroundColor), With<Button>>,
 ) {
+    if let Ok(mut t) = squad.single_mut() {
+        t.0 = builder.summary(&game);
+    }
     for (label, mut text) in &mut labels {
         let masked = "•".repeat(form.password.chars().count());
         let (title, value) = match label.0 {

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     let base = if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

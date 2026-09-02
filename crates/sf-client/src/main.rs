@@ -11,6 +11,7 @@ mod online;
 mod pins;
 mod render;
 mod sandbox;
+mod squad_builder;
 mod starfield;
 
 use bevy::prelude::*;
@@ -18,7 +19,7 @@ use bevy::render::RenderPlugin;
 use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
 
 use sf_core::board::Board;
-use sf_core::data::{ManeuverDb, ShipDb};
+use sf_core::data::Content;
 
 use render::{BoardQuad, ClassArt, Game, Ghost, HudText, PX};
 
@@ -28,6 +29,7 @@ pub enum Screen {
     Menu,
     Sandbox,
     Online,
+    Squad,
 }
 
 fn assets_dir() -> String {
@@ -37,13 +39,12 @@ fn assets_dir() -> String {
 
 fn main() {
     let assets = assets_dir();
-    let ships = std::fs::read_to_string(format!("{assets}/data/ships.ron")).expect("ships.ron");
-    let dials =
-        std::fs::read_to_string(format!("{assets}/data/maneuvers.ron")).expect("maneuvers.ron");
+    let content = Content::load_dir(&format!("{assets}/data")).unwrap_or_else(|e| panic!("{e}"));
     let game = Game {
         board: Board { width: 20.0, height: 20.0, deploy_depth: 3.0 },
-        ships: ShipDb::from_ron(&ships).expect("parse ships.ron"),
-        dials: ManeuverDb::from_ron(&dials).expect("parse maneuvers.ron"),
+        ships: content.ships.clone(),
+        dials: content.dials.clone(),
+        content,
     };
 
     App::new()
@@ -91,7 +92,7 @@ fn main() {
                 render::apply_hover,
             ),
         )
-        .add_plugins((menu::plugin, sandbox::plugin, online::plugin))
+        .add_plugins((menu::plugin, sandbox::plugin, online::plugin, squad_builder::plugin))
         .run();
 }
 

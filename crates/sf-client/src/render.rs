@@ -22,6 +22,9 @@ pub struct Game {
     pub board: Board,
     pub ships: ShipDb,
     pub dials: ManeuverDb,
+    /// Everything (ships, dials, pilots, upgrades) for the squad builder
+    /// and shared validation. `ships`/`dials` above are copies of it.
+    pub content: sf_core::data::Content,
 }
 
 impl Game {
