@@ -1037,7 +1037,7 @@ fn hud(
         lines.push(line);
     }
     let help = match snap.phase {
-        Phase::Placement => "drag ships • Q/E or scroll rotates • A: submit all positions",
+        Phase::Placement => "drag ships • Q/E or scroll rotates • A: submit all • +/- zoom, right-drag pan, Home reset",
         Phase::Planning => {
             "Tab: ship • ←/→+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
         }

@@ -1,8 +1,8 @@
-# Where we left off (2026-08-31, end of session 2)
+# Where we left off (2026-09-02, session 3)
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (74 tests),
+`cargo build` clean, `cargo test --workspace` green (75 tests),
 `cargo clippy --workspace -- -D warnings` clean. Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
 sits at the repo root, gitignored — read further pages on demand;
@@ -23,18 +23,28 @@ What exists end-to-end:
   kill), End phase (focus/evade cleared, locks persist, timed crits tick).
 - All 14 critical damage effects as modifier tags (crit.rs); events
   narrated in the combat log; ship status shows tokens + crits.
-- Two-stage turn animation: flown paths, then faction-colored laser
-  bolts (Alliance red, Empire green), shield/hull impact flashes,
-  misses fly past and fade; bullseye lane shaded amber on previews.
+- Turn playback queue: flown paths, then faction-colored laser bolts
+  (Alliance red, Empire green), shield/hull impact flashes, misses fly
+  past and fade; bullseye lane shaded amber on previews.
+- DECLARE TARGET (session 3): when an attacker has 2+ eligible enemies
+  the server pauses combat and prompts the owner (ChooseTarget); the
+  client shows the attacker's arc + highlighted candidates after the
+  movement animation; click or press a number; opponent sees a waiting
+  notice. Zero/one candidate stays automatic. Core: Phase::Combat +
+  CombatState, commit_plans_begin / combat_step / declare_target;
+  commit_plans keeps the auto policy for tests.
+- Camera view (session 3): +/- zoom, right-drag pan, Home resets; an
+  inset minimap (bottom-right, second camera) appears automatically
+  whenever the board doesn't fully fit the main view.
 
 To try it: `cargo run -p sf-server` then two `cargo run -p sf-client`
 instances — create in one, join with the code in the other.
 
 ## NEXT TASK (user picks)
 
-1. **Playtest** — crits/combat are new since the last playtest; expect
+1. **Playtest** — Declare Target prompts and the minimap are new; expect
    tuning requests (animation pacing ANIM_SAMPLES_PER_SEC/ATTACK_DUR in
-   online.rs, HUD copy, log length).
+   online.rs, minimap size MINI_PX in render.rs, HUD copy).
 2. **M4 — security**: TLS with pinned self-signed cert + server password,
    mirroring ../hex-ship-game (design in ARCHITECTURE.md §4): server
    generates/persists cert, prints SHA-256 fingerprint + join string
@@ -47,9 +57,10 @@ instances — create in one, join with the code in the other.
 
 ## Client structure (crates/sf-client/src/)
 
-main.rs (Screen state: Menu/Sandbox/Online, global setup), render.rs
-(Game resource, ship_visual, draw helpers, bullseye shade), menu.rs,
-online.rs (server mirror + Snap/Anim two-stage animation, never mutates
+main.rs (Screen state: Menu/Sandbox/Online, global setup, two cameras),
+render.rs (Game resource, ship_visual, draw helpers, bullseye shade,
+ViewCtl pan/zoom + minimap), menu.rs, online.rs (server mirror; Anim is a
+queue of AnimItem: Move/Attack/Prompt/Waiting/TurnEnd; never mutates
 game state locally), sandbox.rs, net.rs (background thread + channels),
 starfield.rs.
 
@@ -80,6 +91,18 @@ starfield.rs.
 - Pilots become data with per-ship assignment (not yet implemented);
   pilot_skill on ShipClass is the generic pilot until then.
 - Speed-4 turn radius (2.925 u) is canonical.
+
+## TODO backlog (user requests)
+
+- **Ship callsigns + hover tooltip** (requested 2026-09-02): during squad
+  formation the player names each ship with a squad callsign — squad name
+  plus number, "leader" for the squad leader (e.g. Obsidian-leader,
+  Obsidian-2, Red-leader, Red-2). In play, hovering the mouse over a ship
+  shows its name. Plan: `callsign: String` on the fleet entry / ShipState /
+  ShipView (server-assigned defaults like "Red-1" until the squad builder
+  exists), a hover tooltip in the client (cursor-in-footprint → small text
+  label near the ship, both sandbox and online), and callsigns replacing
+  "#id" in the combat log / HUD / Declare Target prompt.
 
 ## Open items / needed from the user
 

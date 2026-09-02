@@ -1,7 +1,9 @@
 //! Shared rendering/resources used by both the offline sandbox and the
 //! connected online mode.
 
+use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::render::camera::Viewport;
 use bevy::window::PrimaryWindow;
 use std::f32::consts::FRAC_PI_2 as FRAC_PI_2_F32;
 
@@ -232,7 +234,7 @@ pub fn draw_firing_arc(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footpri
 
 pub fn track_cursor(
     windows: Query<&Window, With<PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    camera: Query<(&Camera, &GlobalTransform), With<MainCam>>,
     game: Res<Game>,
     mut cursor: ResMut<CursorUnits>,
 ) {
@@ -258,4 +260,112 @@ pub fn sync_board_quad(game: Res<Game>, mut quads: Query<&mut Sprite, With<Board
         sprite.custom_size =
             Some(Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX));
     }
+}
+
+
+/// The player's main camera (pan/zoom); the minimap camera is separate.
+#[derive(Component)]
+pub struct MainCam;
+
+/// Inset overview camera, shown only when the board doesn't fit the view.
+#[derive(Component)]
+pub struct MiniCam;
+
+/// Main-view control: `scale` = world px per screen px (1 = native),
+/// `pan` = world-space offset of the view center.
+#[derive(Resource)]
+pub struct ViewCtl {
+    pub scale: f32,
+    pub pan: Vec2,
+}
+
+impl Default for ViewCtl {
+    fn default() -> Self {
+        Self { scale: 1.0, pan: Vec2::ZERO }
+    }
+}
+
+/// Minimap size and margin in logical pixels.
+const MINI_PX: f32 = 180.0;
+const MINI_MARGIN: f32 = 12.0;
+
+/// +/- zoom, right-mouse drag pans, Home resets.
+pub fn view_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut motion: EventReader<MouseMotion>,
+    mut view: ResMut<ViewCtl>,
+) {
+    if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
+        view.scale = (view.scale * 0.8).max(0.25);
+    }
+    if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
+        view.scale = (view.scale / 0.8).min(4.0);
+    }
+    if keys.just_pressed(KeyCode::Home) {
+        *view = ViewCtl::default();
+    }
+    let drag: Vec2 = motion.read().map(|m| m.delta).sum();
+    if buttons.pressed(MouseButton::Right) && drag != Vec2::ZERO {
+        // Screen y grows downward; world y grows upward.
+        view.pan.x -= drag.x * view.scale;
+        view.pan.y += drag.y * view.scale;
+    }
+}
+
+/// Apply the view control to the main camera and decide whether the
+/// minimap is needed (board not fully visible); size/position it and draw
+/// the main view's footprint on it.
+pub fn apply_view(
+    view: Res<ViewCtl>,
+    game: Res<Game>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut main_cam: Query<(&mut Transform, &mut Projection), (With<MainCam>, Without<MiniCam>)>,
+    mut mini_cam: Query<(&mut Camera, &mut Projection), (With<MiniCam>, Without<MainCam>)>,
+    mut gizmos: Gizmos,
+) {
+    let Ok(window) = windows.single() else { return };
+    if let Ok((mut tf, mut proj)) = main_cam.single_mut() {
+        tf.translation = view.pan.extend(tf.translation.z);
+        if let Projection::Orthographic(o) = &mut *proj {
+            o.scale = view.scale;
+        }
+    }
+    let visible = Vec2::new(window.width(), window.height()) * view.scale;
+    let board = Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX);
+    let fits = (view.pan.x - visible.x / 2.0) <= -board.x / 2.0
+        && (view.pan.x + visible.x / 2.0) >= board.x / 2.0
+        && (view.pan.y - visible.y / 2.0) <= -board.y / 2.0
+        && (view.pan.y + visible.y / 2.0) >= board.y / 2.0;
+
+    let Ok((mut cam, mut proj)) = mini_cam.single_mut() else { return };
+    if fits {
+        cam.is_active = false;
+        return;
+    }
+    let sf = window.scale_factor();
+    let size = (MINI_PX * sf) as u32;
+    let (pw, ph) = (window.physical_width(), window.physical_height());
+    if pw <= size || ph <= size {
+        cam.is_active = false;
+        return;
+    }
+    let margin = (MINI_MARGIN * sf) as u32;
+    cam.is_active = true;
+    cam.viewport = Some(Viewport {
+        physical_position: UVec2::new(pw - size - margin, ph - size - margin),
+        physical_size: UVec2::new(size, size),
+        ..default()
+    });
+    if let Projection::Orthographic(o) = &mut *proj {
+        // Fit the whole board (with a little margin) into the inset.
+        o.scale = board.max_element() * 1.12 / MINI_PX;
+    }
+    // Main-view footprint, visible on the inset (coincides with the main
+    // view's own edges, so it's invisible there).
+    gizmos.rect_2d(
+        Isometry2d::from_translation(view.pan),
+        visible,
+        Color::srgba(1.0, 1.0, 1.0, 0.8),
+    );
 }

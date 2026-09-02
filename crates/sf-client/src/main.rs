@@ -62,6 +62,7 @@ fn main() {
         .insert_resource(render::CursorUnits(None))
         .insert_resource(render::ShowArcs(true))
         .insert_resource(render::BullseyePreview::default())
+        .insert_resource(render::ViewCtl::default())
         .init_state::<Screen>()
         .add_systems(Startup, global_setup)
         .add_systems(
@@ -71,6 +72,8 @@ fn main() {
                 render::toggle_arcs,
                 render::sync_board_quad,
                 render::apply_bullseye,
+                render::view_input,
+                render::apply_view,
             ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin))
@@ -83,7 +86,19 @@ fn global_setup(
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
 ) {
-    commands.spawn(Camera2d);
+    commands.spawn((Camera2d, render::MainCam, IsDefaultUiCamera));
+    // Inset overview: activated by apply_view only when the board doesn't
+    // fit the main view (zoomed/panned or oversized boards).
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            is_active: false,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.01, 0.01, 0.03)),
+            ..default()
+        },
+        render::MiniCam,
+    ));
 
     // Procedural space backdrop (different sky every launch).
     let seed = std::time::SystemTime::now()

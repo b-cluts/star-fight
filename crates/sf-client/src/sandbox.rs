@@ -315,7 +315,7 @@ fn update_hud(
     let Ok(mut text) = hud.single_mut() else { return };
     text.0 = match *mode {
         Mode::Placement => {
-            "SANDBOX PLACEMENT — drag ships; scroll or Q/E rotates; P: flight; Esc: menu".into()
+            "SANDBOX PLACEMENT — drag ships; scroll or Q/E rotates; P: flight; +/- zoom, right-drag pan; Esc: menu".into()
         }
         Mode::Flight => {
             let Some((_, ship)) = sel.ship.and_then(|e| ships.get(e).ok()) else {
