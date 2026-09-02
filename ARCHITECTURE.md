@@ -450,10 +450,14 @@ past and fade).
 
 ### Pilots, upgrades & modifiers (design)
 
-- **Pilots are data.** A `Pilot` (future `pilots.ron`) carries the pilot skill and,
-  later, abilities. A fleet entry is *ship class + pilot (+ upgrades)*; better pilots
-  are assigned per ship. (`pilot_skill` currently sits on `ShipClass` as the basic
-  pilot's value; it moves to `Pilot` when game state lands in M3.)
+- **Pilots are data** (`assets/data/pilots.ron`, `sf-core::pilot`): a `Pilot` carries
+  ship class, skill, squad cost (ship + pilot), talent slot, source pack and an ability
+  tag. A fleet is a list of pilots; `ShipState.pilot` gives each ship its skill and
+  cost. Every pilot and ship class has an XWS id, which is also the card image file
+  name in an XWS-layout card directory (a local, gitignored clone of
+  voidstate/xwing-card-images; never redistributed with the game). Abilities are
+  documented variants of `PilotAbility` and are enforced only once
+  `implemented()` says so — data first, rules one at a time with tests.
 - **One modifier system for everything.** Ordnance, pilot abilities, and critical-hit
   effects are all the same mechanism: effect tags attached to a ship instance that
   rules code consults during movement/combat. Critical hits are NOT shown as cards in

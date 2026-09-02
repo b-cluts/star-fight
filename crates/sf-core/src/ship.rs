@@ -21,6 +21,16 @@ pub enum Faction {
     Empire,
 }
 
+impl Faction {
+    /// XWS faction directory name (card image layout).
+    pub fn xws(self) -> &'static str {
+        match self {
+            Faction::RebelAlliance => "rebels",
+            Faction::Empire => "imperial",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SizeClass {
     /// 40 × 40 mm base — 1 × 1 game units (matches a speed-1 straight).
@@ -50,6 +60,8 @@ impl SizeClass {
 pub struct ShipClass {
     pub id: ShipClassId,
     pub name: String,
+    /// XWS ship identifier (e.g. "tiefighter", "t70xwing").
+    pub xws: String,
     pub faction: Faction,
     pub size: SizeClass,
     pub footprint: Footprint,

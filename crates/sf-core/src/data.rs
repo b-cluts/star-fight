@@ -74,6 +74,16 @@ impl PilotDb {
         self.pilots.iter().filter(|p| p.class == class && !p.unique).min_by_key(|p| p.cost)
     }
 
+    /// Relative path of a pilot's card image in an XWS-layout card
+    /// directory: `pilots/<faction>/<ship>/<pilot>.png`. The images
+    /// themselves are not shipped with the game (a local clone of
+    /// voidstate/xwing-card-images, configured in the client).
+    pub fn card_image(&self, ships: &ShipDb, id: PilotId) -> Option<String> {
+        let p = self.pilot(id)?;
+        let c = ships.class(p.class)?;
+        Some(format!("pilots/{}/{}/{}.png", c.faction.xws(), c.xws, p.xws))
+    }
+
     /// Pilots of a class, optionally restricted to some source packs.
     pub fn roster(&self, class: ShipClassId, sources: Option<&[Source]>) -> Vec<&Pilot> {
         self.pilots
@@ -137,6 +147,28 @@ mod tests {
             let b = pilots.pilot(PilotId(fo)).unwrap();
             assert_eq!(a.skill, b.skill);
             assert_eq!(a.cost + 3, b.cost);
+        }
+    }
+
+    /// Every pilot has a card image in the (gitignored) reference clone
+    /// when it is present; skipped silently otherwise.
+    #[test]
+    fn pilot_card_images_exist_in_reference_clone() {
+        let root =
+            format!("{}/../../reference/xwing-card-images/images", env!("CARGO_MANIFEST_DIR"));
+        if !std::path::Path::new(&root).is_dir() {
+            eprintln!("reference card images not present; skipping");
+            return;
+        }
+        let ships = ShipDb::from_ron(&read_asset("ships.ron")).expect("ships.ron");
+        let pilots = PilotDb::from_ron(&read_asset("pilots.ron")).expect("pilots.ron");
+        for p in &pilots.pilots {
+            let rel = pilots.card_image(&ships, p.id).unwrap();
+            assert!(
+                std::path::Path::new(&format!("{root}/{rel}")).is_file(),
+                "missing card image {rel} for {}",
+                p.name
+            );
         }
     }
 

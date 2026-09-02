@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (86 tests),
+`cargo build` clean, `cargo test --workspace` green (89 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
@@ -66,6 +66,40 @@ What exists end-to-end:
   log, HUD status line, lock label and the Declare Target prompt use
   callsigns instead of "#id".
 
+- PILOTS AS DATA (session 4, done): assets/data/pilots.ron holds every
+  First Edition pilot for the TIE/ln (13), T-70 (10) and TIE/fo (9),
+  each with skill, cost, talent slot, source pack (CoreSet = Force
+  Awakens core; OriginalCoreSet, TieFighterExpansion, T70Expansion,
+  HeroesOfTheResistance, ImperialAssaultCarrier, TieFoExpansion) and an
+  ability tag (PilotAbility in sf-core/src/pilot.rs, card text in the
+  doc comments). Card texts were VERIFIED against the card images in
+  reference/ (see below). Fleets are lists of PilotId; skill and squad
+  cost come from the pilot; fixed fleets fly each class's basic pilot
+  (Academy Pilot, Blue Squadron Novice). ShipView carries pilot name +
+  skill (HUD shows "callsign (class, pilot PSn)").
+  NO ability is enforced yet: PilotAbility::implemented() returns false
+  for all; implement them one at a time with tests (start with the dice
+  ones: Poe, Mauler, Backstabber, Scourge, Winged Gundark, Jess, Dark
+  Curse, Howlrunner, Zeta Leader, Omega Ace, Omega Leader; then tokens:
+  Red Ace, Night Beast, Nien Nunb, Epsilon Leader, Chaser; then
+  movement: Snap, Blue Ace, Zeta Ace, Ello Asty; Epsilon Ace skill 12;
+  Wampa; Youngster needs talents).
+- TIE/fo class (id 3) with its real dial incl. Segnor's loops
+  (Steer::SegnorLeft/Right, bank then flip); placeholder sprite shares
+  the TIE/ln art. The T-70 lost its native barrel roll (card-correct).
+  NOTE: the TIE/ln and T-70 dials in maneuvers.ron are the earlier
+  house dials, not the printed cards — revisit if fidelity matters.
+- CARD IMAGES: the user cloned voidstate/xwing-card-images (MIT-licensed
+  repo of FFG card scans, XWS naming) into reference/ — GITIGNORED, never
+  commit it. Checked: 561 images all valid PNG/JPEG, no trailing data,
+  util scripts benign. Every pilot and ship class has an `xws` id;
+  PilotDb::card_image(ships, id) gives `pilots/<faction>/<ship>/<xws>.png`
+  relative to that repo's images/ dir, and a data test asserts every
+  card exists when reference/ is present. Plan: the squad builder loads
+  cards from a configurable local cards dir (default
+  reference/xwing-card-images/images) and shows the pilot card when
+  picking pilots; ship art stays ours.
+
 To try it: `cargo run -p sf-server` (copy the printed join string and
 password) then two `cargo run -p sf-client` instances — paste the join
 string into Server, type the password, create in one, join with the
@@ -76,9 +110,13 @@ and Server `ws://127.0.0.1:7777`.
 
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. **Playtest callsigns**: hover name tag in sandbox + online, N-rename
-   during placement, callsigns in log/prompt.
-3. **Rulebook p.18+** (user is researching the roster first: basic and
-   unique pilots, secondary weapons, upgrades) — upgrade cards / squad points, feeding the squad
+   during placement, callsigns in log/prompt (HUD now also shows pilot).
+3. **Squad builder** (rulebook p.18+ for squad points / upgrade rules):
+   pick faction → ships → pilots (show card image from the cards dir),
+   name callsigns, save squads locally, validate_squad() shared; lobby
+   sends the chosen squad. Then pilot abilities one by one (list above).
+   Still needed from the user: secondary weapons / upgrade cards roster
+   (the reference repo has images for all of them under images/upgrades). — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.

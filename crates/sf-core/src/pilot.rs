@@ -40,8 +40,8 @@ pub enum PilotAbility {
     /// Nien Nunb: when you receive a stress token, if there is an enemy
     /// ship inside your firing arc at Range 1, you may discard it.
     DiscardStressIfEnemyInArcRange1,
-    /// "Snap" Wexley: after you execute a 2-, 3-, or 4-speed maneuver,
-    /// you may perform a free boost action.
+    /// "Snap" Wexley: after you execute a 2-, 3-, or 4-speed maneuver, if
+    /// you are not touching a ship, you may perform a free boost action.
     FreeBoostAfterSpeed2To4,
     /// "Red Ace": the first time you remove a shield token each round,
     /// assign 1 evade token to your ship.
@@ -79,8 +79,11 @@ pub enum PilotAbility {
     /// defender.
     CancelAllForFacedownDamage,
     /// "Chaser": when another friendly ship at Range 1 spends a focus
-    /// token, you may assign 1 focus token to your ship.
+    /// token, assign a focus token to your ship.
     FocusWhenFriendlySpendsFocusRange1,
+    /// "Winged Gundark": when attacking at Range 1, you may change 1 of
+    /// your hit results to a critical hit result.
+    HitToCritAtRange1,
     // ---- TIE/fo ----
     /// "Omega Ace": when attacking, you may spend a target lock and a
     /// focus token to change all of your dice results to critical hits.
@@ -94,8 +97,8 @@ pub enum PilotAbility {
     /// "Omega Leader": enemy ships you have locked cannot modify any dice
     /// when attacking you or defending against your attacks.
     LockedEnemiesCannotModifyDice,
-    /// "Zeta Leader": when attacking, you may receive 1 stress token to
-    /// roll 1 additional attack die.
+    /// "Zeta Leader": when attacking, if you are not stressed, you may
+    /// receive 1 stress token to roll 1 additional attack die.
     StressForExtraAttackDie,
     /// "Epsilon Ace": while you have no Damage cards, treat your pilot
     /// skill as 12.
@@ -116,6 +119,9 @@ pub struct Pilot {
     pub id: PilotId,
     pub class: ShipClassId,
     pub name: String,
+    /// XWS identifier (application-neutral card id, e.g. "howlrunner",
+    /// "poedameron-swx57"); also the card image file stem.
+    pub xws: String,
     /// Named pilots: at most one copy per squad.
     pub unique: bool,
     /// Pilot skill: lower MOVES first, higher FIRES first.

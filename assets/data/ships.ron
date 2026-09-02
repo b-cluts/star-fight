@@ -6,6 +6,7 @@
         (
             id: 1,
             name: "TIE Fighter",
+            xws: "tiefighter",
             faction: Empire,
             size: Small,
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
@@ -26,6 +27,7 @@
         (
             id: 2,
             name: "X-Wing T-70",
+            xws: "t70xwing",
             faction: RebelAlliance,
             size: Small,
             footprint: (length: 1.0, width: 1.0), // small base: 40 x 40 mm
@@ -46,6 +48,7 @@
         (
             id: 3,
             name: "TIE/fo Fighter",
+            xws: "tiefofighter",
             faction: Empire, // First Order
             size: Small,
             footprint: (length: 1.0, width: 1.0),
