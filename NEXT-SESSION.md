@@ -62,10 +62,10 @@ and Server `ws://127.0.0.1:7777`.
 
 ## NEXT TASK
 
-1. **Playtest M4** with the user (two clients, real join string; check
-   the pin file gets written; try a wrong password). Verify Ctrl+V works
-   on their Wayland desktop (arboard `wayland-data-control` feature; if
-   it fails, the CLI-argument route still works).
+1. ~~Playtest M4~~ done 2026-09-02: joining over TLS worked. Fix applied
+   after it: menu field text now wraps at any character so the long join
+   string stays inside the field (not yet re-checked visually by the
+   user).
 2. **Rulebook p.18+** — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in

@@ -125,6 +125,11 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                         FieldLabel(field),
                         TextFont { font_size: 17.0, ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                        // Join strings / fingerprints have no word
+                        // boundaries: wrap anywhere so they stay inside
+                        // the field instead of running off the window.
+                        TextLayout::new_with_linebreak(LineBreak::AnyCharacter),
+                        Node { max_width: Val::Px(396.0), ..default() },
                     ));
                 });
             }
