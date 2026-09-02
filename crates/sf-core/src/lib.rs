@@ -13,5 +13,6 @@ pub mod maneuver;
 pub mod pilot;
 pub mod rules;
 pub mod ship;
+pub mod squad;
 pub mod templates;
 pub mod upgrade;

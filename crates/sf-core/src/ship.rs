@@ -101,6 +101,10 @@ pub struct ShipState {
     pub class: ShipClassId,
     /// Pilot card flying this ship (skill, cost, ability).
     pub pilot: crate::pilot::PilotId,
+    /// Equipped upgrade cards (effects applied by the rules as they are
+    /// implemented; discarded cards are removed from this list).
+    #[serde(default)]
+    pub upgrades: Vec<crate::upgrade::UpgradeId>,
     /// Squad callsign, e.g. "Red-leader", "Obsidian-2". Server-assigned
     /// default; the owner may rename during Placement.
     pub callsign: String,

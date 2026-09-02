@@ -28,6 +28,7 @@ use sf_core::data::Content;
 use sf_core::game::{CombatStep, GameState, Phase};
 use sf_core::pilot::PilotId;
 use sf_core::ship::{PlayerId, ShipClassId};
+use sf_core::squad::{Squad, SquadRules, validate_squad};
 use sf_proto::PROTOCOL_VERSION;
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
@@ -108,9 +109,18 @@ fn password_ok(expected: &str, given: &str) -> bool {
 }
 
 enum SessionCmd {
-    Join { name: String, resp: oneshot::Sender<Result<(u8, mpsc::Receiver<ServerMsg>), String>> },
-    Msg { seat: u8, msg: ClientMsg },
-    Disconnect { seat: u8 },
+    Join {
+        name: String,
+        squad: Option<Squad>,
+        resp: oneshot::Sender<Result<(u8, mpsc::Receiver<ServerMsg>), String>>,
+    },
+    Msg {
+        seat: u8,
+        msg: ClientMsg,
+    },
+    Disconnect {
+        seat: u8,
+    },
 }
 
 /// Accept connections forever. Callers bind the listener (tests use an
@@ -241,14 +251,15 @@ where
     let (session_tx, seat, mut session_rx) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => match decode::<ClientMsg>(&t) {
-                Ok(ClientMsg::CreateGame) => {
+                Ok(ClientMsg::CreateGame { squad }) => {
                     let code = rand_string(4);
                     let (cmd_tx, cmd_rx) = mpsc::channel(64);
                     tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone()));
                     lobby.lock().await.insert(code.clone(), cmd_tx.clone());
                     let (resp_tx, resp_rx) = oneshot::channel();
-                    let _ =
-                        cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
+                    let _ = cmd_tx
+                        .send(SessionCmd::Join { name: name.clone(), squad, resp: resp_tx })
+                        .await;
                     match resp_rx.await {
                         Ok(Ok((seat, rx_srv))) => {
                             let _ = tx
@@ -268,7 +279,7 @@ where
                         }
                     }
                 }
-                Ok(ClientMsg::JoinGame { code }) => {
+                Ok(ClientMsg::JoinGame { code, squad }) => {
                     let entry = lobby.lock().await.get(&code.to_ascii_uppercase()).cloned();
                     let Some(cmd_tx) = entry else {
                         let _ = tx
@@ -279,8 +290,9 @@ where
                         continue;
                     };
                     let (resp_tx, resp_rx) = oneshot::channel();
-                    let _ =
-                        cmd_tx.send(SessionCmd::Join { name: name.clone(), resp: resp_tx }).await;
+                    let _ = cmd_tx
+                        .send(SessionCmd::Join { name: name.clone(), squad, resp: resp_tx })
+                        .await;
                     match resp_rx.await {
                         Ok(Ok((seat, rx_srv))) => {
                             // Game now full: no more joins under this code.
@@ -366,7 +378,8 @@ async fn session(
     lobby: Lobby,
     code: String,
 ) {
-    let mut players: Vec<(String, mpsc::Sender<ServerMsg>)> = Vec::new();
+    let mut players: Vec<(String, mpsc::Sender<ServerMsg>, Squad)> = Vec::new();
+    let rules = SquadRules::default();
     let mut game: Option<GameState> = None;
 
     // Combat streaming: how many narrated events have gone out this turn,
@@ -375,7 +388,7 @@ async fn session(
     let mut game_over = false;
     macro_rules! send_to {
         ($seat:expr, $msg:expr) => {
-            if let Some((_, tx)) = players.get($seat as usize) {
+            if let Some((_, tx, _)) = players.get($seat as usize) {
                 let _ = tx.send($msg).await;
             }
         };
@@ -465,28 +478,34 @@ async fn session(
 
     while let Some(cmd) = cmds.recv().await {
         match cmd {
-            SessionCmd::Join { name, resp } => {
+            SessionCmd::Join { name, squad, resp } => {
                 if players.len() >= 2 {
                     let _ = resp.send(Err("game is full".into()));
                     continue;
                 }
+                let seat = players.len() as u8;
+                let squad = squad.unwrap_or_else(|| {
+                    let classes = if seat == 0 { &FLEET_SOUTH } else { &FLEET_NORTH };
+                    Squad::basic(&content, "basic", &basic_fleet(&content, classes))
+                });
+                if let Err(errors) = validate_squad(&squad, &content, &rules) {
+                    let msg: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+                    let _ = resp.send(Err(format!("squad rejected: {}", msg.join("; "))));
+                    continue;
+                }
                 let (tx, rx) = mpsc::channel(64);
-                players.push((name, tx));
-                let seat = players.len() as u8 - 1;
+                players.push((name, tx, squad));
                 let _ = resp.send(Ok((seat, rx)));
                 if players.len() == 2 {
                     // One red die, drawn now — only used if squad totals tie.
                     let tie_roll = sf_core::dice::AttackFace::from_d8(rand::random::<u8>());
-                    let gs = GameState::new(
+                    let gs = GameState::from_squads(
                         default_board(),
                         &content,
-                        [
-                            &basic_fleet(&content, &FLEET_SOUTH),
-                            &basic_fleet(&content, &FLEET_NORTH),
-                        ],
+                        [&players[0].2, &players[1].2],
                         tie_roll,
                     )
-                    .expect("valid content");
+                    .expect("validated squads");
                     for s in 0..2u8 {
                         let opponent = players[1 - s as usize].0.clone();
                         send_to!(s, ServerMsg::GameStart { seat: s, opponent, board: gs.board });

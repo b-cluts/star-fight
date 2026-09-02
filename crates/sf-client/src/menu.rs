@@ -320,13 +320,13 @@ fn buttons(
                     password: form.password.clone(),
                 };
                 let second = match action {
-                    MenuAction::Create => ClientMsg::CreateGame,
+                    MenuAction::Create => ClientMsg::CreateGame { squad: None },
                     MenuAction::Join => {
                         if form.code.trim().is_empty() {
                             form.error = "enter the game code to join".into();
                             continue;
                         }
-                        ClientMsg::JoinGame { code: form.code.trim().into() }
+                        ClientMsg::JoinGame { code: form.code.trim().into(), squad: None }
                     }
                     MenuAction::Sandbox => unreachable!(),
                 };

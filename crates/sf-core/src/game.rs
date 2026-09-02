@@ -19,6 +19,7 @@ use crate::maneuver::{self, Difficulty, Maneuver};
 use crate::pilot::PilotId;
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
+use crate::squad::Squad;
 
 /// The turn phase machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +241,8 @@ pub struct ShipView {
     /// skill; see `pilot_skill`).
     pub pilot: String,
     pub skill: u8,
+    /// Equipped upgrade card names.
+    pub upgrades: Vec<String>,
     pub pose: Option<Pose>,
     pub hull: u8,
     pub shields: u8,
@@ -273,33 +276,37 @@ pub struct GameState {
 
 impl GameState {
     /// `fleets[0]` deploys South (seat 0), `fleets[1]` North (seat 1);
-    /// each entry is a pilot card, which implies the ship class.
-    /// `tie_roll` is one red die drawn by the server, used only when the
-    /// squad totals are equal.
+    /// each entry is a pilot card, which implies the ship class. Basic
+    /// squads: no upgrades, default callsigns.
     pub fn new(
         board: Board,
         content: &Content,
         fleets: [&[PilotId]; 2],
         tie_roll: crate::dice::AttackFace,
     ) -> Result<Self, String> {
+        let a = Squad::basic(content, "south", fleets[0]);
+        let b = Squad::basic(content, "north", fleets[1]);
+        Self::from_squads(board, content, [&a, &b], tie_roll)
+    }
+
+    /// Build a game from two (already validated) squads. `tie_roll` is
+    /// one red die drawn by the server, used only when the squad totals
+    /// are equal.
+    pub fn from_squads(
+        board: Board,
+        content: &Content,
+        squads: [&Squad; 2],
+        tie_roll: crate::dice::AttackFace,
+    ) -> Result<Self, String> {
         let pilot_of =
             |id: PilotId| content.pilots.pilot(id).ok_or_else(|| format!("unknown pilot {id:?}"));
-        // Squad names follow each fleet's faction (first ship decides).
-        let factions: Vec<crate::ship::Faction> = fleets
-            .iter()
-            .map(|fleet| {
-                fleet
-                    .first()
-                    .and_then(|id| content.pilots.pilot(*id))
-                    .and_then(|p| content.ships.class(p.class))
-                    .map(|c| c.faction)
-                    .unwrap_or(crate::ship::Faction::RebelAlliance)
-            })
-            .collect();
-        let squads = crate::ship::squad_names(&factions);
+        let factions = [squads[0].faction, squads[1].faction];
+        let squad_names = crate::ship::squad_names(&factions);
         let mut ships = Vec::new();
-        for (seat, fleet) in fleets.iter().enumerate() {
-            for (n, &pilot_id) in fleet.iter().enumerate() {
+        for (seat, squad) in squads.iter().enumerate() {
+            let callsigns = squad.callsigns(squad_names[seat]);
+            for (n, entry) in squad.ships.iter().enumerate() {
+                let pilot_id = entry.pilot;
                 let pilot = pilot_of(pilot_id)?;
                 let class_id = pilot.class;
                 let class = content
@@ -310,13 +317,16 @@ impl GameState {
                     .dials
                     .set(class.maneuver_set)
                     .ok_or_else(|| format!("{} has no dial", class.name))?;
-                let squad = squads[seat];
+                for u in &entry.upgrades {
+                    content.upgrades.upgrade(*u).ok_or_else(|| format!("unknown upgrade {u:?}"))?;
+                }
                 ships.push(ShipState {
                     id: ShipId(ships.len() as u32),
                     owner: PlayerId(seat as u32),
                     class: class_id,
                     pilot: pilot_id,
-                    callsign: crate::ship::default_callsign(squad, n),
+                    upgrades: entry.upgrades.clone(),
+                    callsign: callsigns[n].clone(),
                     pose: None,
                     hull: class.hull,
                     shields: class.shields,
@@ -331,13 +341,7 @@ impl GameState {
                 });
             }
         }
-        let mut squad_totals = [0u32; 2];
-        for (seat, fleet) in fleets.iter().enumerate() {
-            squad_totals[seat] = fleet
-                .iter()
-                .map(|id| pilot_of(*id).map(|p| p.cost as u32))
-                .sum::<Result<_, _>>()?;
-        }
+        let squad_totals = [squads[0].cost(content), squads[1].cost(content)];
         let initiative = PlayerId(initiative_seat(squad_totals, tie_roll) as u32);
         Ok(Self {
             board,
@@ -1304,6 +1308,12 @@ impl GameState {
                     callsign: s.callsign.clone(),
                     pilot: pilot_name(s.pilot),
                     skill: pilot_skill(s.pilot),
+                    upgrades: s
+                        .upgrades
+                        .iter()
+                        .filter_map(|u| content.upgrades.upgrade(*u))
+                        .map(|u| u.name.clone())
+                        .collect(),
                     pose: if own || self.phase != Phase::Placement { s.pose } else { None },
                     hull: s.hull,
                     shields: s.shields,

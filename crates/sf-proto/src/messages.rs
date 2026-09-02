@@ -5,6 +5,7 @@ use sf_core::board::Board;
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::ship::ShipId;
+use sf_core::squad::Squad;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
@@ -14,9 +15,14 @@ pub enum ClientMsg {
         /// Server password, sent inside the (M4: TLS) tunnel.
         password: String,
     },
-    CreateGame,
+    /// `squad`: the fleet to fly; None = the server's basic fixed fleet
+    /// for your seat. Validated server-side (SquadRules).
+    CreateGame {
+        squad: Option<Squad>,
+    },
     JoinGame {
         code: String,
+        squad: Option<Squad>,
     },
     PlaceShip {
         ship_id: ShipId,

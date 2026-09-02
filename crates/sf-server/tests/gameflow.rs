@@ -89,13 +89,13 @@ async fn two_clients_play_a_full_turn() {
     }
 
     // Create + join.
-    send(&mut a, &ClientMsg::CreateGame).await;
+    send(&mut a, &ClientMsg::CreateGame { squad: None }).await;
     let code = recv_until(&mut a, |m| match m {
         ServerMsg::GameCreated { code } => Some(code),
         _ => None,
     })
     .await;
-    send(&mut b, &ClientMsg::JoinGame { code }).await;
+    send(&mut b, &ClientMsg::JoinGame { code, squad: None }).await;
 
     let seat_a = recv_until(&mut a, |m| match m {
         ServerMsg::GameStart { seat, opponent, .. } => {
@@ -195,4 +195,89 @@ async fn two_clients_play_a_full_turn() {
     })
     .await;
     assert_eq!(w, Some(1));
+}
+
+/// Custom squads travel with Create/Join, are validated server-side, and
+/// determine the ships, callsigns and squad totals of the game.
+#[tokio::test]
+async fn custom_squads_are_validated_and_used() {
+    use sf_core::squad::{Squad, SquadShip};
+    let c = content();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    for (ws, name) in [(&mut a, "imp"), (&mut b, "reb")] {
+        send(
+            ws,
+            &ClientMsg::Hello {
+                proto_version: sf_proto::PROTOCOL_VERSION,
+                name: name.into(),
+                password: String::new(),
+            },
+        )
+        .await;
+        assert!(matches!(recv(ws).await, ServerMsg::Welcome { .. }));
+    }
+    let pilot = |xws: &str| c.pilots.pilots.iter().find(|p| p.xws == xws).unwrap().id;
+    let upgrade = |xws: &str| c.upgrades.upgrades.iter().find(|u| u.xws == xws).unwrap().id;
+    let imperial = Squad {
+        name: "Howl".into(),
+        faction: sf_core::ship::Faction::Empire,
+        ships: vec![
+            SquadShip {
+                pilot: pilot("howlrunner"),
+                upgrades: vec![upgrade("veteraninstincts")],
+                callsign: "Howl".into(),
+            },
+            SquadShip { pilot: pilot("academypilot"), upgrades: vec![], callsign: String::new() },
+        ],
+    };
+    send(&mut a, &ClientMsg::CreateGame { squad: Some(imperial) }).await;
+    let code = recv_until(&mut a, |m| match m {
+        ServerMsg::GameCreated { code } => Some(code),
+        _ => None,
+    })
+    .await;
+
+    // Over budget: five Poes is both unique-duplicated and over 100 points.
+    let bad = Squad {
+        name: "bad".into(),
+        faction: sf_core::ship::Faction::RebelAlliance,
+        ships: (0..5)
+            .map(|_| SquadShip {
+                pilot: pilot("poedameron-swx57"),
+                upgrades: vec![],
+                callsign: String::new(),
+            })
+            .collect(),
+    };
+    send(&mut b, &ClientMsg::JoinGame { code: code.clone(), squad: Some(bad) }).await;
+    match recv(&mut b).await {
+        ServerMsg::Error { message } => assert!(message.contains("squad rejected"), "{message}"),
+        other => panic!("expected rejection, got {other:?}"),
+    }
+    let good = Squad {
+        name: "good".into(),
+        faction: sf_core::ship::Faction::RebelAlliance,
+        ships: vec![SquadShip {
+            pilot: pilot("bluesquadronnovice"),
+            upgrades: vec![upgrade("r2astromech")],
+            callsign: String::new(),
+        }],
+    };
+    send(&mut b, &ClientMsg::JoinGame { code, squad: Some(good) }).await;
+    let snap = recv_until(&mut b, |m| match m {
+        ServerMsg::Snapshot { ships, squad_totals, .. } => Some((ships, squad_totals)),
+        _ => None,
+    })
+    .await;
+    // 18 + 1 + 12 = 31 vs 24 + 1 = 25.
+    assert_eq!(snap.1, [31, 25]);
+    let names: Vec<&str> = snap.0.iter().map(|v| v.callsign.as_str()).collect();
+    assert_eq!(names, ["Howl", "Obsidian-2", "Red-leader"]);
+    assert_eq!(snap.0[0].skill, 8);
+    assert_eq!(snap.0[2].upgrades, vec!["R2 Astromech".to_string()]);
 }
