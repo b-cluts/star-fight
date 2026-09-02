@@ -64,6 +64,8 @@ pub enum MenuAction {
     Join,
     Sandbox,
     Squad,
+    PrevSquad,
+    NextSquad,
 }
 
 #[derive(Component)]
@@ -89,10 +91,15 @@ const IDLE: Color = Color::srgba(0.12, 0.14, 0.22, 0.92);
 const FOCUS: Color = Color::srgba(0.2, 0.26, 0.42, 0.95);
 const ACTION: Color = Color::srgba(0.15, 0.3, 0.2, 0.92);
 
-fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) {
+fn spawn_menu(
+    mut commands: Commands,
+    mut hud: Query<&mut Text, With<HudText>>,
+    mut builder: ResMut<Builder>,
+) {
     if let Ok(mut t) = hud.single_mut() {
         t.0.clear();
     }
+    builder.refresh_saved();
     commands
         .spawn((
             MenuTag,
@@ -168,12 +175,43 @@ fn spawn_menu(mut commands: Commands, mut hud: Query<&mut Text, With<HudText>>) 
                         });
                     }
                 });
-            root.spawn((
-                Text::new(""),
-                SquadLabel,
-                TextFont { font_size: 14.0, ..default() },
-                TextColor(Color::srgb(0.8, 0.9, 1.0)),
-            ));
+            // Squad picker: ◀ [current squad summary] ▶
+            root.spawn((Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(8.0),
+                align_items: AlignItems::Center,
+                ..default()
+            },))
+                .with_children(|row| {
+                    for (action, label) in
+                        [(MenuAction::PrevSquad, "◀"), (MenuAction::NextSquad, "▶")]
+                    {
+                        if matches!(action, MenuAction::NextSquad) {
+                            row.spawn((
+                                Text::new(""),
+                                SquadLabel,
+                                TextFont { font_size: 14.0, ..default() },
+                                TextColor(Color::srgb(0.8, 0.9, 1.0)),
+                            ));
+                        }
+                        row.spawn((
+                            Button,
+                            action,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                ..default()
+                            },
+                            BackgroundColor(ACTION),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new(label),
+                                TextFont { font_size: 15.0, ..default() },
+                                TextColor(Color::srgb(0.85, 1.0, 0.9)),
+                            ));
+                        });
+                    }
+                });
             root.spawn((
                 Text::new(""),
                 ErrorLabel,
@@ -303,7 +341,7 @@ fn buttons(
     mut form: ResMut<MenuForm>,
     mut online: ResMut<Online>,
     mut next: ResMut<NextState<Screen>>,
-    builder: Res<Builder>,
+    mut builder: ResMut<Builder>,
     game: Res<Game>,
 ) {
     for (interaction, field, action) in &interactions {
@@ -317,6 +355,8 @@ fn buttons(
         match action {
             MenuAction::Sandbox => next.set(Screen::Sandbox),
             MenuAction::Squad => next.set(Screen::Squad),
+            MenuAction::PrevSquad => form.error = builder.cycle_saved(&game, -1),
+            MenuAction::NextSquad => form.error = builder.cycle_saved(&game, 1),
             MenuAction::Create | MenuAction::Join => {
                 if form.name.trim().is_empty() {
                     form.error = "enter a name first".into();
@@ -344,7 +384,7 @@ fn buttons(
                         }
                         ClientMsg::JoinGame { code: form.code.trim().into(), squad }
                     }
-                    MenuAction::Sandbox | MenuAction::Squad => unreachable!(),
+                    _ => unreachable!(),
                 };
                 form.error.clear();
                 pins::save_menu(form.name.trim(), form.addr.trim());
@@ -368,7 +408,13 @@ fn refresh(
     mut fields: Query<(&Field, &mut BackgroundColor), With<Button>>,
 ) {
     if let Ok(mut t) = squad.single_mut() {
-        t.0 = builder.summary(&game);
+        let (saved, cur) = builder.saved_names();
+        let pos = match cur {
+            Some(i) => format!("saved squad {} of {}", i + 1, saved.len()),
+            None if saved.is_empty() => "no saved squads yet".into(),
+            None => format!("{} saved squads", saved.len()),
+        };
+        t.0 = format!("{}\n{pos} — ◀ ▶ picks the squad to fly", builder.summary(&game));
     }
     for (label, mut text) in &mut labels {
         let masked = "•".repeat(form.password.chars().count());

@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (90 tests),
+`cargo build` clean, `cargo test --workspace` green (95 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-17 are fully implemented (the PDF
@@ -119,6 +119,25 @@ What exists end-to-end:
   secondary weapons replace the primary attack (dice/range from card,
   "Attack (target lock)" needs a lock on the defender).
 
+- SQUADS (session 4, done, NOT yet playtested): sf-core::squad —
+  Squad/SquadShip/SquadRules + validate_squad (points, faction, source
+  packs, unique names incl. same-name pilots, slots printed + implicit
+  Mod/Title + pilot talent + R2-D6-granted, Limited, every Restriction
+  incl. mod-granted action icons, callsigns). CreateGame/JoinGame carry
+  Option<Squad>; server validates on join and builds the game with
+  GameState::from_squads (None = basic fixed fleet). Client: menu button
+  "Squad Builder" → Screen::Squad (squad_builder.rs): 1-3 add a ship,
+  ↑/↓ ship, ←/→ column (pilot, then each slot), Q/E cycle pilot / legal
+  card (pre-filtered by the validator), N callsign, M squad name, S save
+  as <config>/squads/<name>.ron, L load next saved, Delete remove, F
+  faction (clears), Esc back. Live errors + points; selected card image
+  from the cards dir (STARFIGHT_CARDS env, reference/ clone, or
+  <config>/cards) with the card text always shown. The builder's squad
+  is written to <config>/current_squad.ron on save/exit and restored at
+  startup; the MENU shows it and has ◀ ▶ buttons to pick among saved
+  squads without opening the builder; Create/Join send it when valid
+  (else the basic fleet). Players can keep many squads and pick one.
+
 To try it: `cargo run -p sf-server` (copy the printed join string and
 password) then two `cargo run -p sf-client` instances — paste the join
 string into Server, type the password, create in one, join with the
@@ -130,19 +149,18 @@ and Server `ws://127.0.0.1:7777`.
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
    confirmed working by the user.
-3. **Squad builder** — all data is in place. Steps: sf-core `Squad`
-   type (faction, Vec<SquadShip { pilot, upgrades: Vec<UpgradeId>,
-   callsign }>) + `validate_squad(squad, content, rules)` (points ≤ limit,
-   slots incl. implicit + BarGainsX effects, uniqueness per side incl.
-   same-name pilots, Limited once per ship, Restriction checks, source
-   packs allowed by the scenario); client builder screen (faction →
-   ship → pilot → upgrades, card image from the cards dir with text
-   fallback, callsigns, save/load squads in the config dir); lobby
-   carries the squad (ClientMsg::CreateGame/JoinGame gain a squad;
-   server validates and builds GameState from it, replacing the fixed
-   fleets). Then enforce effects/abilities one at a time with tests,
-   starting with stat mods (Hull/Shield Upgrade, Stealth Device, Veteran
-   Instincts, bar-gaining mods) and torpedoes. — upgrade cards / squad points, feeding the squad
+3. **Playtest the squad builder** (build two squads, save, pick from
+   the menu with ◀ ▶, create/join, check callsigns/pilots/totals in the
+   HUD; check the card image shows). Known rough edges: keyboard-only
+   UI, the HUD text can get long with many ships; scenario rules are
+   fixed at 100 pts / all sources (SquadRules::default) — a lobby
+   setting later.
+4. **Enforce effects one at a time with tests**: stat mods first (Hull
+   Upgrade, Shield Upgrade, Stealth Device, Veteran Instincts,
+   Adaptability, bar-gaining mods → action_bar at game start), then
+   torpedoes (secondary attack choice in the Declare step: needs a
+   ClientMsg/prompt for "primary or torpedo"), then pilot abilities in
+   the order listed above. — upgrade cards / squad points, feeding the squad
    builder + pilots/ordnance design already sketched in ARCHITECTURE.md.
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.

@@ -39,7 +39,6 @@ pub struct Builder {
     typing: Option<Typing>,
     status: String,
     saved: Vec<String>,
-    saved_idx: usize,
     cards_dir: Option<PathBuf>,
     cache: HashMap<String, Option<Handle<Image>>>,
 }
@@ -67,7 +66,6 @@ impl Default for Builder {
             typing: None,
             status: String::new(),
             saved: Vec::new(),
-            saved_idx: 0,
             cards_dir: find_cards_dir(),
             cache: HashMap::new(),
         }
@@ -108,6 +106,40 @@ impl Builder {
         match validate_squad(&s, &game.content, &SquadRules::default()) {
             Ok(v) => format!("Squad: {} — {} ships, {} pts", s.name, s.ships.len(), v.points),
             Err(e) => format!("Squad: {} — INVALID ({}), basic fleet will be used", s.name, e[0]),
+        }
+    }
+
+    /// Re-scan the saved squads directory.
+    pub fn refresh_saved(&mut self) {
+        self.saved = list_saved();
+    }
+
+    /// Names of the saved squads and which one is current (if any).
+    pub fn saved_names(&self) -> (&[String], Option<usize>) {
+        let cur = self.saved.iter().position(|s| *s == sanitize(&self.name));
+        (&self.saved, cur)
+    }
+
+    /// Load the previous/next saved squad (wrapping); it becomes the
+    /// current squad for the next game.
+    pub fn cycle_saved(&mut self, game: &Game, step: i32) -> String {
+        if self.saved.is_empty() {
+            return format!("no saved squads in {}", squads_dir().display());
+        }
+        let n = self.saved.len() as i32;
+        let next = match self.saved_names().1.map(|i| i as i32) {
+            Some(i) => (i + step).rem_euclid(n),
+            None if step >= 0 => 0,
+            None => n - 1,
+        } as usize;
+        let name = self.saved[next].clone();
+        match read_squad(&squads_dir().join(format!("{name}.ron"))) {
+            Ok(s) => {
+                self.load_squad(game, s);
+                let _ = write_squad(&current_path(), &self.squad());
+                format!("squad {name} ({} of {n})", next + 1)
+            }
+            Err(e) => format!("load {name} failed: {e}"),
         }
     }
 
@@ -268,7 +300,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn enter(mut commands: Commands, mut b: ResMut<Builder>) {
-    b.saved = list_saved();
+    b.refresh_saved();
     b.typing = None;
     b.status = match &b.cards_dir {
         Some(d) => format!("card images: {}", d.display()),
@@ -459,24 +491,8 @@ fn input(
         b.saved = list_saved();
     }
     if keys.just_pressed(KeyCode::KeyL) {
-        if b.saved.is_empty() {
-            b.status = format!("no saved squads in {}", squads_dir().display());
-        } else {
-            let n = b.saved.len();
-            let name = b.saved[b.saved_idx % n].clone();
-            b.saved_idx += 1;
-            let file = squads_dir().join(format!("{name}.ron"));
-            match read_squad(&file) {
-                Ok(s) => {
-                    b.load_squad(&game, s);
-                    b.status = format!(
-                        "loaded {name} ({} of {n}; L again for the next)",
-                        (b.saved_idx - 1) % n + 1
-                    );
-                }
-                Err(e) => b.status = format!("load {name} failed: {e}"),
-            }
-        }
+        let msg = b.cycle_saved(&game, 1);
+        b.status = format!("{msg} — L again for the next");
     }
 }
 
