@@ -55,7 +55,7 @@ jobs:
           else
             zip -r "$dist.zip" "$dist"
           fi
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: star-fight-${{ matrix.name }}
           path: star-fight-${{ matrix.name }}.zip
@@ -69,11 +69,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*.zip
           generate_release_notes: true
