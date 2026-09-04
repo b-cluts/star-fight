@@ -498,6 +498,115 @@ impl GameState {
         Self::base_in_front_arc(s_pose, s_fp, &rules::footprint_corners(t_pose, t_fp))
     }
 
+    /// Range band between two ships (None if either is off the board
+    /// or they are beyond Range 3).
+    fn range_between(&self, content: &Content, i: usize, j: usize) -> Option<u8> {
+        let (Some(pi), Some(pj)) = (self.ships[i].pose, self.ships[j].pose) else { return None };
+        let fi = self.class_of(content, &self.ships[i]).footprint;
+        let fj = self.class_of(content, &self.ships[j]).footprint;
+        combat::range_band_between(
+            &rules::footprint_corners(pi, fi),
+            &rules::footprint_corners(pj, fj),
+        )
+    }
+
+    /// Other living friendly ships within Range 1 of ship `s`.
+    fn friends_at_range1(&self, content: &Content, s: usize) -> Vec<usize> {
+        (0..self.ships.len())
+            .filter(|&o| {
+                o != s
+                    && self.ships[o].owner == self.ships[s].owner
+                    && !self.ships[o].destroyed
+                    && self.range_between(content, s, o) == Some(1)
+            })
+            .collect()
+    }
+
+    /// Rerolls a ship may take thanks to friends at Range 1: Jess Pava
+    /// gets one per friend (attacking or defending); a friendly
+    /// Howlrunner grants one more to a primary-weapon attack.
+    fn friendly_rerolls(&self, content: &Content, s: usize, attacking: bool) -> u8 {
+        let friends = self.friends_at_range1(content, s);
+        let mut n = 0;
+        if self.ability(content, &self.ships[s]) == Some(PilotAbility::RerollPerFriendlyRange1) {
+            n += friends.len() as u8;
+        }
+        if attacking
+            && friends.iter().any(|&f| {
+                self.ability(content, &self.ships[f])
+                    == Some(PilotAbility::FriendlyRerollAttackRange1)
+            })
+        {
+            n += 1;
+        }
+        n
+    }
+
+    /// Reroll up to `n` attack dice: blanks first, then eyes when no
+    /// focus token could convert them.
+    fn reroll_attack_dice(
+        &self,
+        content: &Content,
+        a_idx: usize,
+        faces: &mut [AttackFace],
+        n: u8,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        let eyes_too = self.ships[a_idx].focus == 0;
+        let mut left = n;
+        for want in [AttackFace::Blank, AttackFace::Focus] {
+            if want == AttackFace::Focus && !eyes_too {
+                break;
+            }
+            for f in faces.iter_mut() {
+                if left > 0 && *f == want {
+                    *f = AttackFace::from_d8(roll());
+                    left -= 1;
+                }
+            }
+        }
+        if left < n {
+            events.push(format!(
+                "{}: rerolls {} attack dice (friends at Range 1)",
+                self.label(content, a_idx),
+                n - left
+            ));
+        }
+    }
+
+    /// Reroll up to `n` defense dice on the same policy.
+    fn reroll_defense_dice(
+        &self,
+        content: &Content,
+        d_idx: usize,
+        faces: &mut [DefenseFace],
+        n: u8,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        let eyes_too = self.ships[d_idx].focus == 0;
+        let mut left = n;
+        for want in [DefenseFace::Blank, DefenseFace::Focus] {
+            if want == DefenseFace::Focus && !eyes_too {
+                break;
+            }
+            for f in faces.iter_mut() {
+                if left > 0 && *f == want {
+                    *f = DefenseFace::from_d8(roll());
+                    left -= 1;
+                }
+            }
+        }
+        if left < n {
+            events.push(format!(
+                "{}: rerolls {} defense dice (friends at Range 1)",
+                self.label(content, d_idx),
+                n - left
+            ));
+        }
+    }
+
     /// Additional attack dice granted by the attacker's pilot ability,
     /// decided before the roll. Mauler Mithel (+1 at Range 1),
     /// Backstabber (+1 from outside the defender's arc), Scourge (+1
@@ -1450,6 +1559,10 @@ impl GameState {
                 lock_spent = true;
             }
         }
+        if attacker_may_spend && !all_crits {
+            let n = self.friendly_rerolls(content, a_idx, true);
+            self.reroll_attack_dice(content, a_idx, &mut attack_faces, n, roll, events);
+        }
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
         }
@@ -1486,6 +1599,11 @@ impl GameState {
         // adds one evade result if damage would still land.
         let incoming = raw_hits + raw_crits;
         if defender_may_modify {
+            let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+            if evading < incoming {
+                let n = self.friendly_rerolls(content, d_idx, false);
+                self.reroll_defense_dice(content, d_idx, &mut defense_faces, n, roll, events);
+            }
             self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
         }
         let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
@@ -2178,6 +2296,111 @@ mod tests {
         gs.plan_maneuver(c, P0, ShipId(0), s5).unwrap();
         gs.plan_maneuver(c, P1, ShipId(1), s4).unwrap();
         gs
+    }
+
+    /// Several ships a side, each as (pilot xws, start pose, straight
+    /// distance to fly). Imperial ships get ids 0.., Rebels follow.
+    fn skirmish(
+        c: &Content,
+        imperial: &[(&str, Pose, u8)],
+        rebel: &[(&str, Pose, u8)],
+    ) -> GameState {
+        use crate::squad::Squad;
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let ids =
+            |side: &[(&str, Pose, u8)]| side.iter().map(|(x, _, _)| pilot(x)).collect::<Vec<_>>();
+        let a = Squad::basic(c, "i", &ids(imperial));
+        let b = Squad::basic(c, "r", &ids(rebel));
+        let mut gs =
+            GameState::from_squads(board(), c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+        let all: Vec<_> = imperial.iter().chain(rebel.iter()).collect();
+        for (k, (_, pose, _)) in all.iter().enumerate() {
+            let player = if k < imperial.len() { P0 } else { P1 };
+            gs.place_ship(c, player, ShipId(k as u32), *pose).unwrap();
+        }
+        for (k, (_, _, dist)) in all.iter().enumerate() {
+            let player = if k < imperial.len() { P0 } else { P1 };
+            let id = ShipId(k as u32);
+            let set = c.ships.class(gs.ships[k].class).unwrap().maneuver_set;
+            let m =
+                c.dials.set(set).unwrap().maneuvers.iter().position(|m| {
+                    m.steer == crate::maneuver::Steer::Straight && m.distance == *dist
+                });
+            gs.plan_maneuver(c, player, id, m.unwrap() as u8).unwrap();
+        }
+        gs
+    }
+
+    #[test]
+    fn howlrunner_lets_a_friend_at_range_1_reroll_one_attack_die() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let south = -FRAC_PI_2;
+        // Two TIEs abreast, 1 unit apart (Range 1), vs one X-Wing. Fire
+        // order: Howlrunner, X-Wing, Academy Pilot. Every die is blank
+        // except the Academy Pilot's single reroll, which is a hit.
+        let rolls = vec![7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 7, 7, 7];
+        let run = |leader: &str| {
+            let mut gs = skirmish(
+                &c,
+                &[
+                    (leader, Pose::new(9.0, 2.5, north), 5),
+                    ("academypilot", Pose::new(11.0, 2.5, north), 5),
+                ],
+                &[("bluesquadronnovice", Pose::new(10.0, 17.5, south), 4)],
+            );
+            let mut rolls = scripted(rolls.clone());
+            gs.commit_plans(&c, P0, &mut rolls).unwrap();
+            gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap()
+        };
+        let rec = run("howlrunner");
+        let wingman = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!(wingman.attack_faces, vec![AttackFace::Hit, AttackFace::Blank]);
+        assert_eq!(wingman.hits, 1);
+        assert!(rec.events.iter().any(|e| e.contains("rerolls 1 attack")), "{:?}", rec.events);
+        // Howlrunner herself gets nothing ("another friendly ship").
+        let leader = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).unwrap();
+        assert_eq!(leader.hits, 0);
+
+        // A plain wingman instead: same dice, no reroll, no hit.
+        let rec = run("obsidiansquadronpilot");
+        let wingman = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!((wingman.hits, wingman.attack_faces.len()), (0, 2));
+        assert!(!rec.events.iter().any(|e| e.contains("rerolls")));
+    }
+
+    #[test]
+    fn jess_pava_rerolls_one_die_per_friend_at_range_1_attacking_and_defending() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let south = -FRAC_PI_2;
+        // Jess flies 4 to Range 3 of the TIE; her wingman creeps 1 and
+        // ends diagonally within Range 1 of her but beyond Range 3 of the
+        // TIE (so it never fires or gets shot). Fire order: Jess (PS3),
+        // TIE (PS1).
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 5)],
+            &[
+                ("jesspava", Pose::new(10.0, 17.5, south), 4),
+                ("bluesquadronnovice", Pose::new(12.0, 17.5, south), 1),
+            ],
+        );
+        // Jess: [Blank, Blank, Blank], reroll → Hit. TIE defends 4 blanks.
+        // TIE attacks [Hit, Hit]; Jess defends [Blank, Blank, Blank],
+        // reroll → Evade: one hit lands on her shields.
+        let mut rolls = scripted(vec![7, 7, 7, 0, 7, 7, 7, 7, 0, 0, 7, 7, 7, 0, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(rec.attacks.len(), 2, "{:?}", rec.attacks);
+        let hers = &rec.attacks[0];
+        assert_eq!((hers.attacker, hers.hits), (ShipId(1), 1));
+        let at_her = &rec.attacks[1];
+        assert_eq!((at_her.defender, at_her.hits), (ShipId(1), 1));
+        assert!(at_her.defense_faces.contains(&DefenseFace::Evade));
+        assert_eq!(gs.ships[1].shields, 2);
+        assert!(rec.events.iter().any(|e| e.contains("rerolls 1 attack")), "{:?}", rec.events);
+        assert!(rec.events.iter().any(|e| e.contains("rerolls 1 defense")), "{:?}", rec.events);
     }
 
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.

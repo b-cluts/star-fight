@@ -120,6 +120,8 @@ impl PilotAbility {
                 | PilotAbility::SpendLockAndFocusForAllCrits
                 | PilotAbility::DefenderDeniesFocusAndRerolls
                 | PilotAbility::LockedEnemiesCannotModifyDice
+                | PilotAbility::FriendlyRerollAttackRange1
+                | PilotAbility::RerollPerFriendlyRange1
         )
     }
 }
