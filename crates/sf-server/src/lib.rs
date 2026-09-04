@@ -434,12 +434,16 @@ async fn session(
                     }
                     Ok(CombatStep::NeedTarget(p)) => {
                         let owner = p.owner.0 as u8;
-                        let candidates: Vec<(sf_core::ship::ShipId, u8)> =
-                            p.candidates.iter().map(|(id, r, _)| (*id, *r)).collect();
-                        send_to!(
-                            owner,
-                            ServerMsg::ChooseTarget { attacker: p.attacker, candidates }
-                        );
+                        let options: Vec<sf_proto::messages::AttackChoice> = p
+                            .options
+                            .iter()
+                            .map(|o| sf_proto::messages::AttackChoice {
+                                weapon: o.weapon,
+                                target: o.target,
+                                range: o.range,
+                            })
+                            .collect();
+                        send_to!(owner, ServerMsg::ChooseTarget { attacker: p.attacker, options });
                         send_to!(1 - owner, ServerMsg::OpponentChoosing { attacker: p.attacker });
                         break;
                     }
@@ -591,10 +595,10 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
-                    ClientMsg::DeclareTarget { target } => {
-                        match gs
-                            .declare_target(&content, player, target, &mut || rand::random::<u8>())
-                        {
+                    ClientMsg::DeclareTarget { target, weapon } => {
+                        match gs.declare_target(&content, player, target, weapon, &mut || {
+                            rand::random::<u8>()
+                        }) {
                             Ok(rec) => {
                                 let all = gs.combat_events();
                                 let events = all[streamed.min(all.len())..].to_vec();

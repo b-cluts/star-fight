@@ -6,6 +6,7 @@ use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::ship::ShipId;
 use sf_core::squad::Squad;
+use sf_core::upgrade::UpgradeId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
@@ -44,12 +45,24 @@ pub enum ClientMsg {
         action: PlannedAction,
     },
     CommitPlans,
-    /// Answer to ChooseTarget: which eligible enemy to attack.
+    /// Answer to ChooseTarget: which eligible enemy to attack, and with
+    /// which weapon (None = primary weapon).
     DeclareTarget {
         target: ShipId,
+        #[serde(default)]
+        weapon: Option<UpgradeId>,
     },
     Resign,
     Ping,
+}
+
+/// One selectable attack in a ChooseTarget prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttackChoice {
+    /// None = primary weapon; Some = an equipped secondary weapon card.
+    pub weapon: Option<UpgradeId>,
+    pub target: ShipId,
+    pub range: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,11 +110,11 @@ pub enum ServerMsg {
         /// Narrated side effects since the previous message.
         events: Vec<String>,
     },
-    /// Your ship has several eligible targets: answer with DeclareTarget.
+    /// Your ship has several eligible (weapon, target) combinations:
+    /// answer with DeclareTarget.
     ChooseTarget {
         attacker: ShipId,
-        /// (enemy ship, range band)
-        candidates: Vec<(ShipId, u8)>,
+        options: Vec<AttackChoice>,
     },
     /// The opponent is declaring a target for one of their ships.
     OpponentChoosing {

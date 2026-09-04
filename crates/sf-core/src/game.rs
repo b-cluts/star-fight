@@ -20,7 +20,7 @@ use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
 use crate::squad::Squad;
-use crate::upgrade::{UpgradeEffect, UpgradeId};
+use crate::upgrade::{AttackRequirement, Slot, UpgradeEffect, UpgradeId};
 
 /// The turn phase machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +159,8 @@ pub struct AttackRecord {
     pub attacker: ShipId,
     pub defender: ShipId,
     pub range: u8,
+    /// The secondary weapon card fired, or None for the primary weapon.
+    pub weapon: Option<UpgradeId>,
     /// Final attack faces after rerolls/conversions.
     pub attack_faces: Vec<AttackFace>,
     /// Final defense faces after conversions.
@@ -196,14 +198,33 @@ pub struct ActivationRecords {
     pub events: Vec<String>,
 }
 
+/// One way an attacker may fire this round: a weapon and an eligible
+/// target for it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttackOption {
+    /// None = primary weapon; Some = an equipped secondary weapon card.
+    pub weapon: Option<UpgradeId>,
+    pub target: ShipId,
+    pub range: u8,
+    /// Base-to-base distance (nearest-target policy).
+    pub dist: f64,
+}
+
+/// A declared shot: defender index, range band and weapon.
+#[derive(Debug, Clone, Copy)]
+struct Shot {
+    d_idx: usize,
+    range: u8,
+    weapon: Option<UpgradeId>,
+}
+
 /// An attack whose owner must Declare Target (core rules p.10): more than
-/// one enemy is eligible.
+/// one (weapon, enemy) combination is eligible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingAttack {
     pub attacker: ShipId,
     pub owner: PlayerId,
-    /// (target, range band, base distance) for every eligible enemy.
-    pub candidates: Vec<(ShipId, u8, f64)>,
+    pub options: Vec<AttackOption>,
 }
 
 /// Step-by-step Combat phase bookkeeping (lives in `GameState.combat`).
@@ -978,8 +999,8 @@ impl GameState {
         loop {
             match self.combat_step(content, roll)? {
                 CombatStep::NeedTarget(p) => {
-                    let choice = self.auto_target(&p).expect("candidates are non-empty");
-                    self.declare_target(content, p.owner, choice, roll)?;
+                    let (target, weapon) = self.auto_target(&p).expect("options are non-empty");
+                    self.declare_target(content, p.owner, target, weapon, roll)?;
                 }
                 CombatStep::Attack(_) => {}
                 CombatStep::Done(rec) => return Ok(Some(rec)),
@@ -1089,21 +1110,22 @@ impl GameState {
                 continue;
             };
             let owner = self.ships[a_idx].owner;
-            let candidates = self.attack_candidates(content, a_idx);
-            match candidates.len() {
+            let options = self.attack_options(content, a_idx);
+            match options.len() {
                 0 => continue,
                 1 => {
-                    let (target, range, _) = candidates[0];
-                    let d_idx = self.ships.iter().position(|s| s.id == target).expect("candidate");
+                    let o = options[0].clone();
+                    let d_idx = self.ships.iter().position(|s| s.id == o.target).expect("option");
                     let mut ev = Vec::new();
-                    let rec = self.perform_attack_on(content, a_idx, d_idx, range, roll, &mut ev);
+                    let shot = Shot { d_idx, range: o.range, weapon: o.weapon };
+                    let rec = self.perform_attack_on(content, a_idx, shot, roll, &mut ev);
                     let cs = self.combat.as_mut().expect("in combat");
                     cs.events.extend(ev);
                     cs.attacks.push(rec.clone());
                     return Ok(CombatStep::Attack(rec));
                 }
                 _ => {
-                    let p = PendingAttack { attacker, owner, candidates };
+                    let p = PendingAttack { attacker, owner, options };
                     self.combat.as_mut().expect("in combat").pending = Some(p.clone());
                     return Ok(CombatStep::NeedTarget(p));
                 }
@@ -1111,12 +1133,14 @@ impl GameState {
         }
     }
 
-    /// The owner's Declare Target choice for the pending attack.
+    /// The owner's Declare Target choice for the pending attack: which
+    /// enemy, and with which weapon (None = primary).
     pub fn declare_target(
         &mut self,
         content: &Content,
         player: PlayerId,
         target: ShipId,
+        weapon: Option<UpgradeId>,
         roll: &mut dyn FnMut() -> u8,
     ) -> Result<AttackRecord, Rejection> {
         if self.phase != Phase::Combat {
@@ -1130,15 +1154,17 @@ impl GameState {
         if pending.owner != player {
             return Err(Rejection::NotYourShip);
         }
-        let &(_, range, _) = pending
-            .candidates
+        let range = pending
+            .options
             .iter()
-            .find(|(id, _, _)| *id == target)
-            .ok_or(Rejection::BadTarget)?;
+            .find(|o| o.target == target && o.weapon == weapon)
+            .ok_or(Rejection::BadTarget)?
+            .range;
         let a_idx = self.ship_index(pending.attacker)?;
         let d_idx = self.ship_index(target)?;
         let mut ev = Vec::new();
-        let rec = self.perform_attack_on(content, a_idx, d_idx, range, roll, &mut ev);
+        let shot = Shot { d_idx, range, weapon };
+        let rec = self.perform_attack_on(content, a_idx, shot, roll, &mut ev);
         let cs = self.combat.as_mut().expect("checked above");
         cs.pending = None;
         cs.events.extend(ev);
@@ -1146,19 +1172,26 @@ impl GameState {
         Ok(rec)
     }
 
-    /// Automatic target policy: the locked ship if eligible, else the
-    /// nearest candidate.
-    pub fn auto_target(&self, p: &PendingAttack) -> Option<ShipId> {
+    /// Automatic choice: the primary weapon when it has any target
+    /// (never spends ordnance unasked), at the locked ship if eligible,
+    /// else the nearest. Returns (target, weapon).
+    pub fn auto_target(&self, p: &PendingAttack) -> Option<(ShipId, Option<UpgradeId>)> {
         let lock = self.ships.iter().find(|s| s.id == p.attacker).and_then(|s| s.lock);
-        p.candidates
-            .iter()
-            .find(|(id, _, _)| Some(*id) == lock)
-            .or_else(|| {
-                p.candidates
-                    .iter()
-                    .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-            })
-            .map(|(id, _, _)| *id)
+        let nearest = |it: &mut dyn Iterator<Item = &AttackOption>| {
+            it.min_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap_or(std::cmp::Ordering::Equal))
+                .cloned()
+        };
+        let primary: Vec<&AttackOption> = p.options.iter().filter(|o| o.weapon.is_none()).collect();
+        let pick = if primary.is_empty() {
+            nearest(&mut p.options.iter())
+        } else {
+            primary
+                .iter()
+                .find(|o| Some(o.target) == lock)
+                .map(|o| (*o).clone())
+                .or_else(|| nearest(&mut primary.into_iter()))
+        };
+        pick.map(|o| (o.target, o.weapon))
     }
 
     /// Activation phase: reveal and fly all plans in movement order
@@ -1444,14 +1477,38 @@ impl GameState {
     /// Eligible targets for an attacker: enemy, alive, any part of its
     /// base in the firing arc, range 1-3, bases not touching. Empty when
     /// the attacker's weapons have failed.
-    fn attack_candidates(&self, content: &Content, a_idx: usize) -> Vec<(ShipId, u8, f64)> {
+    /// Every (weapon, target) pair the ship may attack with right now:
+    /// the primary weapon at Range 1-3 inside the arc (all around for a
+    /// turret primary), plus each equipped secondary weapon within its
+    /// printed range band — Turret cards ignore the arc, other slots
+    /// need it — whose token requirement is met (a lock on that target,
+    /// or a focus token). Touching ships cannot be targeted.
+    fn attack_options(&self, content: &Content, a_idx: usize) -> Vec<AttackOption> {
         if self.ships[a_idx].crits.iter().any(|c| matches!(c, CritEffect::WeaponsFailure { .. })) {
             return Vec::new();
         }
         let Some(a_pose) = self.ships[a_idx].pose else { return Vec::new() };
-        let a_fp = self.class_of(content, &self.ships[a_idx]).footprint;
+        let class = self.class_of(content, &self.ships[a_idx]);
+        let a_fp = class.footprint;
         let a_corners = rules::footprint_corners(a_pose, a_fp);
-        let mut candidates = Vec::new();
+        // (weapon, min range, max range, needs arc, requirement)
+        let mut weapons: Vec<(Option<UpgradeId>, u8, u8, bool, AttackRequirement)> =
+            vec![(None, 1, 3, !class.turret_primary, AttackRequirement::Free)];
+        for &u in &self.ships[a_idx].upgrades {
+            if let Some(card) = content.upgrades.upgrade(u)
+                && let Some(sw) = card.attack
+                && matches!(card.slot, Slot::Torpedo | Slot::Missile | Slot::Cannon | Slot::Turret)
+            {
+                weapons.push((
+                    Some(u),
+                    sw.range_min,
+                    sw.range_max,
+                    card.slot != Slot::Turret,
+                    sw.requires,
+                ));
+            }
+        }
+        let mut options = Vec::new();
         for s in &self.ships {
             if s.owner == self.ships[a_idx].owner || s.destroyed {
                 continue;
@@ -1459,12 +1516,6 @@ impl GameState {
             let Some(pose) = s.pose else { continue };
             let fp = self.class_of(content, s).footprint;
             let corners = rules::footprint_corners(pose, fp);
-            // A turret primary weapon (YT-1300) fires all around.
-            if !self.class_of(content, &self.ships[a_idx]).turret_primary
-                && !Self::base_in_front_arc(a_pose, a_fp, &corners)
-            {
-                continue;
-            }
             let dist = combat::base_distance(&a_corners, &corners);
             if dist <= 0.0 {
                 continue; // touching bases cannot be targeted
@@ -1472,9 +1523,22 @@ impl GameState {
             let Some(band) = combat::range_band_between(&a_corners, &corners) else {
                 continue;
             };
-            candidates.push((s.id, band, dist));
+            let in_arc = Self::base_in_front_arc(a_pose, a_fp, &corners);
+            for &(weapon, lo, hi, needs_arc, req) in &weapons {
+                if band < lo || band > hi || (needs_arc && !in_arc) {
+                    continue;
+                }
+                let armed = match req {
+                    AttackRequirement::Free => true,
+                    AttackRequirement::TargetLock => self.ships[a_idx].lock == Some(s.id),
+                    AttackRequirement::Focus => self.ships[a_idx].focus > 0,
+                };
+                if armed {
+                    options.push(AttackOption { weapon, target: s.id, range: band, dist });
+                }
+            }
         }
-        candidates
+        options
     }
 
     /// Resolve one declared attack (dice, token spending, damage, crits).
@@ -1484,15 +1548,43 @@ impl GameState {
         &mut self,
         content: &Content,
         a_idx: usize,
-        d_idx: usize,
-        range: u8,
+        shot: Shot,
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) -> AttackRecord {
+        let Shot { d_idx, range, weapon } = shot;
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
-        let a_dice = self.printed(content, &self.ships[a_idx]).attack;
+
+        // Secondary weapon: its own dice, no range bonuses either way,
+        // and the required token is spent up front when the card says so.
+        let secondary = weapon
+            .and_then(|u| content.upgrades.upgrade(u))
+            .and_then(|c| c.attack.map(|sw| (c.name.clone(), sw)));
+        let mut lock_spent = false;
+        let mut attacker_focus_spent = false;
+        if let Some((name, sw)) = &secondary {
+            events.push(format!("{}: fires {name}", self.label(content, a_idx)));
+            if sw.spend {
+                match sw.requires {
+                    AttackRequirement::TargetLock => {
+                        self.ships[a_idx].lock = None;
+                        lock_spent = true;
+                    }
+                    AttackRequirement::Focus => {
+                        self.ships[a_idx].focus = self.ships[a_idx].focus.saturating_sub(1);
+                        attacker_focus_spent = true;
+                    }
+                    AttackRequirement::Free => {}
+                }
+            }
+        }
+        let a_dice = match &secondary {
+            Some((_, sw)) => sw.dice,
+            None => self.printed(content, &self.ships[a_idx]).attack,
+        };
+        let range_bonus = u8::from(range == 1 && secondary.is_none());
 
         // Roll attack dice (+1 at range 1). Weapon Malfunction drops one
         // die per copy; a Blinded Pilot fires 0 dice once, then recovers.
@@ -1516,7 +1608,7 @@ impl GameState {
             0
         } else {
             let extra = self.extra_attack_dice(content, a_idx, d_idx, range, events);
-            (a_dice + u8::from(range == 1) + extra).saturating_sub(malfunctions)
+            (a_dice + range_bonus + extra).saturating_sub(malfunctions)
         };
         let mut attack_faces: Vec<AttackFace> =
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
@@ -1557,7 +1649,7 @@ impl GameState {
         // focus converts the remaining eyes to hits.
         let all_crits = attacker_may_spend
             && self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
-        let mut lock_spent = all_crits;
+        lock_spent |= all_crits;
         if attacker_may_spend && !all_crits && self.ships[a_idx].lock == Some(defender) {
             let reroll_eyes = self.ships[a_idx].focus == 0;
             let mut any = false;
@@ -1579,7 +1671,7 @@ impl GameState {
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
         }
-        let mut attacker_focus_spent = all_crits;
+        attacker_focus_spent |= all_crits;
         if attacker_may_spend
             && self.ships[a_idx].focus > 0
             && attack_faces.contains(&AttackFace::Focus)
@@ -1596,7 +1688,8 @@ impl GameState {
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
 
         // Roll defense dice (+1 at range 3 vs primary weapons).
-        let n_def = self.agility(content, &self.ships[d_idx]) + u8::from(range == 3);
+        let n_def =
+            self.agility(content, &self.ships[d_idx]) + u8::from(range == 3 && secondary.is_none());
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
 
@@ -1692,10 +1785,18 @@ impl GameState {
         if hits + crits > 0 {
             self.discard_on_hit(content, d_idx, events);
         }
+        // Ordnance is discarded once fired.
+        if let Some((name, sw)) = &secondary
+            && sw.discard_to_fire
+        {
+            self.ships[a_idx].upgrades.retain(|u| Some(*u) != weapon);
+            events.push(format!("{}: {name} discarded (fired)", self.label(content, a_idx)));
+        }
         AttackRecord {
             attacker,
             defender,
             range,
+            weapon,
             attack_faces,
             defense_faces,
             lock_spent,
@@ -2460,6 +2561,107 @@ mod tests {
         assert!(rec.attacks.is_empty(), "13.5 units apart: out of range");
     }
 
+    /// Resolve combat by hand, answering every prompt with `pick`.
+    fn run_combat(
+        c: &Content,
+        gs: &mut GameState,
+        rolls: &mut dyn FnMut() -> u8,
+        mut pick: impl FnMut(&PendingAttack) -> (ShipId, Option<UpgradeId>),
+    ) -> TurnRecords {
+        loop {
+            match gs.combat_step(c, rolls).unwrap() {
+                CombatStep::NeedTarget(p) => {
+                    let (t, w) = pick(&p);
+                    gs.declare_target(c, p.owner, t, w, rolls).unwrap();
+                }
+                CombatStep::Attack(_) => {}
+                CombatStep::Done(rec) => return rec,
+            }
+        }
+    }
+
+    #[test]
+    fn proton_torpedoes_need_a_lock_are_offered_in_band_and_are_discarded_after_firing() {
+        let c = content();
+        let torps = UpgradeId(1); // Proton Torpedoes: 4 dice, R2-3, spend lock, discard
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[1].upgrades.push(torps);
+        let mut miss = || 7u8;
+        assert_eq!(gs.commit_plans_begin(&c, P0, &mut miss).unwrap(), None);
+        gs.commit_plans_begin(&c, P1, &mut miss).unwrap();
+        // No lock: the X-Wing (fires first) sees one option, the primary,
+        // and fires it automatically.
+        let step = gs.combat_step(&c, &mut miss).unwrap();
+        let CombatStep::Attack(rec) = step else { panic!("expected an automatic primary shot") };
+        assert_eq!((rec.attacker, rec.weapon), (ShipId(1), None));
+        assert!(gs.ships[1].upgrades.contains(&torps));
+
+        // With a lock on the TIE the same range-3 shot offers two options;
+        // the torpedo choice rolls 4 dice, the TIE defends with 3 (no
+        // range-3 bonus against ordnance), the lock is spent up front and
+        // the card is gone afterwards.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[1].upgrades.push(torps);
+        gs.ships[1].lock = Some(ShipId(0));
+        let mut rolls = scripted(vec![0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let CombatStep::NeedTarget(p) = gs.combat_step(&c, &mut rolls).unwrap() else {
+            panic!("expected a weapon choice")
+        };
+        let mut weapons: Vec<Option<UpgradeId>> = p.options.iter().map(|o| o.weapon).collect();
+        weapons.sort();
+        assert_eq!(weapons, vec![None, Some(torps)]);
+        assert_eq!(gs.auto_target(&p), Some((ShipId(0), None)), "auto never spends ordnance");
+        let rec = gs.declare_target(&c, P1, ShipId(0), Some(torps), &mut rolls).unwrap();
+        assert_eq!(rec.weapon, Some(torps));
+        assert_eq!((rec.attack_faces.len(), rec.defense_faces.len()), (4, 3));
+        assert!(rec.lock_spent);
+        assert_eq!(rec.hits, 4);
+        assert_eq!(gs.ships[1].lock, None);
+        assert!(!gs.ships[1].upgrades.contains(&torps));
+        let ev = gs.combat_events();
+        assert!(ev.iter().any(|e| e.contains("fires Proton Torpedoes")), "{ev:?}");
+        assert!(ev.iter().any(|e| e.contains("Proton Torpedoes discarded (fired)")), "{ev:?}");
+
+        // At Range 1 the torpedo (R2-3) is not offered even with a lock.
+        let mut gs =
+            duel_at(&c, "academypilot", "bluesquadronnovice", Pose::new(10.0, 13.5, -FRAC_PI_2));
+        gs.ships[1].upgrades.push(torps);
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.commit_plans_begin(&c, P0, &mut miss).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut miss).unwrap();
+        let CombatStep::Attack(rec) = gs.combat_step(&c, &mut miss).unwrap() else {
+            panic!("one option only")
+        };
+        assert_eq!((rec.range, rec.weapon), (1, None));
+    }
+
+    #[test]
+    fn turret_card_fires_outside_the_arc_without_being_discarded() {
+        let c = content();
+        let ion_turret = UpgradeId(10); // Ion Cannon Turret: 3 dice, R1-2, free
+        let north = FRAC_PI_2;
+        // Y-Wing ahead of a TIE, both heading north: the TIE is behind it
+        // (out of the primary arc) 4 units back → Range 2.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        gs.ships[1].upgrades.push(ion_turret);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.0, north));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| panic!("no prompt expected: {p:?}"));
+        let ywing_shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).expect("turret shot");
+        assert_eq!((ywing_shot.weapon, ywing_shot.range), (Some(ion_turret), 2));
+        assert_eq!(ywing_shot.attack_faces.len(), 3);
+        assert!(gs.ships[1].upgrades.contains(&ion_turret), "turrets are not discarded");
+    }
+
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.
     fn imperial_shot(rec: &TurnRecords) -> &AttackRecord {
         rec.attacks.iter().find(|a| a.attacker == ShipId(0)).expect("the TIE fired")
@@ -3064,16 +3266,22 @@ mod tests {
             panic!("expected a Declare Target prompt")
         };
         assert_eq!((p.attacker, p.owner), (ShipId(0), P0));
-        let mut ids: Vec<u32> = p.candidates.iter().map(|c| c.0.0).collect();
+        let mut ids: Vec<u32> = p.options.iter().map(|o| o.target.0).collect();
         ids.sort();
         assert_eq!(ids, vec![1, 2]);
         // Stepping again re-issues the prompt; only the owner may answer,
         // and only with an eligible enemy.
         assert!(matches!(gs.combat_step(&c, &mut miss).unwrap(), CombatStep::NeedTarget(_)));
-        assert_eq!(gs.declare_target(&c, P1, ShipId(2), &mut miss), Err(Rejection::NotYourShip));
-        assert_eq!(gs.declare_target(&c, P0, ShipId(0), &mut miss), Err(Rejection::BadTarget));
+        assert_eq!(
+            gs.declare_target(&c, P1, ShipId(2), None, &mut miss),
+            Err(Rejection::NotYourShip)
+        );
+        assert_eq!(
+            gs.declare_target(&c, P0, ShipId(0), None, &mut miss),
+            Err(Rejection::BadTarget)
+        );
         // Pick the farther X-Wing — overriding the auto policy's nearest.
-        let rec = gs.declare_target(&c, P0, ShipId(2), &mut miss).unwrap();
+        let rec = gs.declare_target(&c, P0, ShipId(2), None, &mut miss).unwrap();
         assert_eq!(rec.defender, ShipId(2));
         let CombatStep::Done(all) = gs.combat_step(&c, &mut miss).unwrap() else {
             panic!("expected the turn to finish")

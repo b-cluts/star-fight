@@ -13,6 +13,7 @@ use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
 use sf_core::rules;
 use sf_core::ship::ShipId;
+use sf_core::upgrade::UpgradeId;
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
 use crate::Screen;
@@ -40,6 +41,15 @@ pub struct Snap {
 
 /// One step of the turn playback queue, fed by server messages as the
 /// combat streams in (attacks can arrive while moves still animate).
+/// One selectable attack from a ChooseTarget prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice {
+    /// None = primary weapon; Some = an equipped secondary weapon card.
+    pub weapon: Option<u16>,
+    pub target: u32,
+    pub range: u8,
+}
+
 #[derive(Clone)]
 pub enum AnimItem {
     Move(MoveRecord),
@@ -47,10 +57,10 @@ pub enum AnimItem {
         rec: AttackRecord,
         line: String,
     },
-    /// The server asks us to declare a target for `attacker`.
+    /// The server asks us to declare a target (and weapon) for `attacker`.
     Prompt {
         attacker: u32,
-        candidates: Vec<(u32, u8)>,
+        options: Vec<Choice>,
     },
     /// The opponent is declaring a target for their `attacker`.
     Waiting {
@@ -121,8 +131,8 @@ pub struct Online {
     pub lock_pick: bool,
     /// Human-readable summary of last turn's combat, shown in the HUD.
     pub combat_log: Vec<String>,
-    /// Active Declare Target prompt: (attacker, candidates) awaiting input.
-    pub prompt: Option<(u32, Vec<(u32, u8)>)>,
+    /// Active Declare Target prompt: (attacker, options) awaiting input.
+    pub prompt: Option<(u32, Vec<Choice>)>,
     /// Opponent's ship currently declaring a target (for the HUD).
     pub waiting_on: Option<u32>,
     /// Placement: callsign being typed for (ship, buffer).
@@ -261,12 +271,19 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         .get_or_insert_with(Anim::new)
                         .push(AnimItem::Attack { rec: attack, line });
                 }
-                ServerMsg::ChooseTarget { attacker, candidates } => {
-                    let candidates = candidates.into_iter().map(|(id, r)| (id.0, r)).collect();
+                ServerMsg::ChooseTarget { attacker, options } => {
+                    let options = options
+                        .into_iter()
+                        .map(|o| Choice {
+                            weapon: o.weapon.map(|u| u.0),
+                            target: o.target.0,
+                            range: o.range,
+                        })
+                        .collect();
                     online
                         .anim
                         .get_or_insert_with(Anim::new)
-                        .push(AnimItem::Prompt { attacker: attacker.0, candidates });
+                        .push(AnimItem::Prompt { attacker: attacker.0, options });
                 }
                 ServerMsg::OpponentChoosing { attacker } => {
                     online
@@ -327,11 +344,28 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
     }
 }
 
+/// Display name of a weapon choice: the card's name, or "primary".
+fn weapon_name(game: &Game, weapon: Option<u16>) -> String {
+    match weapon.and_then(|u| game.content.upgrades.upgrade(UpgradeId(u))) {
+        Some(card) => card.name.clone(),
+        None => "primary".into(),
+    }
+}
+
 /// One-line narration of an attack for the combat log / HUD.
-fn attack_line(online: &Online, _game: &Game, a: &AttackRecord) -> String {
+fn attack_line(online: &Online, game: &Game, a: &AttackRecord) -> String {
     let name = |id: u32| callsign(online.snap.as_ref(), id);
     let landed = a.hits + a.crits;
     let mut line = format!("{} -> {} @R{}: ", name(a.attacker.0), name(a.defender.0), a.range);
+    if a.weapon.is_some() {
+        line = format!(
+            "{} -> {} @R{} [{}]: ",
+            name(a.attacker.0),
+            name(a.defender.0),
+            a.range,
+            weapon_name(game, a.weapon.map(|u| u.0))
+        );
+    }
     if landed == 0 {
         line.push_str("miss");
     } else {
@@ -357,10 +391,12 @@ fn target_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
-    let Some((_, candidates)) = online.prompt.clone() else {
+    let Some((_, options)) = online.prompt.clone() else {
         return;
     };
-    let mut choice: Option<u32> = None;
+    // Number keys pick a listed option; clicking a highlighted ship picks
+    // its primary-weapon option when there is one, else its first.
+    let mut choice: Option<Choice> = None;
     let digits = [
         KeyCode::Digit1,
         KeyCode::Digit2,
@@ -368,12 +404,15 @@ fn target_input(
         KeyCode::Digit4,
         KeyCode::Digit5,
         KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
     ];
     for (n, key) in digits.iter().enumerate() {
         if keys.just_pressed(*key)
-            && let Some((id, _)) = candidates.get(n)
+            && let Some(o) = options.get(n)
         {
-            choice = Some(*id);
+            choice = Some(o.clone());
         }
     }
     if choice.is_none()
@@ -381,22 +420,26 @@ fn target_input(
         && let Some(cur) = cursor.0
         && let (Some(a), Some(snap)) = (&online.anim, &online.snap)
     {
-        for (id, _) in &candidates {
-            let Some(p) = a.end_pose(*id, snap) else {
+        for o in &options {
+            let Some(p) = a.end_pose(o.target, snap) else {
                 continue;
             };
-            let Some(view) = snap.ships.iter().find(|v| v.id.0 == *id) else {
+            let Some(view) = snap.ships.iter().find(|v| v.id.0 == o.target) else {
                 continue;
             };
             let fp = game.ships.classes[game.class_index(view.class)].footprint;
             if rules::point_in_footprint(p, fp, cur) {
-                choice = Some(*id);
+                let primary = options.iter().find(|x| x.target == o.target && x.weapon.is_none());
+                choice = Some(primary.cloned().unwrap_or_else(|| o.clone()));
                 break;
             }
         }
     }
-    if let Some(target) = choice {
-        online.send(ClientMsg::DeclareTarget { target: ShipId(target) });
+    if let Some(Choice { weapon, target, .. }) = choice {
+        online.send(ClientMsg::DeclareTarget {
+            target: ShipId(target),
+            weapon: weapon.map(UpgradeId),
+        });
         online.prompt = None;
         if let Some(a) = online.anim.as_mut() {
             a.current = None;
@@ -531,10 +574,10 @@ fn animate(
                 }
                 return;
             }
-            AnimItem::Prompt { attacker, candidates } => {
+            AnimItem::Prompt { attacker, options } => {
                 // Holds here until target_input answers and clears `current`.
                 if prompt.is_none() {
-                    *prompt = Some((attacker, candidates));
+                    *prompt = Some((attacker, options));
                 }
                 return;
             }
@@ -1048,14 +1091,14 @@ fn draw(
             Some(AnimItem::Attack { rec, .. }) => {
                 draw_attack_fx(&mut gizmos, &game, snap, a, rec);
             }
-            Some(AnimItem::Prompt { attacker, candidates }) => {
+            Some(AnimItem::Prompt { attacker, options }) => {
                 if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
                     render::draw_firing_arc(&mut gizmos, &game, ap, fp, 0.6);
                     bullseye.0 = Some(ap);
                 }
                 let hi = Color::srgb(1.0, 0.95, 0.2);
-                for (id, _) in candidates {
-                    if let (Some(p), Some(fp)) = (a.end_pose(*id, snap), fp_of(*id)) {
+                for id in options.iter().map(|o| o.target) {
+                    if let (Some(p), Some(fp)) = (a.end_pose(id, snap), fp_of(id)) {
                         render::draw_base(&mut gizmos, &game, p, fp, hi);
                         gizmos.circle_2d(game.to_world(p.anchor), 9.0, hi);
                     }
@@ -1206,11 +1249,19 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                 ));
             }
             Some(AnimItem::Attack { line, .. }) => lines.push(line.clone()),
-            Some(AnimItem::Prompt { attacker, candidates }) => {
-                let opts: Vec<String> = candidates
+            Some(AnimItem::Prompt { attacker, options }) => {
+                let opts: Vec<String> = options
                     .iter()
                     .enumerate()
-                    .map(|(n, (id, r))| format!("{}) {} R{}", n + 1, name(*id), r))
+                    .map(|(n, o)| {
+                        format!(
+                            "{}) {} -> {} R{}",
+                            n + 1,
+                            weapon_name(&game, o.weapon),
+                            name(o.target),
+                            o.range
+                        )
+                    })
                     .collect();
                 lines.push(format!(
                     "DECLARE TARGET for {}: click a highlighted ship or press  {}",

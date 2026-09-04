@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ship::Faction;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct UpgradeId(pub u16);
 
 /// Upgrade slot icons. `Modification` and `Title` are implicit: every
@@ -100,6 +100,15 @@ pub struct SecondaryWeapon {
     pub requires: AttackRequirement,
     /// Discarded (or an ordnance token spent) to perform the attack.
     pub discard_to_fire: bool,
+    /// The required token is spent to fire ("Spend your target lock…");
+    /// false for cards that only need the token present (Homing
+    /// Missiles, Proton Rockets…).
+    #[serde(default = "default_true")]
+    pub spend: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Effect tags — one per distinct card text (see the `text` field in the
