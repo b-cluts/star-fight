@@ -100,9 +100,9 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
-- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 86
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 96
   First Edition cards VERIFIED from the card scans: torpedoes (7),
-  turrets (5, added with the Y-Wing 2026-09-04; not enforced), tech
+  turrets (5) and missiles (8) (added 2026-09-04, not enforced), tech
   (7), astromechs (17), modifications (14 usable by small ships; 15
   large/other-ship mods deliberately not encoded), title Black One, and
   37 elite pilot talents (Scum-only ones and Adaptability's second face
@@ -393,8 +393,17 @@ pins.txt + last-used menu values), starfield.rs.
   / Gray / Gold, Source::YWingExpansion, turret slot + 5 turret cards,
   sprite assets/ships/y-wing.png from the user's public-domain render,
   listed in assets/ships/SOURCES.md; sandbox fields one on the Rebel
-  side). Turret attacks and the two Y-Wing abilities are data only so
-  far (turrets need the weapon-choice step, roadmap c). Art must be public
+  side). Also A-Wing RZ-1 (class 5, dial set 5, pilots 501-506 Tycho /
+  Jake Farrell / Arvel Crynyd / Gemmer Sojan / Green / Prototype,
+  Sources AWingExpansion + RebelAces, missile slot + 8 missile cards
+  ids 140-147, titles A-Wing Test Pilot 91 (BarGainsTalent, live) and
+  BTL-A4 Y-Wing 92; sprite assets/ships/a-wing.png from the user's
+  license-free WebP render). Not encoded: Chardaan Refit (cost −2,
+  costs are u8). Turret/missile attacks and the six new pilot abilities
+  are data only so far (weapons need the weapon-choice step, roadmap c;
+  note in upgrades.ron which cards do NOT spend the lock/focus). Both
+  sprites need a look in the sandbox/online client (Y-Wing is fielded
+  in the sandbox; A-Wing via the squad builder key 3). Art must be public
   domain / CC0 / CC-BY (repo is MIT/Apache and the release zips
   redistribute assets/); the first two finds (ywing.png: good 1920×1080
   16-bit render, nose LEFT, needs rotate+crop+8-bit; awing.png: actually

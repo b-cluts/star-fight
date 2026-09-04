@@ -48,5 +48,13 @@
         (id: 402, class: 4, name: "\"Dutch\" Vander", xws: "dutchvander",     unique: true,  skill: 6, cost: 23, talent_slot: true,  source: YWingExpansion, ability: Some(FriendlyLockAfterLock)),
         (id: 403, class: 4, name: "Gray Squadron Pilot", xws: "graysquadronpilot", unique: false, skill: 4, cost: 20, talent_slot: true,  source: YWingExpansion, ability: None),
         (id: 404, class: 4, name: "Gold Squadron Pilot", xws: "goldsquadronpilot", unique: false, skill: 2, cost: 18, talent_slot: false, source: YWingExpansion, ability: None),
+
+        // ---------------- RZ-1 A-Wing (class 5) ----------------
+        (id: 501, class: 5, name: "Tycho Celchu", xws: "tychocelchu",         unique: true,  skill: 8, cost: 26, talent_slot: true,  source: AWingExpansion, ability: Some(ActionsWhileStressed)),
+        (id: 502, class: 5, name: "Jake Farrell", xws: "jakefarrell",         unique: true,  skill: 7, cost: 24, talent_slot: true,  source: RebelAces,      ability: Some(FreeRepositionAfterFocus)),
+        (id: 503, class: 5, name: "Arvel Crynyd", xws: "arvelcrynyd",         unique: true,  skill: 6, cost: 23, talent_slot: false, source: AWingExpansion, ability: Some(TargetTouchingShipInArc)),
+        (id: 504, class: 5, name: "Gemmer Sojan", xws: "gemmersojan",         unique: true,  skill: 5, cost: 22, talent_slot: false, source: RebelAces,      ability: Some(AgilityPlus1IfEnemyAtRange1)),
+        (id: 505, class: 5, name: "Green Squadron Pilot", xws: "greensquadronpilot", unique: false, skill: 3, cost: 19, talent_slot: true,  source: AWingExpansion, ability: None),
+        (id: 506, class: 5, name: "Prototype Pilot", xws: "prototypepilot",   unique: false, skill: 1, cost: 17, talent_slot: false, source: AWingExpansion, ability: None),
     ],
 )

@@ -197,6 +197,17 @@ pub enum UpgradeEffect {
     TurretAutoblasterUncancelable,
     TurretDorsalExtraDieAtRange1,
     TurretTwinLaserTwiceOneDamage,
+    // missiles
+    MissileBlankToHit,
+    MissileAttackTwice,
+    MissileDenyEvadeTokens,
+    MissileSplashRange1,
+    MissileIonOneDamage,
+    RocketExtraDiceByAgility,
+    MissileFaceupDamage,
+    MissileFriendsLockOnHit,
+    // titles
+    TitleArcOnlyThenTurretAttack,
     // setup
     SetupSkillOverride,
     CancelFocusForEvade,

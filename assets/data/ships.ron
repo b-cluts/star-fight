@@ -91,5 +91,27 @@
             anchor_px: (203, 0),
             portrait: None,
         ),
+        (
+            id: 5,
+            name: "A-Wing RZ-1",
+            xws: "awing",
+            faction: RebelAlliance,
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 5,
+            attack_dice: 2,
+            agility: 3,
+            hull: 2,
+            shields: 2,
+            action_bar: [Focus, TargetLock, Boost, Evade],
+            upgrade_bar: [Missile],
+
+            // Public-domain render (see assets/ships/SOURCES.md), rotated
+            // nose-up and cropped; nose tip on row 1 centered at x = 217.
+            sprite: "ships/a-wing.png",
+            sprite_px: (405, 626),
+            anchor_px: (217, 1),
+            portrait: None,
+        ),
     ],
 )

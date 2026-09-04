@@ -1,6 +1,6 @@
 // Upgrade cards (First Edition), verified against the card scans in the
 // gitignored reference/ clone (2026-09-02; turrets 2026-09-04). Only cards
-// usable by our ships (TIE/ln, T-70, TIE/fo, Y-Wing) are listed, plus a few restricted ones kept for
+// usable by our ships (TIE/ln, T-70, TIE/fo, Y-Wing, A-Wing) are listed, plus a few restricted ones kept for
 // completeness of their slot. `cost` is squad points. `text` is the card
 // wording; `effect` is the rules tag (none enforced yet, see upgrade.rs).
 // Modification and Title slots are implicit on every ship.
@@ -55,6 +55,46 @@
          attack: Some((dice: 3, range_min: 2, range_max: 3, requires: Free, discard_to_fire: false)),
          effect: Some(TurretTwinLaserTwiceOneDamage),
          text: "Attack: Perform this attack twice (even against a ship outside your firing arc). Each time this attack hits, the defender suffers 1 damage. Then cancel all dice results."),
+
+        // ---------------- Missiles ----------------
+        // Note for the weapon-choice step: Homing, Ion Pulse and Adv. Homing
+        // need a target lock but do not spend it; Proton Rockets and XX-23
+        // need a focus token but do not spend it (the card says "Discard
+        // this card to perform this attack" only).
+        (id: 140, xws: "concussionmissiles", name: "Concussion Missiles", slot: Missile, cost: 4,
+         attack: Some((dice: 4, range_min: 2, range_max: 3, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileBlankToHit),
+         text: "Attack (target lock): Spend your target lock and discard this card to perform this attack. You may change 1 of your blank results to a hit result."),
+        (id: 141, xws: "clustermissiles", name: "Cluster Missiles", slot: Missile, cost: 4,
+         attack: Some((dice: 3, range_min: 1, range_max: 2, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileAttackTwice),
+         text: "Attack (target lock): Spend your target lock and discard this card to perform this attack twice."),
+        (id: 142, xws: "homingmissiles", name: "Homing Missiles", slot: Missile, cost: 5,
+         attack: Some((dice: 4, range_min: 2, range_max: 3, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileDenyEvadeTokens),
+         text: "Attack (target lock): Discard this card to perform this attack. The defender cannot spend evade tokens during this attack."),
+        (id: 143, xws: "assaultmissiles", name: "Assault Missiles", slot: Missile, cost: 5,
+         attack: Some((dice: 4, range_min: 2, range_max: 3, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileSplashRange1),
+         text: "Attack (target lock): Spend your target lock and discard this card to perform this attack. If this attack hits, each other ship at Range 1 of the defender suffers 1 damage."),
+        (id: 144, xws: "ionpulsemissiles", name: "Ion Pulse Missiles", slot: Missile, cost: 3,
+         attack: Some((dice: 3, range_min: 2, range_max: 3, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileIonOneDamage),
+         text: "Attack (target lock): Discard this card to perform this attack. If this attack hits, the defender suffers 1 damage and receives 2 ion tokens. Then cancel all dice results."),
+        (id: 145, xws: "protonrockets", name: "Proton Rockets", slot: Missile, cost: 3,
+         attack: Some((dice: 2, range_min: 1, range_max: 1, requires: Focus, discard_to_fire: true)),
+         effect: Some(RocketExtraDiceByAgility),
+         text: "Attack (focus): Discard this card to perform this attack. You may roll additional attack dice equal to your agility value, to a maximum of 3 additional dice."),
+        (id: 146, xws: "advancedhomingmissiles", name: "Adv. Homing Missiles", slot: Missile, cost: 3,
+         attack: Some((dice: 3, range_min: 2, range_max: 2, requires: TargetLock, discard_to_fire: true)),
+         effect: Some(MissileFaceupDamage),
+         text: "Attack (target lock): Discard this card to perform this attack. If this attack hits, deal 1 faceup Damage card to the defender. Then cancel all dice results."),
+        (id: 147, xws: "xx23sthreadtracers", name: "XX-23 S-Thread Tracers", slot: Missile, cost: 1,
+         attack: Some((dice: 3, range_min: 1, range_max: 3, requires: Focus, discard_to_fire: true)),
+         effect: Some(MissileFriendsLockOnHit),
+         text: "Attack (focus): Discard this card to perform this attack. If this attack hits, each friendly ship at Range 1-2 of you may acquire a target lock on the defender. Then cancel all dice results."),
+        // Chardaan Refit (A-Wing only, cost -2) is not encoded: costs are
+        // unsigned; add it when negative costs are supported.
 
         // ---------------- Tech ----------------
         (id: 20, xws: "weaponsguidance", name: "Weapons Guidance", slot: Tech, cost: 2,
@@ -184,6 +224,15 @@
          restrictions: [ShipOnly("t70xwing"), SkillAbove(6)],
          effect: Some(RemoveEnemyLockAfterReposition),
          text: "T-70 X-wing only. Title. After you perform a boost or barrel roll action, you may remove 1 enemy target lock from a friendly ship at Range 1. You cannot equip this card if your pilot skill is \"6\" or lower."),
+
+        (id: 91, xws: "awingtestpilot", name: "A-Wing Test Pilot", slot: Title, cost: 0,
+         restrictions: [ShipOnly("awing"), SkillAbove(1)],
+         effect: Some(BarGainsTalent),
+         text: "A-Wing only. Title. Your upgrade bar gains 1 Elite upgrade icon. You cannot equip 2 of the same Elite Upgrade cards. You cannot equip this card if your pilot skill value is \"1\" or lower."),
+        (id: 92, xws: "btla4ywing", name: "BTL-A4 Y-Wing", slot: Title, cost: 0,
+         restrictions: [ShipOnly("ywing")],
+         effect: Some(TitleArcOnlyThenTurretAttack),
+         text: "Y-Wing only. Title. You cannot attack ships outside your firing arc. After you perform a primary weapon attack, you may immediately perform an attack with a Turret secondary weapon."),
 
         // ---------------- Elite Pilot Talents ----------------
         (id: 100, xws: "wired", name: "Wired", slot: Talent, cost: 1,

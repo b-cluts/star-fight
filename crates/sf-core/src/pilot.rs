@@ -25,6 +25,10 @@ pub enum Source {
     TieFoExpansion,
     /// BTL-A4 Y-Wing expansion (wave 1).
     YWingExpansion,
+    /// RZ-1 A-Wing expansion (wave 2).
+    AWingExpansion,
+    /// Rebel Aces (A-Wing and B-Wing repaints, wave 4½).
+    RebelAces,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -113,6 +117,19 @@ pub enum PilotAbility {
     /// friendly ship at Range 1-2; that ship may immediately acquire a
     /// target lock.
     FriendlyLockAfterLock,
+    // ---- RZ-1 A-Wing ----
+    /// Tycho Celchu: you may perform actions even while you have stress
+    /// tokens.
+    ActionsWhileStressed,
+    /// Jake Farrell: after you perform a focus action or are assigned a
+    /// focus token, you may perform a free boost or barrel roll action.
+    FreeRepositionAfterFocus,
+    /// Arvel Crynyd: you may declare an enemy ship inside your firing
+    /// arc that you are touching as the target of your attack.
+    TargetTouchingShipInArc,
+    /// Gemmer Sojan: while you are at Range 1 of at least 1 enemy ship,
+    /// increase your agility value by 1.
+    AgilityPlus1IfEnemyAtRange1,
 }
 
 impl PilotAbility {
