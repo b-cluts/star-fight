@@ -318,6 +318,28 @@ pins.txt + last-used menu values), starfield.rs.
     but survive into the roster). The base game's "fleeing = destroyed"
     (p.17) stays the default for generic games; scenarios/campaigns opt
     into escape via a rule flag.
+- **Scenario-specific equipment and limited stock** (requested
+  2026-09-04): some scenarios/campaign battles offer UNIQUE equipment
+  that exists only for that battle (example: a "network hacker" upgrade
+  that plants a virus in TIE fighters that survive and return to their
+  mothership; if enough are infected, the NEXT battle attacks the large
+  base ship with lowered shields and impaired defenses). Such items may
+  be available in one battle and absent in later ones. Players may also
+  hold a STOCK of special items across a campaign (e.g. special bombs)
+  with a limited count — load them and use them up in the first battle
+  and they are gone. Plan: upgrades.ron already holds card data; add a
+  `custom_upgrades` list on a Scenario/CampaignBattle (same Upgrade
+  struct, ids ≥ 1000, source tag `Scenario`) that the builder offers
+  only for that battle; a campaign roster gets `stock: Vec<(UpgradeId,
+  count)>` decremented when an item is equipped/consumed; outcomes can
+  add stock or set campaign FLAGS (e.g. `virus_planted: n`) that later
+  battles read (scenario `requires`/`modifiers` keyed on flags, e.g.
+  "base ship shields −2, agility −1 if virus_planted ≥ 2"). This needs
+  large/huge ships (base ship) — the ShipClass size/footprint system
+  already supports Large/Huge footprints; art + dials + primary arcs
+  for a huge ship come with that work. Equipment effects use the same
+  UpgradeEffect tag system, so scenario items need new effect variants
+  (e.g. `PlantVirusOnHit`, tracked as a campaign flag on escape).
 - **Obstacles** (requested 2026-09-04): asteroids, moons, wrecked
   stations etc. on the map with graphics (user is sourcing images).
   Rulebook p.20 (already read): obstacles placed during setup before
