@@ -278,6 +278,6 @@ async fn custom_squads_are_validated_and_used() {
     assert_eq!(snap.1, [31, 25]);
     let names: Vec<&str> = snap.0.iter().map(|v| v.callsign.as_str()).collect();
     assert_eq!(names, ["Howl", "Obsidian-2", "Red-leader"]);
-    assert_eq!(snap.0[0].skill, 8);
+    assert_eq!(snap.0[0].skill, 10, "Howlrunner 8 + Veteran Instincts 2");
     assert_eq!(snap.0[2].upgrades, vec!["R2 Astromech".to_string()]);
 }

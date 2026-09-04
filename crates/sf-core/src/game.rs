@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::action::{self, ActionResult, PlannedAction};
+use crate::action::{self, ActionKind, ActionResult, PlannedAction};
 use crate::board::{Board, Seat};
 use crate::combat;
 use crate::crit::{self, CritEffect};
@@ -20,6 +20,7 @@ use crate::pilot::PilotId;
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
 use crate::squad::Squad;
+use crate::upgrade::{UpgradeEffect, UpgradeId};
 
 /// The turn phase machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +244,12 @@ pub struct ShipView {
     pub skill: u8,
     /// Equipped upgrade card names.
     pub upgrades: Vec<String>,
+    /// Effective values after upgrades: hull/shield maxima, agility,
+    /// and the action bar (for the planning keys).
+    pub max_hull: u8,
+    pub max_shields: u8,
+    pub agility: u8,
+    pub actions: Vec<ActionKind>,
     pub pose: Option<Pose>,
     pub hull: u8,
     pub shields: u8,
@@ -341,6 +348,27 @@ impl GameState {
                 });
             }
         }
+        // Hull Upgrade / Shield Upgrade raise the starting values.
+        let mut gs_probe = Self {
+            board,
+            phase: Phase::Placement,
+            turn: 1,
+            ships,
+            committed: [false, false],
+            winner: None,
+            initiative: PlayerId(0),
+            squad_totals: [0, 0],
+            combat: None,
+        };
+        for i in 0..gs_probe.ships.len() {
+            let (h, sh) = (
+                gs_probe.max_hull(content, &gs_probe.ships[i]),
+                gs_probe.max_shields(content, &gs_probe.ships[i]),
+            );
+            gs_probe.ships[i].hull = h;
+            gs_probe.ships[i].shields = sh;
+        }
+        let ships = gs_probe.ships;
         let squad_totals = [squads[0].cost(content), squads[1].cost(content)];
         let initiative = PlayerId(initiative_seat(squad_totals, tie_roll) as u32);
         Ok(Self {
@@ -364,12 +392,88 @@ impl GameState {
         content.ships.class(ship.class).expect("classes validated in new()")
     }
 
-    /// Pilot skill after crits: a Damaged Cockpit drops it to 0.
-    fn effective_skill(&self, content: &Content, s: &ShipState) -> u8 {
+    /// Effects of a ship's equipped upgrade cards.
+    fn effects<'a>(
+        &self,
+        content: &'a Content,
+        s: &'a ShipState,
+    ) -> impl Iterator<Item = UpgradeEffect> + 'a {
+        s.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)).filter_map(|u| u.effect)
+    }
+
+    fn count_effect(&self, content: &Content, s: &ShipState, e: UpgradeEffect) -> u8 {
+        self.effects(content, s).filter(|x| *x == e).count() as u8
+    }
+
+    /// Pilot skill after upgrades (Veteran Instincts +2, Adaptability
+    /// ±1) and crits: a Damaged Cockpit drops it to 0.
+    pub fn effective_skill(&self, content: &Content, s: &ShipState) -> u8 {
         if s.crits.contains(&CritEffect::DamagedCockpit) {
-            0
-        } else {
-            content.pilots.pilot(s.pilot).map(|p| p.skill).unwrap_or(0)
+            return 0;
+        }
+        let base = content.pilots.pilot(s.pilot).map(|p| p.skill).unwrap_or(0) as i16;
+        let up = 2 * self.count_effect(content, s, UpgradeEffect::SkillPlus2) as i16
+            + self.count_effect(content, s, UpgradeEffect::SkillPlus1) as i16
+            - self.count_effect(content, s, UpgradeEffect::SkillMinus1) as i16;
+        (base + up).clamp(0, 12) as u8
+    }
+
+    /// Hull value with Hull Upgrade.
+    pub fn max_hull(&self, content: &Content, s: &ShipState) -> u8 {
+        self.class_of(content, s).hull + self.count_effect(content, s, UpgradeEffect::HullPlus1)
+    }
+
+    /// Shield value with Shield Upgrade.
+    pub fn max_shields(&self, content: &Content, s: &ShipState) -> u8 {
+        self.class_of(content, s).shields
+            + self.count_effect(content, s, UpgradeEffect::ShieldPlus1)
+    }
+
+    /// Agility with Stealth Device (+1 while equipped) and Structural
+    /// Damage crits (−1 each).
+    pub fn agility(&self, content: &Content, s: &ShipState) -> u8 {
+        let structural =
+            s.crits.iter().filter(|x| matches!(x, CritEffect::StructuralDamage)).count() as u8;
+        (self.class_of(content, s).agility
+            + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit))
+        .saturating_sub(structural)
+    }
+
+    /// Action bar with icons granted by modifications (Targeting
+    /// Computer, Engine Upgrade, Vectored Thrusters).
+    pub fn action_bar(&self, content: &Content, s: &ShipState) -> Vec<ActionKind> {
+        let mut bar = self.class_of(content, s).action_bar.clone();
+        for e in self.effects(content, s) {
+            let granted = match e {
+                UpgradeEffect::BarGainsTargetLock => Some(ActionKind::TargetLock),
+                UpgradeEffect::BarGainsBoost => Some(ActionKind::Boost),
+                UpgradeEffect::BarGainsBarrelRoll => Some(ActionKind::BarrelRoll),
+                _ => None,
+            };
+            if let Some(a) = granted
+                && !bar.contains(&a)
+            {
+                bar.push(a);
+            }
+        }
+        bar
+    }
+
+    /// "If you are hit by an attack, discard this card": Stealth Device.
+    fn discard_on_hit(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        let discard: Vec<UpgradeId> = self.ships[i]
+            .upgrades
+            .iter()
+            .copied()
+            .filter(|u| {
+                content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                    == Some(UpgradeEffect::AgilityPlus1DiscardWhenHit)
+            })
+            .collect();
+        for u in discard {
+            self.ships[i].upgrades.retain(|x| *x != u);
+            let name = content.upgrades.upgrade(u).map(|c| c.name.clone()).unwrap_or_default();
+            events.push(format!("{}: {name} discarded (hit)", self.label(content, i)));
         }
     }
 
@@ -562,11 +666,10 @@ impl GameState {
         if self.ships[i].destroyed {
             return Err(Rejection::ShipDestroyed);
         }
-        if let Some(kind) = planned.kind() {
-            let class = self.class_of(content, &self.ships[i]);
-            if !class.action_bar.contains(&kind) {
-                return Err(Rejection::ActionNotOnBar);
-            }
+        if let Some(kind) = planned.kind()
+            && !self.action_bar(content, &self.ships[i]).contains(&kind)
+        {
+            return Err(Rejection::ActionNotOnBar);
         }
         if let PlannedAction::TargetLock(target) = planned {
             let t = self.ship_index(target)?;
@@ -1173,16 +1276,7 @@ impl GameState {
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
 
         // Roll defense dice (+1 at range 3 vs primary weapons).
-        let n_def = {
-            let c = self.class_of(content, &self.ships[d_idx]);
-            // Structural Damage: −1 agility per copy.
-            let structural = self.ships[d_idx]
-                .crits
-                .iter()
-                .filter(|x| matches!(x, CritEffect::StructuralDamage))
-                .count() as u8;
-            c.agility.saturating_sub(structural) + u8::from(range == 3)
-        };
+        let n_def = self.agility(content, &self.ships[d_idx]) + u8::from(range == 3);
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
 
@@ -1265,6 +1359,10 @@ impl GameState {
             }
         }
 
+        // "If you are hit by an attack": at least one uncanceled result.
+        if hits + crits > 0 {
+            self.discard_on_hit(content, d_idx, events);
+        }
         AttackRecord {
             attacker,
             defender,
@@ -1296,7 +1394,6 @@ impl GameState {
     /// What `viewer` is allowed to see right now.
     pub fn snapshot_for(&self, content: &Content, viewer: PlayerId) -> Vec<ShipView> {
         let pilot_name = |id| content.pilots.pilot(id).map(|p| p.name.clone()).unwrap_or_default();
-        let pilot_skill = |id| content.pilots.pilot(id).map(|p| p.skill).unwrap_or(0);
         self.ships
             .iter()
             .map(|s| {
@@ -1307,7 +1404,11 @@ impl GameState {
                     class: s.class,
                     callsign: s.callsign.clone(),
                     pilot: pilot_name(s.pilot),
-                    skill: pilot_skill(s.pilot),
+                    skill: self.effective_skill(content, s),
+                    max_hull: self.max_hull(content, s),
+                    max_shields: self.max_shields(content, s),
+                    agility: self.agility(content, s),
+                    actions: self.action_bar(content, s),
                     upgrades: s
                         .upgrades
                         .iter()
@@ -1777,6 +1878,76 @@ mod tests {
         gs.plan_maneuver(c, P0, ShipId(0), s5).unwrap();
         gs.plan_maneuver(c, P1, ShipId(1), s4).unwrap();
         gs.commit_plans(c, P0, rolls).unwrap();
+    }
+
+    #[test]
+    fn upgrades_modify_stats_action_bar_and_skill() {
+        use crate::squad::{Squad, SquadShip};
+        let c = content();
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let up = |x: &str| c.upgrades.upgrades.iter().find(|u| u.xws == x).unwrap().id;
+        let imperial = Squad {
+            name: "i".into(),
+            faction: crate::ship::Faction::Empire,
+            ships: vec![SquadShip {
+                pilot: pilot("academypilot"),
+                upgrades: vec![up("stealthdevice"), up("targetingcomputer")],
+                callsign: String::new(),
+            }],
+        };
+        let rebel = Squad {
+            name: "r".into(),
+            faction: crate::ship::Faction::RebelAlliance,
+            ships: vec![SquadShip {
+                pilot: pilot("redsquadronveteran"),
+                upgrades: vec![up("veteraninstincts"), up("hullupgrade"), up("shieldupgrade")],
+                callsign: String::new(),
+            }],
+        };
+        let mut gs =
+            GameState::from_squads(board(), &c, [&imperial, &rebel], crate::dice::AttackFace::Hit)
+                .unwrap();
+        // Starting values include Hull/Shield Upgrade; skill includes VI.
+        assert_eq!((gs.ships[1].hull, gs.ships[1].shields), (4, 4));
+        assert_eq!(gs.effective_skill(&c, &gs.ships[1]), 6);
+        assert_eq!(gs.agility(&c, &gs.ships[0]), 4, "Stealth Device");
+        let view = &gs.snapshot_for(&c, P1)[1];
+        assert_eq!((view.max_hull, view.max_shields, view.skill), (4, 4, 6));
+        // Same setup as fly_to_range3, with action checks in between.
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
+        // Targeting Computer puts target lock on the TIE's bar; the T-70
+        // still has no evade.
+        assert_eq!(gs.plan_action(&c, P0, ShipId(0), PlannedAction::TargetLock(ShipId(1))), Ok(()));
+        assert_eq!(gs.plan_action(&c, P0, ShipId(0), PlannedAction::Pass), Ok(()));
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::Evade),
+            Err(Rejection::ActionNotOnBar)
+        );
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
+        let s4 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 4
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), s5).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), s4).unwrap();
+        // X-Wing (skill 6) fires first: 1 hit + 2 blanks; TIE defends with
+        // 3 + 1 (Stealth) + 1 (R3) = 5 blank dice. Then the TIE fires 2
+        // blanks; X-Wing defends 2 + 1 = 3 blanks.
+        let mut rolls = scripted(vec![0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(rec.attacks[0].attacker, ShipId(1), "VI: 6 beats 1");
+        assert_eq!(rec.attacks[0].hits, 1);
+        assert_eq!(gs.ships[0].hull, 2);
+        // Hit → Stealth Device discarded, agility back to 3.
+        assert!(!gs.ships[0].upgrades.contains(&up("stealthdevice")));
+        assert_eq!(gs.agility(&c, &gs.ships[0]), 3);
+        assert!(
+            rec.events.iter().any(|e| e.contains("Stealth Device discarded")),
+            "{:?}",
+            rec.events
+        );
     }
 
     #[test]

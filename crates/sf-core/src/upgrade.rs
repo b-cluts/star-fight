@@ -111,7 +111,8 @@ pub enum UpgradeEffect {
     ShieldPlus1,
     AgilityPlus1DiscardWhenHit,
     SkillPlus2,
-    SkillPlus1OrMinus1,
+    SkillPlus1,
+    SkillMinus1,
     BarGainsTargetLock,
     BarGainsBoost,
     BarGainsBarrelRoll,
@@ -201,7 +202,20 @@ pub enum UpgradeEffect {
 impl UpgradeEffect {
     /// Whether the rules engine currently applies this effect.
     pub fn implemented(self) -> bool {
-        false
+        use UpgradeEffect::*;
+        matches!(
+            self,
+            HullPlus1
+                | ShieldPlus1
+                | AgilityPlus1DiscardWhenHit
+                | SkillPlus2
+                | SkillPlus1
+                | SkillMinus1
+                | BarGainsTargetLock
+                | BarGainsBoost
+                | BarGainsBarrelRoll
+                | BarGainsTalent
+        )
     }
 }
 

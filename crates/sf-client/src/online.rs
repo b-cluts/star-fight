@@ -779,7 +779,7 @@ fn planning_input(
         let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
             return;
         };
-        game.ships.classes[game.class_index(view.class)].action_bar.clone()
+        view.actions.clone()
     };
     let plan_action = |online: &mut Online, action: PlannedAction| {
         online.lock_pick = false;
@@ -1137,9 +1137,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             view.pilot,
             view.skill,
             view.hull,
-            class.hull,
+            view.max_hull,
             view.shields,
-            class.shields,
+            view.max_shields,
             view.stress,
             view.focus,
             view.evade
