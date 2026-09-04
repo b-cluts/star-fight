@@ -42,5 +42,11 @@
         (id: 304, class: 3, name: "Omega Squadron Pilot", xws: "omegasquadronpilot",   unique: false, skill: 4, cost: 17, talent_slot: true,  source: CoreSet, ability: None),
         (id: 305, class: 3, name: "Zeta Squadron Pilot", xws: "zetasquadronpilot",    unique: false, skill: 3, cost: 16, talent_slot: false, source: CoreSet, ability: None),
         (id: 306, class: 3, name: "Epsilon Squadron Pilot", xws: "epsilonsquadronpilot", unique: false, skill: 1, cost: 15, talent_slot: false, source: CoreSet, ability: None),
+
+        // ---------------- BTL-A4 Y-Wing (class 4) ----------------
+        (id: 401, class: 4, name: "Horton Salm", xws: "hortonsalm",          unique: true,  skill: 8, cost: 25, talent_slot: true,  source: YWingExpansion, ability: Some(RerollBlanksAtRange2To3)),
+        (id: 402, class: 4, name: "\"Dutch\" Vander", xws: "dutchvander",     unique: true,  skill: 6, cost: 23, talent_slot: true,  source: YWingExpansion, ability: Some(FriendlyLockAfterLock)),
+        (id: 403, class: 4, name: "Gray Squadron Pilot", xws: "graysquadronpilot", unique: false, skill: 4, cost: 20, talent_slot: true,  source: YWingExpansion, ability: None),
+        (id: 404, class: 4, name: "Gold Squadron Pilot", xws: "goldsquadronpilot", unique: false, skill: 2, cost: 18, talent_slot: false, source: YWingExpansion, ability: None),
     ],
 )

@@ -100,8 +100,9 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
-- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 81
-  First Edition cards VERIFIED from the card scans: torpedoes (7), tech
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 86
+  First Edition cards VERIFIED from the card scans: torpedoes (7),
+  turrets (5, added with the Y-Wing 2026-09-04; not enforced), tech
   (7), astromechs (17), modifications (14 usable by small ships; 15
   large/other-ship mods deliberately not encoded), title Black One, and
   37 elite pilot talents (Scum-only ones and Adaptability's second face
@@ -387,7 +388,13 @@ pins.txt + last-used menu values), starfield.rs.
   exist in First Edition; Second Edition moved ARC-170, Scurrg H-6,
   M12-L Kimogila and Auzituck Gunship onto it, so any of those would do
   if we want the size exercised. Dials for new classes go in
-  maneuvers.ron (I know the First Edition dials). Art must be public
+  maneuvers.ron (I know the First Edition dials). DONE 2026-09-04: Y-Wing
+  BTL-A4 (class 4, dial set 4, pilots 401-404 Horton Salm / Dutch Vander
+  / Gray / Gold, Source::YWingExpansion, turret slot + 5 turret cards,
+  sprite assets/ships/y-wing.png from the user's public-domain render,
+  listed in assets/ships/SOURCES.md; sandbox fields one on the Rebel
+  side). Turret attacks and the two Y-Wing abilities are data only so
+  far (turrets need the weapon-choice step, roadmap c). Art must be public
   domain / CC0 / CC-BY (repo is MIT/Apache and the release zips
   redistribute assets/); the first two finds (ywing.png: good 1920×1080
   16-bit render, nose LEFT, needs rotate+crop+8-bit; awing.png: actually

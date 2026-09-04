@@ -68,5 +68,28 @@
             anchor_px: (230, 0),
             portrait: Some("portraits/tie-fighter.png"),
         ),
+        (
+            id: 4,
+            name: "Y-Wing BTL-A4",
+            xws: "ywing",
+            faction: RebelAlliance,
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 4,
+            attack_dice: 2,
+            agility: 1,
+            hull: 5,
+            shields: 3,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [Turret, Torpedo, Torpedo, Astromech],
+
+            // Public-domain render (see assets/ships/SOURCES.md), rotated
+            // nose-up and cropped to the hull; the sensor prongs are the
+            // topmost pixels, centered on x = 203.
+            sprite: "ships/y-wing.png",
+            sprite_px: (409, 800),
+            anchor_px: (203, 0),
+            portrait: None,
+        ),
     ],
 )

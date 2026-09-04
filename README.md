@@ -43,7 +43,8 @@ design document. Game data (ships, dials, pilots, upgrades) lives in
 The Star Fight source code and the original artwork in `assets/` are
 dual-licensed under either the [MIT License](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option. Contributions
-are accepted under the same terms.
+are accepted under the same terms. Third-party sprites and their licenses
+(public domain unless noted) are listed in `assets/ships/SOURCES.md`.
 
 **What the license does not cover.** Star Fight is a fan project and is not
 affiliated with, endorsed by, or licensed by Fantasy Flight Games, Atomic

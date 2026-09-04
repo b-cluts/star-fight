@@ -23,6 +23,8 @@ pub enum Source {
     HeroesOfTheResistance,
     ImperialAssaultCarrier,
     TieFoExpansion,
+    /// BTL-A4 Y-Wing expansion (wave 1).
+    YWingExpansion,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -103,6 +105,14 @@ pub enum PilotAbility {
     /// "Epsilon Ace": while you have no Damage cards, treat your pilot
     /// skill as 12.
     SkillTwelveWhileUndamaged,
+    // ---- BTL-A4 Y-Wing ----
+    /// Horton Salm: when attacking at Range 2-3, you may reroll any of
+    /// your blank results.
+    RerollBlanksAtRange2To3,
+    /// "Dutch" Vander: after acquiring a target lock, choose another
+    /// friendly ship at Range 1-2; that ship may immediately acquire a
+    /// target lock.
+    FriendlyLockAfterLock,
 }
 
 impl PilotAbility {

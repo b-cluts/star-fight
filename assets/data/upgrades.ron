@@ -1,6 +1,6 @@
 // Upgrade cards (First Edition), verified against the card scans in the
-// gitignored reference/ clone (2026-09-02). Only cards usable by our ships
-// (TIE/ln, T-70, TIE/fo) are listed, plus a few restricted ones kept for
+// gitignored reference/ clone (2026-09-02; turrets 2026-09-04). Only cards
+// usable by our ships (TIE/ln, T-70, TIE/fo, Y-Wing) are listed, plus a few restricted ones kept for
 // completeness of their slot. `cost` is squad points. `text` is the card
 // wording; `effect` is the rules tag (none enforced yet, see upgrade.rs).
 // Modification and Title slots are implicit on every ship.
@@ -33,6 +33,28 @@
         (id: 7, xws: "seismictorpedo", name: "Seismic Torpedo", slot: Torpedo, cost: 2,
          effect: Some(SeismicTorpedoAction),
          text: "Action: Discard this card to choose an obstacle at Range 1-2 and inside your primary firing arc. Each ship at Range 1 of the obstacle rolls 1 attack die and suffers any damage or critical damage rolled. Then remove the obstacle."),
+
+        // ---------------- Turrets ----------------
+        (id: 10, xws: "ioncannonturret", name: "Ion Cannon Turret", slot: Turret, cost: 5,
+         attack: Some((dice: 3, range_min: 1, range_max: 2, requires: Free, discard_to_fire: false)),
+         effect: Some(TurretIonOneDamage),
+         text: "Attack: Attack 1 ship (even a ship outside your firing arc). If this attack hits the target ship, the ship suffers 1 damage and receives 1 ion token. Then cancel all dice results."),
+        (id: 11, xws: "blasterturret", name: "Blaster Turret", slot: Turret, cost: 4,
+         attack: Some((dice: 3, range_min: 1, range_max: 2, requires: Focus, discard_to_fire: false)),
+         effect: Some(TurretBlasterSpendFocus),
+         text: "Attack (focus): Spend 1 focus token to perform this attack against 1 ship (even a ship outside your firing arc)."),
+        (id: 12, xws: "autoblasterturret", name: "Autoblaster Turret", slot: Turret, cost: 2,
+         attack: Some((dice: 2, range_min: 1, range_max: 1, requires: Free, discard_to_fire: false)),
+         effect: Some(TurretAutoblasterUncancelable),
+         text: "Attack: Attack 1 ship (even a ship outside your firing arc). Your hit results cannot be canceled by defense dice. The defender may cancel critical hit results before hit results."),
+        (id: 13, xws: "dorsalturret", name: "Dorsal Turret", slot: Turret, cost: 3,
+         attack: Some((dice: 2, range_min: 1, range_max: 2, requires: Free, discard_to_fire: false)),
+         effect: Some(TurretDorsalExtraDieAtRange1),
+         text: "Attack: Attack 1 ship (even a ship outside your firing arc). If the target of this attack is at Range 1, roll 1 additional attack die."),
+        (id: 14, xws: "twinlaserturret", name: "Twin Laser Turret", slot: Turret, cost: 6,
+         attack: Some((dice: 3, range_min: 2, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(TurretTwinLaserTwiceOneDamage),
+         text: "Attack: Perform this attack twice (even against a ship outside your firing arc). Each time this attack hits, the defender suffers 1 damage. Then cancel all dice results."),
 
         // ---------------- Tech ----------------
         (id: 20, xws: "weaponsguidance", name: "Weapons Guidance", slot: Tech, cost: 2,

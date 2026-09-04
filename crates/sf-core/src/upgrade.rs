@@ -191,6 +191,12 @@ pub enum UpgradeEffect {
     LocksOnlyAtRange3,
     SnapShotReaction,
     SeismicTorpedoAction,
+    // turrets (all fire at ships outside the firing arc)
+    TurretIonOneDamage,
+    TurretBlasterSpendFocus,
+    TurretAutoblasterUncancelable,
+    TurretDorsalExtraDieAtRange1,
+    TurretTwinLaserTwiceOneDamage,
     // setup
     SetupSkillOverride,
     CancelFocusForEvade,

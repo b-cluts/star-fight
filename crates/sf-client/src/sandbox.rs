@@ -65,7 +65,7 @@ fn enter_sandbox(
         (0, Seat::South, Pose::new(8.0, 2.0, FRAC_PI_2)),
         (0, Seat::South, Pose::new(12.0, 2.0, FRAC_PI_2)),
         (1, Seat::North, Pose::new(8.0, 18.0, -FRAC_PI_2)),
-        (1, Seat::North, Pose::new(12.0, 18.0, -FRAC_PI_2)),
+        (3, Seat::North, Pose::new(12.0, 18.0, -FRAC_PI_2)), // Y-Wing (class index 3)
     ];
     let squads = sf_core::ship::squad_names(&[
         game.ships.classes[fleet[0].0].faction,
