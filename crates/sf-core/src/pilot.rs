@@ -40,6 +40,7 @@ pub enum Source {
     TieInterceptorExpansion,
     /// Imperial Aces (TIE Interceptor repaints).
     ImperialAces,
+    LambdaShuttleExpansion,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -221,6 +222,18 @@ pub enum PilotAbility {
     /// Lieutenant Lorrir: when performing a barrel roll, you may receive
     /// 1 stress token to use the bank 1 templates instead of straight 1.
     BarrelRollWithBank1ForStress,
+    // ---- Lambda-class shuttle ----
+    /// Captain Kagi: when an enemy ship acquires a target lock, it must
+    /// lock onto your ship if able.
+    EnemyLocksMustTargetMe,
+    /// Colonel Jendon: at the start of the Combat phase, you may assign 1
+    /// of your blue target lock tokens to a friendly ship at Range 1 if
+    /// it does not have a blue target lock token.
+    GiveLockToFriendlyAtCombatStart,
+    /// Captain Yorr: when another friendly ship at Range 1-2 would
+    /// receive a stress token, if you have 2 or fewer stress tokens, you
+    /// may receive that token instead.
+    AbsorbFriendlyStressAtRange1To2,
 }
 
 impl PilotAbility {

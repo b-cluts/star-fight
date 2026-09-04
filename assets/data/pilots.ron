@@ -101,5 +101,11 @@
         (id: 909, class: 9, name: "Saber Squadron Pilot", xws: "sabersquadronpilot",     unique: false, skill: 4, cost: 21, talent_slot: true,  source: TieInterceptorExpansion, ability: None),
         (id: 910, class: 9, name: "Avenger Squadron Pilot", xws: "avengersquadronpilot", unique: false, skill: 3, cost: 20, talent_slot: false, source: TieInterceptorExpansion, ability: None),
         (id: 911, class: 9, name: "Alpha Squadron Pilot", xws: "alphasquadronpilot",     unique: false, skill: 1, cost: 18, talent_slot: false, source: TieInterceptorExpansion, ability: None),
+
+        // ---------------- Lambda-class shuttle (class 10) ----------------
+        (id: 1001, class: 10, name: "Captain Kagi", xws: "captainkagi",       unique: true,  skill: 8, cost: 27, talent_slot: false, source: LambdaShuttleExpansion, ability: Some(EnemyLocksMustTargetMe)),
+        (id: 1002, class: 10, name: "Colonel Jendon", xws: "coloneljendon",   unique: true,  skill: 6, cost: 26, talent_slot: false, source: LambdaShuttleExpansion, ability: Some(GiveLockToFriendlyAtCombatStart)),
+        (id: 1003, class: 10, name: "Captain Yorr", xws: "captainyorr",       unique: true,  skill: 4, cost: 24, talent_slot: false, source: LambdaShuttleExpansion, ability: Some(AbsorbFriendlyStressAtRange1To2)),
+        (id: 1004, class: 10, name: "Omicron Group Pilot", xws: "omicrongrouppilot", unique: false, skill: 2, cost: 21, talent_slot: false, source: LambdaShuttleExpansion, ability: None),
     ],
 )

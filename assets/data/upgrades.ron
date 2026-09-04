@@ -1,7 +1,7 @@
 // Upgrade cards (First Edition), verified against the card scans in the
 // gitignored reference/ clone (2026-09-02; turrets 2026-09-04). Only cards
 // usable by our ships (TIE/ln, TIE/fo, TIE Bomber, TIE Advanced, TIE
-// Interceptor, T-70, Y-Wing, A-Wing, YT-1300) are listed, plus a few restricted ones kept for
+// Interceptor, Lambda shuttle, T-70, Y-Wing, A-Wing, YT-1300) are listed, plus a few restricted ones kept for
 // completeness of their slot. `cost` is squad points. `text` is the card
 // wording; `effect` is the rules tag (none enforced yet, see upgrade.rs).
 // Modification and Title slots are implicit on every ship.
@@ -253,6 +253,66 @@
          effect: Some(TwoDifferentModifications),
          text: "TIE Interceptor only. Title. You may equip up to 2 different Modification upgrades (instead of 1). You cannot equip this card if your pilot skill value is \"4\" or lower."),
 
+        (id: 97, xws: "st321", name: "ST-321", slot: Title, cost: 3, unique: true,
+         restrictions: [ShipOnly("lambdaclassshuttle")],
+         effect: Some(TitleLockAnywhere),
+         text: "Lambda-class Shuttle only. Title. When acquiring a target lock, you may lock onto any enemy ship in the play area."),
+
+        // ---------------- Cannons ----------------
+        (id: 190, xws: "heavylasercannon", name: "Heavy Laser Cannon", slot: Cannon, cost: 7,
+         attack: Some((dice: 4, range_min: 2, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonCritsToHits),
+         text: "Attack: Attack 1 ship. Immediately after rolling your attack dice, you must change all of your critical hit results to hit results."),
+        (id: 191, xws: "ioncannon", name: "Ion Cannon", slot: Cannon, cost: 3,
+         attack: Some((dice: 3, range_min: 1, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonIonOneDamage),
+         text: "Attack: Attack 1 ship. If this attack hits, the defender suffers 1 damage and receives 1 ion token. Then cancel all dice results."),
+        (id: 192, xws: "autoblaster", name: "Autoblaster", slot: Cannon, cost: 5,
+         attack: Some((dice: 3, range_min: 1, range_max: 1, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonUncancelableHits),
+         text: "Attack: Attack 1 ship. Your hit results cannot be canceled by defense dice. The defender may cancel critical hit results before hit results."),
+        (id: 193, xws: "flechettecannon", name: "Flechette Cannon", slot: Cannon, cost: 2,
+         attack: Some((dice: 3, range_min: 1, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonOneDamageAndStress),
+         text: "Attack: Attack 1 ship. If this attack hits, the defender suffers 1 damage and, if the defender is not stressed, it also receives 1 stress token. Then cancel all dice results."),
+        (id: 194, xws: "manglercannon", name: "\"Mangler\" Cannon", slot: Cannon, cost: 4,
+         attack: Some((dice: 3, range_min: 1, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonHitToCrit),
+         text: "Attack: Attack 1 ship. When attacking, you may change 1 of your hit results to a critical hit result."),
+        (id: 195, xws: "tractorbeam", name: "Tractor Beam", slot: Cannon, cost: 1,
+         attack: Some((dice: 3, range_min: 1, range_max: 3, requires: Free, discard_to_fire: false)),
+         effect: Some(CannonTractorToken),
+         text: "Attack: Attack 1 ship. If this attack hits, the defender receives 1 tractor beam token. Then cancel all dice results."),
+
+        // ---------------- Systems ----------------
+        (id: 200, xws: "firecontrolsystem", name: "Fire-Control System", slot: System, cost: 2,
+         effect: Some(SystemLockAfterAttack),
+         text: "After you perform an attack, you may acquire a target lock on the defender."),
+        (id: 201, xws: "advancedsensors", name: "Advanced Sensors", slot: System, cost: 3,
+         effect: Some(SystemFreeActionBeforeReveal),
+         text: "Immediately before you reveal your maneuver, you may perform 1 free action. If you use this ability, you must skip your \"Perform Action\" step during this round."),
+        (id: 202, xws: "sensorjammer", name: "Sensor Jammer", slot: System, cost: 4,
+         effect: Some(SystemAttackerHitToFocus),
+         text: "When defending, you may change 1 of the attacker's hit results to a focus result. The attacker cannot reroll the die with the changed result."),
+        (id: 203, xws: "accuracycorrector", name: "Accuracy Corrector", slot: System, cost: 3,
+         effect: Some(SystemCancelAllAddTwoHits),
+         text: "When attacking, you may cancel all of your dice results. Then, you may add 2 hit results to your roll. Your dice cannot be modified again during this attack."),
+        (id: 204, xws: "enhancedscopes", name: "Enhanced Scopes", slot: System, cost: 1,
+         effect: Some(SystemSkillZeroInActivation),
+         text: "During the Activation phase, treat your pilot skill value as \"0.\""),
+        (id: 205, xws: "electronicbaffle", name: "Electronic Baffle", slot: System, cost: 1,
+         effect: Some(SystemDamageToDiscardToken),
+         text: "When you receive a stress token or an ion token, you may suffer 1 damage to discard that token."),
+        (id: 206, xws: "collisiondetector", name: "Collision Detector", slot: System, cost: 0,
+         effect: Some(SystemOverlapObstaclesOnReposition),
+         text: "When performing a boost, barrel roll, or decloak, your ship and maneuver template can overlap obstacles. When rolling for obstacle damage, ignore all critical hit results."),
+        (id: 207, xws: "reinforceddeflectors", name: "Reinforced Deflectors", slot: System, cost: 3, restrictions: [LargeShipOnly],
+         effect: Some(SystemRecoverShieldAfter3Damage),
+         text: "Large ship only. After you suffer 3 or more damage from an attack, recover 1 shield (up to your shield value)."),
+        (id: 208, xws: "advtargetingcomputer", name: "Adv. Targeting Computer", slot: System, cost: 5, restrictions: [ShipOnly("tieadvanced")],
+         effect: Some(SystemAddCritWithLock),
+         text: "TIE Advanced only. When attacking with your primary weapon, if you have a target lock on the defender, you may add 1 critical hit result to your roll. If you do, you cannot spend target locks during this attack."),
+
         // ---------------- Bombs ----------------
         // Bomb tokens and their detonation effects are not modelled yet;
         // the cards are here so the TIE Bomber's slot can be filled.
@@ -346,6 +406,37 @@
         (id: 170, xws: "saboteur", name: "Saboteur", slot: Crew, cost: 2,
          effect: Some(CrewSaboteurAction),
          text: "Action: Choose 1 enemy ship at Range 1 and roll 1 attack die. On a hit or critical hit result, choose 1 random facedown Damage card assigned to that ship, flip it faceup, and resolve it."),
+
+        // Imperial crew. Left out: Emperor Palpatine (two Crew slots),
+        // Grand Moff Tarkin / Admiral Ozzel / Captain Needa / Rear Admiral
+        // Chiraneau (huge ship only).
+        (id: 171, xws: "darthvader", name: "Darth Vader", slot: Crew, cost: 3, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewSufferTwoForCrit),
+         text: "Imperial only. After you perform an attack against an enemy ship, you may suffer 2 damage to cause that ship to suffer 1 critical damage."),
+        (id: 172, xws: "agentkallus", name: "Agent Kallus", slot: Crew, cost: 2, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewChosenEnemyFocusToHitOrEvade),
+         text: "Imperial only. At the start of the first round, choose 1 enemy small or large ship. When attacking or defending against that ship, you may change 1 of your focus results to a hit or evade result."),
+        (id: 173, xws: "moffjerjerrod", name: "Moff Jerjerrod", slot: Crew, cost: 2, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewDiscardToFlipCritFacedown),
+         text: "Imperial only. When you are dealt a faceup Damage card, you may discard this Upgrade card or another Crew Upgrade card to flip that Damage card facedown (without resolving its effect)."),
+        (id: 174, xws: "fleetofficer", name: "Fleet Officer", slot: Crew, cost: 3, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewFleetOfficerAction),
+         text: "Imperial only. Action: Choose up to 2 friendly ships within Range 1-2 and assign 1 focus token to each of those ships. Then receive 1 stress token."),
+        (id: 175, xws: "systemsofficer", name: "Systems Officer", slot: Crew, cost: 2, limited: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewFriendlyLockAfterGreen),
+         text: "Imperial only. Limited. After you execute a green maneuver, choose another friendly ship at Range 1. That ship may acquire a target lock."),
+        (id: 176, xws: "rebelcaptive", name: "Rebel Captive", slot: Crew, cost: 3, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewStressFirstAttacker),
+         text: "Imperial only. Once per round, the first ship that declares you as the target of an attack immediately receives 1 stress token."),
+        (id: 177, xws: "ysanneisard", name: "Ysanne Isard", slot: Crew, cost: 4, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewFreeEvadeIfNoShieldsDamaged),
+         text: "Imperial only. At the start of the Combat phase, if you have no shields and at least 1 Damage card assigned to your ship, you may perform a free evade action."),
+        (id: 178, xws: "operationsspecialist", name: "Operations Specialist", slot: Crew, cost: 3, limited: true,
+         effect: Some(CrewFocusAfterFriendlyMiss),
+         text: "Limited. After a friendly ship at Range 1-2 performs an attack that does not hit, you may assign 1 focus token to a friendly ship at Range 1-3 of the attacker."),
+        (id: 179, xws: "marajade", name: "Mara Jade", slot: Crew, cost: 3, unique: true, restrictions: [FactionOnly(Empire)],
+         effect: Some(CrewStressEnemiesAtRange1EndOfCombat),
+         text: "Imperial only. At the end of the Combat phase, each enemy ship at Range 1 that does not have a stress token receives 1 stress token."),
 
         // ---------------- Elite Pilot Talents ----------------
         (id: 100, xws: "wired", name: "Wired", slot: Talent, cost: 1,

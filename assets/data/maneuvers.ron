@@ -248,5 +248,26 @@
                 (steer: KTurn,    distance: 5, difficulty: Hard),
             ],
         ),
+        (
+            id: 10, // Lambda-class shuttle dial (First Edition card)
+            maneuvers: [
+                // Speed 0: the red stationary maneuver.
+                (steer: Straight,  distance: 0, difficulty: Hard),
+                // Speed 1: banks white, straight green.
+                (steer: BankLeft,  distance: 1, difficulty: Normal),
+                (steer: Straight,  distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Normal),
+                // Speed 2: turns red, banks white, straight green.
+                (steer: TurnLeft,  distance: 2, difficulty: Hard),
+                (steer: BankLeft,  distance: 2, difficulty: Normal),
+                (steer: Straight,  distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Normal),
+                (steer: TurnRight, distance: 2, difficulty: Hard),
+                // Speed 3: banks red, straight white. Nothing faster.
+                (steer: BankLeft,  distance: 3, difficulty: Hard),
+                (steer: Straight,  distance: 3, difficulty: Normal),
+                (steer: BankRight, distance: 3, difficulty: Hard),
+            ],
+        ),
     ],
 )

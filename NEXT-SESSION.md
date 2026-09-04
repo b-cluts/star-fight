@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (109 tests),
+`cargo build` clean, `cargo test --workspace` green (110 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -100,10 +100,10 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
-- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 128
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 153
   First Edition cards VERIFIED from the card scans: torpedoes (7),
-  turrets (5), missiles (8), crew (21), bombs (7) and 5 more titles
-  (added 2026-09-04/05, not enforced), tech
+  turrets (5), missiles (8), crew (30), bombs (7), cannons (6), systems
+  (9) and 6 more titles (added 2026-09-04/05, not enforced), tech
   (7), astromechs (17), modifications (14 usable by small ships; 15
   large/other-ship mods deliberately not encoded), title Black One, and
   37 elite pilot talents (Scum-only ones and Adaptability's second face
@@ -417,8 +417,14 @@ pins.txt + last-used menu values), starfield.rs.
   ImperialAces; sandbox fields an Interceptor beside the TIE/ln. Squad
   builder class keys are now 1-9 (legend lists them). Not encoded:
   Chardaan Refit (cost −2, costs are u8), Bomblet Generator (two Bomb
-  slots), TIE/v1 (TIE Adv. Prototype, not our ship). Still wanted on
-  the Imperial side: a large ship (Lambda-class Shuttle or Firespray-31). Turret/missile attacks and the six new pilot abilities
+  slots), TIE/v1 (TIE Adv. Prototype, not our ship). Lambda-class
+  Shuttle (class 10, LARGE, dial 10 incl. the red stationary "Straight
+  0" — templates::straight_length now accepts speed 0, sampler yields
+  [start, start]; pilots 1001-1004; title ST-321 97; Cannon slot + 6
+  cannons ids 190-195; System slot + 9 systems ids 200-208; 9 Imperial
+  crew ids 171-179 — Palpatine (two slots) and the huge-ship-only crew
+  left out; sprite keyed out of a black multi-view sheet, wings in the
+  folded position). Fleet is now 6 Imperial / 5 Rebel classes. Turret/missile attacks and the six new pilot abilities
   are data only so far (weapons need the weapon-choice step, roadmap c;
   note in upgrades.ron which cards do NOT spend the lock/focus). Both
   sprites: Y-Wing confirmed good in the sandbox 2026-09-05; A-Wing still to be seen (Y-Wing is fielded

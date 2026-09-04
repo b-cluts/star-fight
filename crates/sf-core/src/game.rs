@@ -2441,6 +2441,25 @@ mod tests {
         assert!(shots.contains(&(ShipId(0), 3, 2)), "TIE shot missing: {shots:?}");
     }
 
+    #[test]
+    fn lambda_shuttle_stationary_maneuver_holds_position_and_stresses() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("omicrongrouppilot", Pose::new(10.0, 2.5, north), 0)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -north), 4)],
+        );
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shuttle = &gs.ships[0];
+        let pose = shuttle.pose.unwrap();
+        assert!((pose.anchor.x - 10.0).abs() < 1e-9 && (pose.anchor.y - 2.5).abs() < 1e-9);
+        assert_eq!(shuttle.stress, 1, "the stop is a red maneuver");
+        assert!(rec.attacks.is_empty(), "13.5 units apart: out of range");
+    }
+
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.
     fn imperial_shot(rec: &TurnRecords) -> &AttackRecord {
         rec.attacks.iter().find(|a| a.attacker == ShipId(0)).expect("the TIE fired")

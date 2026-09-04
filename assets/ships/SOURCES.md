@@ -10,5 +10,6 @@ length), 8-bit RGBA PNG.
 | a-wing.png | license-free render found by B Cluts (2026-09-04, supplied as WebP); rotated nose-up, cropped, saved as PNG | public domain / no copyright per the source page |
 | yt-1300.png | license-free render found by B Cluts (2026-09-05, supplied with real transparency as falcon.png); cropped and re-encoded | public domain / no copyright per the source page |
 | tie-bomber.png, tie-advanced.png, tie-interceptor.png | license-free renders found by B Cluts (2026-09-05, supplied as WebP, nose down); turned 180°, cropped, saved as PNG | public domain / no copyright per the source pages |
+| lambda-shuttle.png | license-free multi-view render sheet found by B Cluts (2026-09-05, JPEG on black); the top-down view keyed out, turned 180°, saved as PNG | public domain / no copyright per the source page |
 
 The ship designs themselves are Lucasfilm property; see the README.

@@ -46,9 +46,10 @@ pub fn bank_radius(speed: u8) -> Option<f64> {
     BANK_INSIDE_MM.get(speed.checked_sub(1)? as usize).map(|&r| centerline_units(r))
 }
 
-/// Straight distance in game units, speeds 1..=5.
+/// Straight distance in game units, speeds 0..=5 (0 is the stationary
+/// "stop" maneuver on the Lambda-class shuttle's dial).
 pub fn straight_length(speed: u8) -> Option<f64> {
-    (1..=5).contains(&speed).then(|| speed as f64 * STRAIGHT_MM_PER_SPEED / MM_PER_UNIT)
+    (speed <= 5).then(|| speed as f64 * STRAIGHT_MM_PER_SPEED / MM_PER_UNIT)
 }
 
 #[cfg(test)]
@@ -73,7 +74,7 @@ mod tests {
         assert_eq!(turn_radius(0), None);
         assert_eq!(turn_radius(5), None);
         assert_eq!(bank_radius(4), None);
-        assert_eq!(straight_length(0), None);
+        assert_eq!(straight_length(0), Some(0.0));
         assert_eq!(straight_length(6), None);
     }
 }

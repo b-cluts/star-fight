@@ -200,5 +200,28 @@
             anchor_px: (321, 0),
             portrait: None,
         ),
+        (
+            id: 10,
+            name: "Lambda-class Shuttle",
+            xws: "lambdaclassshuttle",
+            faction: Empire,
+            size: Large,
+            footprint: (length: 2.0, width: 2.0),
+            maneuver_set: 10,
+            attack_dice: 3,
+            agility: 1,
+            hull: 5,
+            shields: 5,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [System, Cannon, Crew, Crew],
+
+            // License-free render (assets/ships/SOURCES.md): the top-down
+            // view keyed out of a black sheet, turned nose-up. Wings are
+            // in the folded (landing) position.
+            sprite: "ships/lambda-shuttle.png",
+            sprite_px: (305, 381),
+            anchor_px: (152, 0),
+            portrait: None,
+        ),
     ],
 )
