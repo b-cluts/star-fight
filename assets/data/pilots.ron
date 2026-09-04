@@ -69,5 +69,37 @@
         (id: 606, class: 6, name: "Rey", xws: "rey",                          unique: true,  skill: 8, cost: 45, talent_slot: true,  source: HeroesOfTheResistance, ability: Some(RerollTwoBlanksIfEnemyInArc)),
         (id: 607, class: 6, name: "Chewbacca", xws: "chewbacca_2",            unique: true,  skill: 5, cost: 42, talent_slot: true,  source: HeroesOfTheResistance, ability: Some(AttackWhenFriendlyDestroyed)),
         (id: 608, class: 6, name: "Resistance Sympathizer", xws: "resistancesympathizer", unique: false, skill: 3, cost: 38, talent_slot: false, source: HeroesOfTheResistance, ability: None),
+
+        // ---------------- TIE Bomber (class 7) ----------------
+        (id: 701, class: 7, name: "Tomax Bren", xws: "tomaxbren",             unique: true,  skill: 8, cost: 24, talent_slot: true,  source: ImperialVeterans,   ability: Some(FlipTalentFaceupAfterDiscard)),
+        (id: 702, class: 7, name: "Major Rhymer", xws: "majorrhymer",         unique: true,  skill: 7, cost: 26, talent_slot: true,  source: TieBomberExpansion, ability: Some(SecondaryRangePlusMinus1)),
+        (id: 703, class: 7, name: "Captain Jonus", xws: "captainjonus",       unique: true,  skill: 6, cost: 22, talent_slot: true,  source: TieBomberExpansion, ability: Some(FriendlySecondaryReroll2AtRange1)),
+        (id: 704, class: 7, name: "Gamma Squadron Veteran", xws: "gammasquadronveteran", unique: false, skill: 5, cost: 19, talent_slot: true, source: ImperialVeterans, ability: None),
+        (id: 705, class: 7, name: "Gamma Squadron Pilot", xws: "gammasquadronpilot",     unique: false, skill: 4, cost: 18, talent_slot: false, source: TieBomberExpansion, ability: None),
+        (id: 706, class: 7, name: "\"Deathfire\"", xws: "deathfire",           unique: true,  skill: 3, cost: 17, talent_slot: false, source: ImperialVeterans,   ability: Some(FreeBombActionOnRevealOrAction)),
+        (id: 707, class: 7, name: "Scimitar Squadron Pilot", xws: "scimitarsquadronpilot", unique: false, skill: 2, cost: 16, talent_slot: false, source: TieBomberExpansion, ability: None),
+
+        // ---------------- TIE Advanced x1 (class 8) ----------------
+        (id: 801, class: 8, name: "Darth Vader", xws: "darthvader",           unique: true,  skill: 9, cost: 29, talent_slot: true,  source: TieAdvancedExpansion, ability: Some(TwoActions)),
+        (id: 802, class: 8, name: "Juno Eclipse", xws: "junoeclipse",         unique: true,  skill: 8, cost: 28, talent_slot: true,  source: ImperialRaider,       ability: Some(AdjustManeuverSpeedBy1)),
+        (id: 803, class: 8, name: "Maarek Stele", xws: "maarekstele",         unique: true,  skill: 7, cost: 27, talent_slot: true,  source: TieAdvancedExpansion, ability: Some(ChooseCritFromThree)),
+        (id: 804, class: 8, name: "Zertik Strom", xws: "zertikstrom",         unique: true,  skill: 6, cost: 26, talent_slot: true,  source: ImperialRaider,       ability: Some(DenyEnemyRange1Bonus)),
+        (id: 805, class: 8, name: "Commander Alozen", xws: "commanderalozen", unique: true,  skill: 5, cost: 25, talent_slot: true,  source: ImperialRaider,       ability: Some(LockAtRange1AtCombatStart)),
+        (id: 806, class: 8, name: "Storm Squadron Pilot", xws: "stormsquadronpilot",     unique: false, skill: 4, cost: 23, talent_slot: true,  source: TieAdvancedExpansion, ability: None),
+        (id: 807, class: 8, name: "Lieutenant Colzet", xws: "lieutenantcolzet", unique: true, skill: 3, cost: 23, talent_slot: false, source: ImperialRaider,       ability: Some(SpendLockToFlipFacedownCrit)),
+        (id: 808, class: 8, name: "Tempest Squadron Pilot", xws: "tempestsquadronpilot", unique: false, skill: 2, cost: 21, talent_slot: false, source: TieAdvancedExpansion, ability: None),
+
+        // ---------------- TIE Interceptor (class 9) ----------------
+        (id: 901, class: 9, name: "Soontir Fel", xws: "soontirfel",           unique: true,  skill: 9, cost: 27, talent_slot: true,  source: TieInterceptorExpansion, ability: Some(FocusOnStress)),
+        (id: 902, class: 9, name: "Carnor Jax", xws: "carnorjax",             unique: true,  skill: 8, cost: 26, talent_slot: true,  source: ImperialAces,            ability: Some(DenyFocusEvadeAtRange1)),
+        (id: 903, class: 9, name: "Turr Phennir", xws: "turrphennir",         unique: true,  skill: 7, cost: 25, talent_slot: true,  source: TieInterceptorExpansion, ability: Some(FreeRepositionAfterAttack)),
+        (id: 904, class: 9, name: "Tetran Cowall", xws: "tetrancowall",       unique: true,  skill: 7, cost: 24, talent_slot: true,  source: ImperialAces,            ability: Some(KTurnSpeed1Or3Or5)),
+        (id: 905, class: 9, name: "Kir Kanos", xws: "kirkanos",               unique: true,  skill: 6, cost: 24, talent_slot: true,  source: ImperialAces,            ability: Some(SpendEvadeForHitAtRange2To3)),
+        (id: 906, class: 9, name: "Royal Guard Pilot", xws: "royalguardpilot", unique: false, skill: 6, cost: 22, talent_slot: true,  source: ImperialAces,            ability: None),
+        (id: 907, class: 9, name: "\"Fel's Wrath\"", xws: "felswrath",         unique: true,  skill: 5, cost: 23, talent_slot: true,  source: TieInterceptorExpansion, ability: Some(SurviveUntilEndOfCombat)),
+        (id: 908, class: 9, name: "Lieutenant Lorrir", xws: "lieutenantlorrir", unique: true, skill: 5, cost: 23, talent_slot: true,  source: ImperialAces,            ability: Some(BarrelRollWithBank1ForStress)),
+        (id: 909, class: 9, name: "Saber Squadron Pilot", xws: "sabersquadronpilot",     unique: false, skill: 4, cost: 21, talent_slot: true,  source: TieInterceptorExpansion, ability: None),
+        (id: 910, class: 9, name: "Avenger Squadron Pilot", xws: "avengersquadronpilot", unique: false, skill: 3, cost: 20, talent_slot: false, source: TieInterceptorExpansion, ability: None),
+        (id: 911, class: 9, name: "Alpha Squadron Pilot", xws: "alphasquadronpilot",     unique: false, skill: 1, cost: 18, talent_slot: false, source: TieInterceptorExpansion, ability: None),
     ],
 )

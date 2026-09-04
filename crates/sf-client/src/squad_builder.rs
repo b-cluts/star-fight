@@ -405,9 +405,18 @@ fn input(
     }
     // Add a ship of the n-th class of this faction.
     let classes = classes_of(&game, b.faction);
-    for (n, key) in
-        [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].into_iter().enumerate()
-    {
+    const CLASS_KEYS: [KeyCode; 9] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    for (n, key) in CLASS_KEYS.into_iter().enumerate() {
         if keys.just_pressed(key)
             && let Some(class) = classes.get(n)
             && let Some(basic) = game.content.pilots.basic_for(class.id)
@@ -596,7 +605,7 @@ fn show(
         ));
     }
     if b.rows.is_empty() {
-        lines.push("(no ships — press 1-3 to add)".into());
+        lines.push("(no ships — press a number key to add)".into());
     }
     lines.push(String::new());
     match &verdict {

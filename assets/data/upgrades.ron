@@ -1,6 +1,7 @@
 // Upgrade cards (First Edition), verified against the card scans in the
 // gitignored reference/ clone (2026-09-02; turrets 2026-09-04). Only cards
-// usable by our ships (TIE/ln, T-70, TIE/fo, Y-Wing, A-Wing, YT-1300) are listed, plus a few restricted ones kept for
+// usable by our ships (TIE/ln, TIE/fo, TIE Bomber, TIE Advanced, TIE
+// Interceptor, T-70, Y-Wing, A-Wing, YT-1300) are listed, plus a few restricted ones kept for
 // completeness of their slot. `cost` is squad points. `text` is the card
 // wording; `effect` is the rules tag (none enforced yet, see upgrade.rs).
 // Modification and Title slots are implicit on every ship.
@@ -242,6 +243,42 @@
          restrictions: [ShipOnly("yt1300")],
          effect: Some(TitleRotate180AfterBank3ForStress),
          text: "YT-1300 only. Title. After you execute a 3-speed bank maneuver, if you are not touching another ship and you are not stressed, you may receive 1 stress token to rotate your ship 180°."),
+
+        (id: 95, xws: "tiex1", name: "TIE/x1", slot: Title, cost: 0,
+         restrictions: [ShipOnly("tieadvanced")],
+         effect: Some(BarGainsSystemCheaper),
+         text: "TIE Advanced only. Title. Your upgrade bar gains the System upgrade icon. If you equip a System upgrade, its squad point cost is reduced by 4 (to a minimum of 0)."),
+        (id: 96, xws: "royalguardtie", name: "Royal Guard TIE", slot: Title, cost: 0,
+         restrictions: [ShipOnly("tieinterceptor"), SkillAbove(4)],
+         effect: Some(TwoDifferentModifications),
+         text: "TIE Interceptor only. Title. You may equip up to 2 different Modification upgrades (instead of 1). You cannot equip this card if your pilot skill value is \"4\" or lower."),
+
+        // ---------------- Bombs ----------------
+        // Bomb tokens and their detonation effects are not modelled yet;
+        // the cards are here so the TIE Bomber's slot can be filled.
+        (id: 180, xws: "protonbombs", name: "Proton Bombs", slot: Bomb, cost: 5,
+         effect: Some(BombOnRevealProton),
+         text: "When you reveal your maneuver dial, you may discard this card to drop 1 proton bomb token. This token detonates at the end of the Activation phase."),
+        (id: 181, xws: "seismiccharges", name: "Seismic Charges", slot: Bomb, cost: 2,
+         effect: Some(BombOnRevealSeismic),
+         text: "When you reveal your maneuver dial, you may discard this card to drop 1 seismic charge token. This token detonates at the end of the Activation phase."),
+        (id: 182, xws: "proximitymines", name: "Proximity Mines", slot: Bomb, cost: 3,
+         effect: Some(BombActionProximityMines),
+         text: "Action: Discard this card to drop 1 proximity mine token. When a ship executes a maneuver, if its base or maneuver template overlaps this token, this token detonates."),
+        (id: 183, xws: "ionbombs", name: "Ion Bombs", slot: Bomb, cost: 2,
+         effect: Some(BombOnRevealIon),
+         text: "When you reveal your maneuver dial, you may discard this card to drop 1 ion bomb token. This token detonates at the end of the Activation phase."),
+        (id: 184, xws: "clustermines", name: "Cluster Mines", slot: Bomb, cost: 4,
+         effect: Some(BombActionClusterMines),
+         text: "Action: Discard this card to drop 1 cluster mine token set. When a ship's base or maneuver template overlaps a cluster mine token, that token detonates."),
+        (id: 185, xws: "connernet", name: "Conner Net", slot: Bomb, cost: 4,
+         effect: Some(BombActionConnerNet),
+         text: "Action: Discard this card to drop 1 Conner net token. When a ship's base or maneuver template overlaps this token, this token detonates."),
+        (id: 186, xws: "thermaldetonators", name: "Thermal Detonators", slot: Bomb, cost: 3,
+         effect: Some(BombOnRevealThermal),
+         text: "When you reveal your maneuver dial, you may discard this card to drop 1 thermal detonator token. This token detonates at the end of the Activation phase."),
+        // Bomblet Generator (unique, takes two Bomb slots, not discarded)
+        // is left out until double-slot cards are supported.
 
         // ---------------- Crew ----------------
         // A starter set for the YT-1300 (Rebel and generic crew); the

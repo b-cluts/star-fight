@@ -31,6 +31,15 @@ pub enum Source {
     RebelAces,
     /// Millennium Falcon expansion (YT-1300, wave 2).
     YT1300Expansion,
+    TieBomberExpansion,
+    /// Imperial Veterans (TIE Bomber and TIE Defender repaints).
+    ImperialVeterans,
+    TieAdvancedExpansion,
+    /// Imperial Raider (Epic; carries the second TIE Advanced pilot set).
+    ImperialRaider,
+    TieInterceptorExpansion,
+    /// Imperial Aces (TIE Interceptor repaints).
+    ImperialAces,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -154,6 +163,64 @@ pub enum PilotAbility {
     /// Rey: when attacking or defending, if the enemy ship is inside
     /// your firing arc, you may reroll up to 2 of your blank results.
     RerollTwoBlanksIfEnemyInArc,
+    // ---- TIE Bomber ----
+    /// Major Rhymer: when attacking with a secondary weapon, you may
+    /// increase or decrease the weapon range by 1 to a limit of Range 1-3.
+    SecondaryRangePlusMinus1,
+    /// Tomax Bren: once per round, after you discard an Elite Upgrade
+    /// card, flip that card faceup.
+    FlipTalentFaceupAfterDiscard,
+    /// Captain Jonus: when another friendly ship at Range 1 attacks with
+    /// a secondary weapon, it may reroll up to 2 attack dice.
+    FriendlySecondaryReroll2AtRange1,
+    /// "Deathfire": when you reveal your maneuver dial or after you
+    /// perform an action, you may perform a Bomb Upgrade card action as
+    /// a free action.
+    FreeBombActionOnRevealOrAction,
+    // ---- TIE Advanced ----
+    /// Darth Vader: during your "Perform Action" step, you may perform 2
+    /// actions.
+    TwoActions,
+    /// Juno Eclipse: when you reveal your maneuver, you may increase or
+    /// decrease its speed by 1 (to a minimum of 1).
+    AdjustManeuverSpeedBy1,
+    /// Maarek Stele: when your attack deals a faceup Damage card to the
+    /// defender, instead draw 3 Damage cards, choose 1 to deal, and
+    /// discard the others.
+    ChooseCritFromThree,
+    /// Zertik Strom: enemy ships at Range 1 cannot add their range
+    /// combat bonus when attacking.
+    DenyEnemyRange1Bonus,
+    /// Commander Alozen: at the start of the Combat phase, you may
+    /// acquire a target lock on an enemy ship at Range 1.
+    LockAtRange1AtCombatStart,
+    /// Lieutenant Colzet: at the start of the End phase, you may spend a
+    /// target lock you have on an enemy ship to flip 1 random facedown
+    /// Damage card assigned to it faceup.
+    SpendLockToFlipFacedownCrit,
+    // ---- TIE Interceptor ----
+    /// Soontir Fel: when you receive a stress token, you may assign 1
+    /// focus token to your ship.
+    FocusOnStress,
+    /// Carnor Jax: enemy ships at Range 1 cannot perform focus or evade
+    /// actions and cannot spend focus or evade tokens.
+    DenyFocusEvadeAtRange1,
+    /// Turr Phennir: after you perform an attack, you may perform a free
+    /// boost or barrel roll action.
+    FreeRepositionAfterAttack,
+    /// Tetran Cowall: when you reveal a Koiogran turn, you may treat its
+    /// speed as "1", "3", or "5".
+    KTurnSpeed1Or3Or5,
+    /// Kir Kanos: when attacking at Range 2-3, you may spend 1 evade
+    /// token to add 1 hit result to your roll.
+    SpendEvadeForHitAtRange2To3,
+    /// "Fel's Wrath": when the number of Damage cards assigned to you
+    /// equals or exceeds your hull value, you are not destroyed until
+    /// the end of the Combat phase.
+    SurviveUntilEndOfCombat,
+    /// Lieutenant Lorrir: when performing a barrel roll, you may receive
+    /// 1 stress token to use the bank 1 templates instead of straight 1.
+    BarrelRollWithBank1ForStress,
 }
 
 impl PilotAbility {

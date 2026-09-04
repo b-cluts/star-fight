@@ -100,10 +100,10 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
-- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 119
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 128
   First Edition cards VERIFIED from the card scans: torpedoes (7),
-  turrets (5), missiles (8), crew (21) and 3 more titles (added
-  2026-09-04/05, not enforced), tech
+  turrets (5), missiles (8), crew (21), bombs (7) and 5 more titles
+  (added 2026-09-04/05, not enforced), tech
   (7), astromechs (17), modifications (14 usable by small ships; 15
   large/other-ship mods deliberately not encoded), title Black One, and
   37 elite pilot talents (Scum-only ones and Adaptability's second face
@@ -407,9 +407,18 @@ pins.txt + last-used menu values), starfield.rs.
   21-card Rebel/generic starter set ids 150-170; titles Millennium
   Falcon 93 (BarGainsEvade, live) / 94; sprite assets/ships/yt-1300.png
   from the user's falcon.png; sandbox fields it instead of the X-Wing).
-  Rebel squad-builder keys 1-4 are now all used (X, Y, A, YT) — a fifth
-  Rebel class needs keys 5-9 in squad_builder.rs. Not encoded: Chardaan
-  Refit (cost −2, costs are u8). Turret/missile attacks and the six new pilot abilities
+  Imperial side (2026-09-05): TIE Bomber (class 7, dial 7, pilots
+  701-707, Bomb slot + 7 bomb cards ids 180-186, data only), TIE
+  Advanced x1 (class 8, dial 8, pilots 801-808, title TIE/x1 95), TIE
+  Interceptor (class 9, dial 9, pilots 901-911, title Royal Guard TIE
+  96); sprites from the user's three WebP renders (were nose-down,
+  turned 180°); Sources TieBomberExpansion / ImperialVeterans /
+  TieAdvancedExpansion / ImperialRaider / TieInterceptorExpansion /
+  ImperialAces; sandbox fields an Interceptor beside the TIE/ln. Squad
+  builder class keys are now 1-9 (legend lists them). Not encoded:
+  Chardaan Refit (cost −2, costs are u8), Bomblet Generator (two Bomb
+  slots), TIE/v1 (TIE Adv. Prototype, not our ship). Still wanted on
+  the Imperial side: a large ship (Lambda-class Shuttle or Firespray-31). Turret/missile attacks and the six new pilot abilities
   are data only so far (weapons need the weapon-choice step, roadmap c;
   note in upgrades.ron which cards do NOT spend the lock/focus). Both
   sprites: Y-Wing confirmed good in the sandbox 2026-09-05; A-Wing still to be seen (Y-Wing is fielded

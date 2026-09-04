@@ -63,7 +63,7 @@ fn enter_sandbox(
     *mode = Mode::Placement;
     let fleet = [
         (0, Seat::South, Pose::new(8.0, 2.0, FRAC_PI_2)),
-        (0, Seat::South, Pose::new(12.0, 2.0, FRAC_PI_2)),
+        (8, Seat::South, Pose::new(12.0, 2.0, FRAC_PI_2)), // TIE Interceptor (class index 8)
         (5, Seat::North, Pose::new(8.0, 18.0, -FRAC_PI_2)), // YT-1300 (class index 5)
         (3, Seat::North, Pose::new(12.0, 18.0, -FRAC_PI_2)), // Y-Wing (class index 3)
     ];

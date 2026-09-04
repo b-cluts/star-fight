@@ -210,6 +210,16 @@ pub enum UpgradeEffect {
     TitleArcOnlyThenTurretAttack,
     BarGainsEvade,
     TitleRotate180AfterBank3ForStress,
+    BarGainsSystemCheaper,
+    TwoDifferentModifications,
+    // bombs (dropped when the dial is revealed, or as an action)
+    BombOnRevealProton,
+    BombOnRevealSeismic,
+    BombActionProximityMines,
+    BombOnRevealIon,
+    BombActionClusterMines,
+    BombActionConnerNet,
+    BombOnRevealThermal,
     // crew
     CrewDiscardDamageRecoverShield,
     CrewSecondAttackFocusToHit,
