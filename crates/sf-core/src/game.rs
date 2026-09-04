@@ -1399,13 +1399,44 @@ impl GameState {
         let mut attack_faces: Vec<AttackFace> =
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
 
+        // Denials. Omega Leader: an enemy he has locked cannot modify any
+        // dice against him, and cannot modify any when he attacks it.
+        // Dark Curse: attackers cannot spend focus tokens or reroll.
+        let omega = PilotAbility::LockedEnemiesCannotModifyDice;
+        let attacker_may_modify = !(self.ability(content, &self.ships[d_idx]) == Some(omega)
+            && self.ships[d_idx].lock == Some(attacker));
+        let defender_may_modify = !(self.ability(content, &self.ships[a_idx]) == Some(omega)
+            && self.ships[a_idx].lock == Some(defender));
+        let dark_curse = self.ability(content, &self.ships[d_idx])
+            == Some(PilotAbility::DefenderDeniesFocusAndRerolls);
+        let attacker_may_spend = attacker_may_modify && !dark_curse;
+        if !attacker_may_modify {
+            events.push(format!(
+                "{}: ability — locked attacker cannot modify dice",
+                self.label(content, d_idx)
+            ));
+        } else if dark_curse
+            && (self.ships[a_idx].focus > 0 || self.ships[a_idx].lock == Some(defender))
+        {
+            events.push(format!(
+                "{}: ability — attacker cannot spend focus or reroll",
+                self.label(content, d_idx)
+            ));
+        }
+        if !defender_may_modify {
+            events.push(format!(
+                "{}: ability — locked defender cannot modify dice",
+                self.label(content, a_idx)
+            ));
+        }
+
         // Modify attack: spend the lock to reroll blanks (and eyes too if
         // no focus token is held), then free ability conversions, then
         // focus converts the remaining eyes to hits.
-        let all_crits =
-            self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
+        let all_crits = attacker_may_spend
+            && self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
         let mut lock_spent = all_crits;
-        if !all_crits && self.ships[a_idx].lock == Some(defender) {
+        if attacker_may_spend && !all_crits && self.ships[a_idx].lock == Some(defender) {
             let reroll_eyes = self.ships[a_idx].focus == 0;
             let mut any = false;
             for f in attack_faces.iter_mut() {
@@ -1419,9 +1450,14 @@ impl GameState {
                 lock_spent = true;
             }
         }
-        self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
+        if attacker_may_modify {
+            self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
+        }
         let mut attacker_focus_spent = all_crits;
-        if self.ships[a_idx].focus > 0 && attack_faces.contains(&AttackFace::Focus) {
+        if attacker_may_spend
+            && self.ships[a_idx].focus > 0
+            && attack_faces.contains(&AttackFace::Focus)
+        {
             self.ships[a_idx].focus -= 1;
             attacker_focus_spent = true;
             for f in attack_faces.iter_mut() {
@@ -1449,11 +1485,14 @@ impl GameState {
         // Modify defense: focus converts eyes when it helps, evade token
         // adds one evade result if damage would still land.
         let incoming = raw_hits + raw_crits;
-        self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
+        if defender_may_modify {
+            self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
+        }
         let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let mut defender_focus_spent = false;
         let eyes = defense_faces.iter().filter(|f| **f == DefenseFace::Focus).count() as u8;
-        if !defender_in_bullseye && self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
+        let defender_may_spend = defender_may_modify && !defender_in_bullseye;
+        if defender_may_spend && self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
             self.ships[d_idx].focus -= 1;
             defender_focus_spent = true;
             for f in defense_faces.iter_mut() {
@@ -1464,7 +1503,7 @@ impl GameState {
             evades += eyes;
         }
         let mut evade_spent = false;
-        if !defender_in_bullseye && self.ships[d_idx].evade > 0 && evades < incoming {
+        if defender_may_spend && self.ships[d_idx].evade > 0 && evades < incoming {
             self.ships[d_idx].evade -= 1;
             evade_spent = true;
             evades += 1;
@@ -2299,6 +2338,60 @@ mod tests {
         assert!(shot.lock_spent && shot.attacker_focus_spent);
         assert_eq!((gs.ships[0].lock, gs.ships[0].focus), (None, 0));
         assert!(rec.events.iter().any(|e| e.contains("all dice critical")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn dark_curse_denies_attackers_focus_spending_and_rerolls() {
+        let c = content();
+        // Dark Curse (PS6) fires first, all blanks. The X-Wing holds a
+        // focus token and rolls [Eye, Eye, Hit]: the eyes stay eyes.
+        let mut gs = duel(&c, "darkcurse", "bluesquadronnovice");
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let mut rolls = scripted(vec![7, 7, 7, 7, 7, 4, 4, 0, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = &rec.attacks[1];
+        assert_eq!(shot.attacker, ShipId(1));
+        assert_eq!((shot.hits, shot.attacker_focus_spent), (1, false));
+        assert!(rec.events.iter().any(|e| e.contains("cannot spend focus")), "{:?}", rec.events);
+
+        // A target lock on him cannot be spent to reroll blanks either
+        // (the lock is handed out by hand: the X-Wing moves first and is
+        // out of lock range when its action would resolve).
+        let mut gs = duel(&c, "darkcurse", "bluesquadronnovice");
+        gs.ships[1].lock = Some(ShipId(0));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = &rec.attacks[1];
+        assert_eq!((shot.hits, shot.lock_spent), (0, false));
+        assert_eq!(gs.ships[1].lock, Some(ShipId(0)));
+    }
+
+    #[test]
+    fn omega_leader_freezes_dice_of_the_ship_he_has_locked() {
+        let c = content();
+        let mut gs = duel(&c, "omegaleader", "bluesquadronnovice");
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::TargetLock(ShipId(1))).unwrap();
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        // Omega Leader (PS8) rolls [Hit, Hit] (no blanks, so his lock is
+        // kept). The X-Wing defends [Eye, Eye, Blank] with a focus token
+        // it may not spend: both hits land. Its own attack [Eye, Eye,
+        // Eye] cannot be modified either: nothing lands.
+        let mut rolls = scripted(vec![0, 0, 4, 4, 7, 4, 4, 4, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let (his, theirs) = (&rec.attacks[0], &rec.attacks[1]);
+        assert_eq!(his.attacker, ShipId(0));
+        assert_eq!((his.hits, his.defender_focus_spent, his.lock_spent), (2, false, false));
+        assert_eq!(gs.ships[1].shields, 1);
+        assert_eq!((theirs.hits, theirs.attacker_focus_spent), (0, false));
+        assert_eq!(
+            rec.events.iter().filter(|e| e.contains("cannot modify dice")).count(),
+            2,
+            "{:?}",
+            rec.events
+        );
     }
 
     #[test]

@@ -118,6 +118,8 @@ impl PilotAbility {
                 | PilotAbility::StressForExtraAttackDie
                 | PilotAbility::HitToCritAtRange1
                 | PilotAbility::SpendLockAndFocusForAllCrits
+                | PilotAbility::DefenderDeniesFocusAndRerolls
+                | PilotAbility::LockedEnemiesCannotModifyDice
         )
     }
 }
