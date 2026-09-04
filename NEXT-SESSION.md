@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (95 tests),
+`cargo build` clean, `cargo test --workspace` green (96 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -159,15 +159,11 @@ and Server `ws://127.0.0.1:7777`.
    and its own commit**, flipping `implemented()` to true per variant
    (pilot.rs PilotAbility / upgrade.rs UpgradeEffect) so the data test
    can later assert what is live. Suggested order:
-   a. Game-start stat mods in GameState::from_squads: HullPlus1,
-      ShieldPlus1, AgilityPlus1DiscardWhenHit (Stealth Device — also
-      discard on hit in perform_attack_on), SkillPlus2 (Veteran
-      Instincts), SkillPlus1OrMinus1 (Adaptability: builder must choose
-      the face — add a `variant`/side to SquadShip or two data entries),
-      bar-gaining mods (BarGainsTargetLock/Boost/BarrelRoll/Talent →
-      effective action bar; plan_action must consult it, not the class).
-      Pilot skill lookups already go through one fn (game.rs pilot_skill)
-      — add the modifiers there.
+   a. ~~Game-start stat mods~~ DONE (session 5): max_hull/max_shields/
+      agility/action_bar/effective_skill on GameState consult the
+      equipped upgrades; Stealth Device discards on hit; Adaptability is
+      two entries (adaptabilityincrease/decrease). Hook points for the
+      rest: `effects()` / `count_effect()` in game.rs.
    b. Dice-modifying pilot abilities in the attack pipeline (game.rs
       perform_attack_on + combat.rs/dice.rs token policy): Poe
       FocusToResult, Mauler/Backstabber/Scourge/Zeta Leader extra dice,
@@ -210,6 +206,20 @@ Move/Attack/Prompt/Waiting/TurnEnd; never mutates game state locally;
 remembers the pin on NetEvent::Secured), sandbox.rs, net.rs (background
 thread + channels; pinned TLS via tokio-rustls), pins.rs (config dir:
 pins.txt + last-used menu values), starfield.rs.
+
+## Repo / CI (added session 5)
+
+- GitHub: https://github.com/b-cluts/star-fight (public; remote
+  `origin`). `.github/workflows/ci.yml` runs fmt/clippy/tests on every
+  push to main and PR (Linux, Bevy apt deps listed there).
+  `.github/workflows/release.yml` builds sf-client + sf-server in release
+  mode on ubuntu-latest and windows-latest, zips them with assets/, and
+  uploads artifacts; on a `v*` tag it also creates a GitHub Release with
+  the zips (softprops/action-gh-release). Manual run: Actions → Release
+  builds → Run workflow. First runs may need fixes to the apt package
+  list or Windows packaging — check the Actions tab.
+- README.md: player quick start + dev commands. No LICENSE file yet
+  (user's call).
 
 ## Housekeeping / workflow
 
