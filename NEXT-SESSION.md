@@ -261,6 +261,40 @@ pins.txt + last-used menu values), starfield.rs.
 
 ## TODO backlog (user requests)
 
+- **Scenarios** (requested 2026-09-04): when creating a game the host
+  picks "generic game" or one of a set of pre-determined scenarios; the
+  user will write scenarios to feed in. Plan: `assets/data/scenarios.ron`
+  with `Scenario { id, name, description, rules: SquadRules (max_points,
+  max_ships, sources), allowed_classes: Option<Vec<ShipClassId>>,
+  faction_per_seat: Option<[Faction; 2]>, board: Board, obstacles:
+  Vec<ObstaclePlacement>, later objectives/special rules from p.21-24
+  (missions) }`. Existing `SquadRules` is the seed; extend it with
+  allowed classes and validate in validate_squad. Protocol: CreateGame
+  carries `scenario: Option<ScenarioId>`; the server keeps it in the
+  session, validates BOTH squads against it, and GameStart carries the
+  Scenario so the client's builder/menu can validate live and show the
+  limits. Menu: a scenario picker (< >) next to the squad picker; the
+  builder shows "valid for scenario X" and the joining player sees the
+  scenario before choosing a squad.
+- **Obstacles** (requested 2026-09-04): asteroids, moons, wrecked
+  stations etc. on the map with graphics (user is sourcing images).
+  Rulebook p.20 (already read): obstacles placed during setup before
+  ships, alternating, not within Range 1-2 of any edge; a ship whose
+  template or base overlaps an obstacle skips its action and rolls 1
+  attack die (hit = damage, crit = critical); a ship overlapping an
+  obstacle cannot attack but can be attacked; an attack whose range
+  line crosses an obstacle is obstructed → +1 defense die (Trick Shot
+  hooks in here). Plan: `assets/data/obstacles.ron` with `Obstacle { id,
+  name, kind: Asteroid|Moon|Debris|Station, shape: Circle(r) |
+  Polygon(Vec<Vec2>) in board units, sprite, sprite_px }`; GameState
+  gains `obstacles: Vec<PlacedObstacle { id, pose }>`; rules.rs gets
+  overlap tests for footprint-vs-obstacle and path-vs-obstacle and a
+  segment-vs-obstacle test for obstruction; movement resolution and
+  perform_attack_on apply the three rules; an obstacle-placement step
+  before ship placement (Phase::Placement with a sub-step, or a new
+  Phase::Obstacles) with drag-and-drop in the client; scenarios can
+  pre-place them. Graphics: assets/obstacles/*.png (ours to include).
+
 - ~~Ship callsigns + hover tooltip~~ done 2026-09-02 (see above). When
   the squad builder exists, naming moves from the Placement N-key into
   the builder (callsign becomes a field of the squad entry).
