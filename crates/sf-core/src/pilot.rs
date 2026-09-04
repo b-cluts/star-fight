@@ -29,6 +29,8 @@ pub enum Source {
     AWingExpansion,
     /// Rebel Aces (A-Wing and B-Wing repaints, wave 4½).
     RebelAces,
+    /// Millennium Falcon expansion (YT-1300, wave 2).
+    YT1300Expansion,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -130,6 +132,28 @@ pub enum PilotAbility {
     /// Gemmer Sojan: while you are at Range 1 of at least 1 enemy ship,
     /// increase your agility value by 1.
     AgilityPlus1IfEnemyAtRange1,
+    // ---- YT-1300 ----
+    /// Han Solo: when attacking, you may reroll all of your dice; if you
+    /// do, you must reroll as many of your dice as possible.
+    RerollAllDice,
+    /// Han Solo (Heroes of the Resistance): when placed during setup,
+    /// you can be placed anywhere in the play area beyond Range 3 of
+    /// enemy ships.
+    SetupAnywhereBeyondRange3,
+    /// Lando Calrissian: after you execute a green maneuver, choose 1
+    /// other friendly ship at Range 1; it may perform 1 free action
+    /// shown in its action bar.
+    FriendlyFreeActionAfterGreen,
+    /// Chewbacca: when you are dealt a faceup Damage card, immediately
+    /// flip it facedown (without resolving its ability).
+    FlipCritFacedownImmediately,
+    /// Chewbacca (Heroes of the Resistance): after another friendly ship
+    /// at Range 1-3 is destroyed (but has not fled the battlefield), you
+    /// may perform an attack.
+    AttackWhenFriendlyDestroyed,
+    /// Rey: when attacking or defending, if the enemy ship is inside
+    /// your firing arc, you may reroll up to 2 of your blank results.
+    RerollTwoBlanksIfEnemyInArc,
 }
 
 impl PilotAbility {
@@ -168,6 +192,10 @@ pub struct Pilot {
     pub skill: u8,
     /// Squad-point cost of ship + pilot (upgrades add their own).
     pub cost: u16,
+    /// Printed stats when the pilot card differs from the chassis
+    /// (Outer Rim Smuggler: 2/1/6/4 on a 3/1/8/5 ship).
+    #[serde(default)]
+    pub stats: Option<crate::ship::StatBlock>,
     /// Has an Elite Pilot Talent slot beyond the chassis upgrade bar.
     #[serde(default)]
     pub talent_slot: bool,

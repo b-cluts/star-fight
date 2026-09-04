@@ -208,6 +208,30 @@ pub enum UpgradeEffect {
     MissileFriendsLockOnHit,
     // titles
     TitleArcOnlyThenTurretAttack,
+    BarGainsEvade,
+    TitleRotate180AfterBank3ForStress,
+    // crew
+    CrewDiscardDamageRecoverShield,
+    CrewSecondAttackFocusToHit,
+    CrewLockAllFocusToHit,
+    CrewRedAsWhiteForAll,
+    CrewGuessEvades,
+    CrewRecoverShieldEndPhase,
+    CrewStraightsAreGreen,
+    CrewSecondAttackOnMiss,
+    CrewHitToCritAtRange3,
+    CrewRotateDialSameBearing,
+    CrewTwoLocks,
+    CrewExtraFocusOnFocusAction,
+    CrewStressTargetAtRange2InArc,
+    CrewPeekEnemyDial,
+    CrewFocusAfterStressRemoved,
+    CrewEvadeInsteadOfFocusForFriendly,
+    CrewRollDefenseForTokensAction,
+    CrewStoreFocusTokens,
+    CrewAddBlankIfEnemyInArc,
+    CrewRerollDefenseDie,
+    CrewSaboteurAction,
     // setup
     SetupSkillOverride,
     CancelFocusForEvade,
@@ -232,6 +256,7 @@ impl UpgradeEffect {
                 | BarGainsBoost
                 | BarGainsBarrelRoll
                 | BarGainsTalent
+                | BarGainsEvade
         )
     }
 }

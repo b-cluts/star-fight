@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (108 tests),
+`cargo build` clean, `cargo test --workspace` green (109 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -100,9 +100,10 @@ What exists end-to-end:
   reference/xwing-card-images/images) and shows the pilot card when
   picking pilots; ship art stays ours.
 
-- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 96
+- UPGRADES AS DATA (session 4, done): assets/data/upgrades.ron — 119
   First Edition cards VERIFIED from the card scans: torpedoes (7),
-  turrets (5) and missiles (8) (added 2026-09-04, not enforced), tech
+  turrets (5), missiles (8), crew (21) and 3 more titles (added
+  2026-09-04/05, not enforced), tech
   (7), astromechs (17), modifications (14 usable by small ships; 15
   large/other-ship mods deliberately not encoded), title Black One, and
   37 elite pilot talents (Scum-only ones and Adaptability's second face
@@ -398,8 +399,17 @@ pins.txt + last-used menu values), starfield.rs.
   Sources AWingExpansion + RebelAces, missile slot + 8 missile cards
   ids 140-147, titles A-Wing Test Pilot 91 (BarGainsTalent, live) and
   BTL-A4 Y-Wing 92; sprite assets/ships/a-wing.png from the user's
-  license-free WebP render). Not encoded: Chardaan Refit (cost −2,
-  costs are u8). Turret/missile attacks and the six new pilot abilities
+  license-free WebP render). And YT-1300 (class 6, LARGE base 2×2,
+  dial set 6, `turret_primary: true` → attack_candidates skips the arc
+  test; pilots 601-608 incl. Outer Rim Smuggler whose card stats
+  2/1/6/4 override the chassis via `Pilot.stats: Option<StatBlock>` /
+  `GameState::printed()`; Source::YT1300Expansion; Crew slot with a
+  21-card Rebel/generic starter set ids 150-170; titles Millennium
+  Falcon 93 (BarGainsEvade, live) / 94; sprite assets/ships/yt-1300.png
+  from the user's falcon.png; sandbox fields it instead of the X-Wing).
+  Rebel squad-builder keys 1-4 are now all used (X, Y, A, YT) — a fifth
+  Rebel class needs keys 5-9 in squad_builder.rs. Not encoded: Chardaan
+  Refit (cost −2, costs are u8). Turret/missile attacks and the six new pilot abilities
   are data only so far (weapons need the weapon-choice step, roadmap c;
   note in upgrades.ron which cards do NOT spend the lock/focus). Both
   sprites: Y-Wing confirmed good in the sandbox 2026-09-05; A-Wing still to be seen (Y-Wing is fielded

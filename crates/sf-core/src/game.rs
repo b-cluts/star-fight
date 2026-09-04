@@ -18,7 +18,7 @@ use crate::geometry::{Footprint, Pose, Vec2};
 use crate::maneuver::{self, Difficulty, Maneuver};
 use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
-use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
+use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
 use crate::squad::Squad;
 use crate::upgrade::{UpgradeEffect, UpgradeId};
 
@@ -418,15 +418,24 @@ impl GameState {
         (base + up).clamp(0, 12) as u8
     }
 
+    /// Printed stats: the pilot card's own block when it has one, else
+    /// the chassis values.
+    pub fn printed(&self, content: &Content, s: &ShipState) -> StatBlock {
+        content
+            .pilots
+            .pilot(s.pilot)
+            .and_then(|p| p.stats)
+            .unwrap_or_else(|| self.class_of(content, s).stats())
+    }
+
     /// Hull value with Hull Upgrade.
     pub fn max_hull(&self, content: &Content, s: &ShipState) -> u8 {
-        self.class_of(content, s).hull + self.count_effect(content, s, UpgradeEffect::HullPlus1)
+        self.printed(content, s).hull + self.count_effect(content, s, UpgradeEffect::HullPlus1)
     }
 
     /// Shield value with Shield Upgrade.
     pub fn max_shields(&self, content: &Content, s: &ShipState) -> u8 {
-        self.class_of(content, s).shields
-            + self.count_effect(content, s, UpgradeEffect::ShieldPlus1)
+        self.printed(content, s).shields + self.count_effect(content, s, UpgradeEffect::ShieldPlus1)
     }
 
     /// Agility with Stealth Device (+1 while equipped) and Structural
@@ -434,7 +443,7 @@ impl GameState {
     pub fn agility(&self, content: &Content, s: &ShipState) -> u8 {
         let structural =
             s.crits.iter().filter(|x| matches!(x, CritEffect::StructuralDamage)).count() as u8;
-        (self.class_of(content, s).agility
+        (self.printed(content, s).agility
             + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit))
         .saturating_sub(structural)
     }
@@ -448,6 +457,7 @@ impl GameState {
                 UpgradeEffect::BarGainsTargetLock => Some(ActionKind::TargetLock),
                 UpgradeEffect::BarGainsBoost => Some(ActionKind::Boost),
                 UpgradeEffect::BarGainsBarrelRoll => Some(ActionKind::BarrelRoll),
+                UpgradeEffect::BarGainsEvade => Some(ActionKind::Evade),
                 _ => None,
             };
             if let Some(a) = granted
@@ -1449,7 +1459,10 @@ impl GameState {
             let Some(pose) = s.pose else { continue };
             let fp = self.class_of(content, s).footprint;
             let corners = rules::footprint_corners(pose, fp);
-            if !Self::base_in_front_arc(a_pose, a_fp, &corners) {
+            // A turret primary weapon (YT-1300) fires all around.
+            if !self.class_of(content, &self.ships[a_idx]).turret_primary
+                && !Self::base_in_front_arc(a_pose, a_fp, &corners)
+            {
                 continue;
             }
             let dist = combat::base_distance(&a_corners, &corners);
@@ -1479,7 +1492,7 @@ impl GameState {
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
-        let a_dice = self.class_of(content, &self.ships[a_idx]).attack_dice;
+        let a_dice = self.printed(content, &self.ships[a_idx]).attack;
 
         // Roll attack dice (+1 at range 1). Weapon Malfunction drops one
         // die per copy; a Blinded Pilot fires 0 dice once, then recovers.
@@ -2401,6 +2414,31 @@ mod tests {
         assert_eq!(gs.ships[1].shields, 2);
         assert!(rec.events.iter().any(|e| e.contains("rerolls 1 attack")), "{:?}", rec.events);
         assert!(rec.events.iter().any(|e| e.contains("rerolls 1 defense")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn yt1300_turret_primary_fires_at_ships_behind_it_and_pilot_stats_override() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("outerrimsmuggler", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        // The Outer Rim Smuggler's card prints 2/1/6/4 on a 3/1/8/5 hull.
+        assert_eq!((gs.ships[1].hull, gs.ships[1].shields), (6, 4));
+        assert_eq!(gs.printed(&c, &gs.ships[1]).attack, 2);
+        // Stage both heading north with the TIE 6 units behind the
+        // freighter (range 3, outside the freighter's forward arc).
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 12.0, north));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shots: Vec<(ShipId, u8, usize)> =
+            rec.attacks.iter().map(|a| (a.attacker, a.range, a.attack_faces.len())).collect();
+        assert!(shots.contains(&(ShipId(1), 3, 2)), "turret shot missing: {shots:?}");
+        assert!(shots.contains(&(ShipId(0), 3, 2)), "TIE shot missing: {shots:?}");
     }
 
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.

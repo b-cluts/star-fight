@@ -56,5 +56,18 @@
         (id: 504, class: 5, name: "Gemmer Sojan", xws: "gemmersojan",         unique: true,  skill: 5, cost: 22, talent_slot: false, source: RebelAces,      ability: Some(AgilityPlus1IfEnemyAtRange1)),
         (id: 505, class: 5, name: "Green Squadron Pilot", xws: "greensquadronpilot", unique: false, skill: 3, cost: 19, talent_slot: true,  source: AWingExpansion, ability: None),
         (id: 506, class: 5, name: "Prototype Pilot", xws: "prototypepilot",   unique: false, skill: 1, cost: 17, talent_slot: false, source: AWingExpansion, ability: None),
+
+        // ---------------- YT-1300 (class 6) ----------------
+        // xws "hansolo_2" / "chewbacca_2" follow the card-image file names
+        // for the Heroes of the Resistance versions.
+        (id: 601, class: 6, name: "Han Solo", xws: "hansolo",                 unique: true,  skill: 9, cost: 46, talent_slot: true,  source: YT1300Expansion,       ability: Some(RerollAllDice)),
+        (id: 602, class: 6, name: "Lando Calrissian", xws: "landocalrissian", unique: true,  skill: 7, cost: 44, talent_slot: true,  source: YT1300Expansion,       ability: Some(FriendlyFreeActionAfterGreen)),
+        (id: 603, class: 6, name: "Chewbacca", xws: "chewbacca",              unique: true,  skill: 5, cost: 42, talent_slot: true,  source: YT1300Expansion,       ability: Some(FlipCritFacedownImmediately)),
+        (id: 604, class: 6, name: "Outer Rim Smuggler", xws: "outerrimsmuggler", unique: false, skill: 1, cost: 27, talent_slot: false, source: YT1300Expansion,    ability: None,
+         stats: Some((attack: 2, agility: 1, hull: 6, shields: 4))),
+        (id: 605, class: 6, name: "Han Solo", xws: "hansolo_2",               unique: true,  skill: 9, cost: 46, talent_slot: true,  source: HeroesOfTheResistance, ability: Some(SetupAnywhereBeyondRange3)),
+        (id: 606, class: 6, name: "Rey", xws: "rey",                          unique: true,  skill: 8, cost: 45, talent_slot: true,  source: HeroesOfTheResistance, ability: Some(RerollTwoBlanksIfEnemyInArc)),
+        (id: 607, class: 6, name: "Chewbacca", xws: "chewbacca_2",            unique: true,  skill: 5, cost: 42, talent_slot: true,  source: HeroesOfTheResistance, ability: Some(AttackWhenFriendlyDestroyed)),
+        (id: 608, class: 6, name: "Resistance Sympathizer", xws: "resistancesympathizer", unique: false, skill: 3, cost: 38, talent_slot: false, source: HeroesOfTheResistance, ability: None),
     ],
 )

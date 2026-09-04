@@ -141,5 +141,32 @@
                 (steer: KTurn,    distance: 5, difficulty: Hard),
             ],
         ),
+        (
+            id: 6, // YT-1300 dial (First Edition card)
+            maneuvers: [
+                // Speed 1: banks and straight green, turns white.
+                (steer: TurnLeft,  distance: 1, difficulty: Normal),
+                (steer: BankLeft,  distance: 1, difficulty: Easy),
+                (steer: Straight,  distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Easy),
+                (steer: TurnRight, distance: 1, difficulty: Normal),
+                // Speed 2: banks and straight green, turns white.
+                (steer: TurnLeft,  distance: 2, difficulty: Normal),
+                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: Straight,  distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: TurnRight, distance: 2, difficulty: Normal),
+                // Speed 3: all white, red K-turn.
+                (steer: TurnLeft,  distance: 3, difficulty: Normal),
+                (steer: BankLeft,  distance: 3, difficulty: Normal),
+                (steer: Straight,  distance: 3, difficulty: Normal),
+                (steer: BankRight, distance: 3, difficulty: Normal),
+                (steer: TurnRight, distance: 3, difficulty: Normal),
+                (steer: KTurn,     distance: 3, difficulty: Hard),
+                // Speed 4: straight white, Koiogran red.
+                (steer: Straight, distance: 4, difficulty: Normal),
+                (steer: KTurn,    distance: 4, difficulty: Hard),
+            ],
+        ),
     ],
 )

@@ -55,6 +55,17 @@ impl SizeClass {
     }
 }
 
+/// Printed combat stats (attack dice, agility, hull, shields). Pilot cards
+/// may override the chassis values (e.g. the Outer Rim Smuggler's cheaper
+/// YT-1300).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatBlock {
+    pub attack: u8,
+    pub agility: u8,
+    pub hull: u8,
+    pub shields: u8,
+}
+
 /// A kind of ship, loaded from `assets/data/ships.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipClass {
@@ -81,6 +92,10 @@ pub struct ShipClass {
     /// Printed upgrade slots (Modification and Title are implicit).
     #[serde(default)]
     pub upgrade_bar: Vec<crate::upgrade::Slot>,
+    /// Primary weapon is a turret: it may target ships outside the
+    /// firing arc (YT-1300). Arc-dependent effects still use the arc.
+    #[serde(default)]
+    pub turret_primary: bool,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.
@@ -91,6 +106,18 @@ pub struct ShipClass {
     /// a perspective render; never used on the board.
     #[serde(default)]
     pub portrait: Option<String>,
+}
+
+impl ShipClass {
+    /// The chassis' printed stats.
+    pub fn stats(&self) -> StatBlock {
+        StatBlock {
+            attack: self.attack_dice,
+            agility: self.agility,
+            hull: self.hull,
+            shields: self.shields,
+        }
+    }
 }
 
 /// One ship in play — runtime state owned by `game::GameState`.

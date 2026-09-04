@@ -113,5 +113,29 @@
             anchor_px: (217, 1),
             portrait: None,
         ),
+        (
+            id: 6,
+            name: "YT-1300",
+            xws: "yt1300",
+            faction: RebelAlliance,
+            size: Large,
+            footprint: (length: 2.0, width: 2.0), // large base: 80 x 80 mm
+            maneuver_set: 6,
+            attack_dice: 3,
+            agility: 1,
+            hull: 8,
+            shields: 5,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [Missile, Crew, Crew],
+            turret_primary: true,
+
+            // License-free render (see assets/ships/SOURCES.md), already
+            // nose-up with real transparency; cropped and re-encoded. The
+            // mandible tips are the topmost pixels.
+            sprite: "ships/yt-1300.png",
+            sprite_px: (476, 644),
+            anchor_px: (200, 9),
+            portrait: None,
+        ),
     ],
 )
