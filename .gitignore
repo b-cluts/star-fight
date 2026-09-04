@@ -5,3 +5,7 @@ tls_key.pem
 core_rules_en.pdf
 # Card image reference clone (not ours to redistribute)
 reference/
+# Loose art dropped at the repo root for inspection (may be personal-use
+# licensed); shippable sprites live under assets/ after review.
+/*.png
+/*.jpg

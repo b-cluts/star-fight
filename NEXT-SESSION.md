@@ -387,7 +387,17 @@ pins.txt + last-used menu values), starfield.rs.
   exist in First Edition; Second Edition moved ARC-170, Scurrg H-6,
   M12-L Kimogila and Auzituck Gunship onto it, so any of those would do
   if we want the size exercised. Dials for new classes go in
-  maneuvers.ron (I know the First Edition dials).
+  maneuvers.ron (I know the First Edition dials). Art must be public
+  domain / CC0 / CC-BY (repo is MIT/Apache and the release zips
+  redistribute assets/); the first two finds (ywing.png: good 1920×1080
+  16-bit render, nose LEFT, needs rotate+crop+8-bit; awing.png: actually
+  a Delta-7B Jedi starfighter, already transparent and nose-up) were
+  personal-use only, so they stay at the repo root, gitignored via
+  `/*.png`. Scan procedure for any new image: PNG chunk walk (only
+  IHDR/IDAT/IEND + harmless ancillaries, CRCs ok, no trailing bytes),
+  full decode with PIL, alpha histogram/bbox, then view a preview.
+  Idea if personal-use art must be used locally: gitignored
+  assets/local/ with a silhouette fallback when the file is missing.
 - ~~Ship callsigns + hover tooltip~~ done 2026-09-02 (see above). When
   the squad builder exists, naming moves from the Placement N-key into
   the builder (callsign becomes a field of the squad entry).
