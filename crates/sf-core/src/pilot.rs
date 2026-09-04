@@ -109,7 +109,14 @@ impl PilotAbility {
     /// Whether the rules engine currently applies this ability. Abilities
     /// are data first; enforcement is added one at a time with tests.
     pub fn implemented(self) -> bool {
-        matches!(self, PilotAbility::FocusToResult)
+        matches!(
+            self,
+            PilotAbility::FocusToResult
+                | PilotAbility::ExtraAttackDieAtRange1
+                | PilotAbility::ExtraAttackDieOutsideDefenderArc
+                | PilotAbility::ExtraAttackDieVsDamaged
+                | PilotAbility::StressForExtraAttackDie
+        )
     }
 }
 

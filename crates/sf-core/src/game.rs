@@ -14,7 +14,7 @@ use crate::combat;
 use crate::crit::{self, CritEffect};
 use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
-use crate::geometry::{Footprint, Pose};
+use crate::geometry::{Footprint, Pose, Vec2};
 use crate::maneuver::{self, Difficulty, Maneuver};
 use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
@@ -473,6 +473,66 @@ impl GameState {
     // free conversions, lock rerolls, focus spend) → roll defense → modify
     // defense (free conversions, focus spend, evade spend) → compare →
     // damage. Card effects plug into the two "modify" stages below.
+
+    /// Is any corner or edge midpoint of a base inside the shooter's
+    /// 90° forward arc?
+    fn base_in_front_arc(shooter: Pose, shooter_fp: Footprint, corners: &[Vec2; 4]) -> bool {
+        corners.iter().any(|&p| combat::in_front_arc(shooter, shooter_fp, p))
+            || (0..4).any(|i| {
+                let m = Vec2::new(
+                    (corners[i].x + corners[(i + 1) % 4].x) / 2.0,
+                    (corners[i].y + corners[(i + 1) % 4].y) / 2.0,
+                );
+                combat::in_front_arc(shooter, shooter_fp, m)
+            })
+    }
+
+    /// Is ship `target` inside ship `shooter`'s forward firing arc?
+    fn ship_in_front_arc(&self, content: &Content, shooter: usize, target: usize) -> bool {
+        let (Some(s_pose), Some(t_pose)) = (self.ships[shooter].pose, self.ships[target].pose)
+        else {
+            return false;
+        };
+        let s_fp = self.class_of(content, &self.ships[shooter]).footprint;
+        let t_fp = self.class_of(content, &self.ships[target]).footprint;
+        Self::base_in_front_arc(s_pose, s_fp, &rules::footprint_corners(t_pose, t_fp))
+    }
+
+    /// Additional attack dice granted by the attacker's pilot ability,
+    /// decided before the roll. Mauler Mithel (+1 at Range 1),
+    /// Backstabber (+1 from outside the defender's arc), Scourge (+1
+    /// against a damaged defender) and Zeta Leader (+1 for taking a
+    /// stress token while unstressed — always accepted).
+    fn extra_attack_dice(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        range: u8,
+        events: &mut Vec<String>,
+    ) -> u8 {
+        let Some(ability) = self.ability(content, &self.ships[a_idx]) else { return 0 };
+        let why = match ability {
+            PilotAbility::ExtraAttackDieAtRange1 if range == 1 => "point blank",
+            PilotAbility::ExtraAttackDieOutsideDefenderArc
+                if !self.ship_in_front_arc(content, d_idx, a_idx) =>
+            {
+                "outside the defender's arc"
+            }
+            PilotAbility::ExtraAttackDieVsDamaged
+                if self.ships[d_idx].hull < self.max_hull(content, &self.ships[d_idx]) =>
+            {
+                "defender already damaged"
+            }
+            PilotAbility::StressForExtraAttackDie if self.ships[a_idx].stress == 0 => {
+                self.ships[a_idx].stress += 1;
+                "takes stress"
+            }
+            _ => return 0,
+        };
+        events.push(format!("{}: ability — +1 attack die ({why})", self.label(content, a_idx)));
+        1
+    }
 
     /// Attacker-side free result changes before tokens are spent.
     /// Poe Dameron: with a focus token held, one focus result becomes a
@@ -1234,15 +1294,7 @@ impl GameState {
             let Some(pose) = s.pose else { continue };
             let fp = self.class_of(content, s).footprint;
             let corners = rules::footprint_corners(pose, fp);
-            let in_arc = corners.iter().any(|&p| combat::in_front_arc(a_pose, a_fp, p))
-                || (0..4).any(|i| {
-                    let m = crate::geometry::Vec2::new(
-                        (corners[i].x + corners[(i + 1) % 4].x) / 2.0,
-                        (corners[i].y + corners[(i + 1) % 4].y) / 2.0,
-                    );
-                    combat::in_front_arc(a_pose, a_fp, m)
-                });
-            if !in_arc {
+            if !Self::base_in_front_arc(a_pose, a_fp, &corners) {
                 continue;
             }
             let dist = combat::base_distance(&a_corners, &corners);
@@ -1295,7 +1347,8 @@ impl GameState {
             ));
             0
         } else {
-            (a_dice + u8::from(range == 1)).saturating_sub(malfunctions)
+            let extra = self.extra_attack_dice(content, a_idx, d_idx, range, events);
+            (a_dice + u8::from(range == 1) + extra).saturating_sub(malfunctions)
         };
         let mut attack_faces: Vec<AttackFace> =
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
@@ -2012,6 +2065,14 @@ mod tests {
     /// (range 3 after the TIE flies 5 and the X-Wing 4), maneuvers
     /// planned, nothing committed yet — so actions can still be planned.
     fn duel(c: &Content, imperial: &str, rebel: &str) -> GameState {
+        duel_at(c, imperial, rebel, Pose::new(10.0, 17.5, -FRAC_PI_2))
+    }
+
+    /// `duel` with the X-Wing's starting pose chosen by the test (the
+    /// Imperial ship always starts at (10, 2.5) heading north). The
+    /// X-Wing is placed legally, then moved outside the deployment zone
+    /// by hand so tests can stage mid-board geometry.
+    fn duel_at(c: &Content, imperial: &str, rebel: &str, xwing: Pose) -> GameState {
         use crate::squad::Squad;
         let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
         let a = Squad::basic(c, "i", &[pilot(imperial)]);
@@ -2020,14 +2081,121 @@ mod tests {
             GameState::from_squads(board(), c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
         gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
-        let s5 =
-            dial_index(c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
+        gs.ships[1].pose = Some(xwing);
+        let s5 = dial_index(c, gs.ships[0].class, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 5
+        });
         let s4 = dial_index(c, XWING, |m| {
             m.steer == crate::maneuver::Steer::Straight && m.distance == 4
         });
         gs.plan_maneuver(c, P0, ShipId(0), s5).unwrap();
         gs.plan_maneuver(c, P1, ShipId(1), s4).unwrap();
         gs
+    }
+
+    /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.
+    fn imperial_shot(rec: &TurnRecords) -> &AttackRecord {
+        rec.attacks.iter().find(|a| a.attacker == ShipId(0)).expect("the TIE fired")
+    }
+
+    #[test]
+    fn mauler_mithel_rolls_an_extra_die_only_at_range_1() {
+        let c = content();
+        // Nose to nose at range 3: the normal 2 dice.
+        let mut gs = duel(&c, "maulermithel", "bluesquadronnovice");
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 2);
+        assert!(!rec.events.iter().any(|e| e.contains("ability")));
+
+        // X-Wing starts 4 units closer: the bases end 2 apart (range 1),
+        // 2 base + 1 range + 1 ability = 4 dice.
+        let mut gs =
+            duel_at(&c, "maulermithel", "bluesquadronnovice", Pose::new(10.0, 13.5, -FRAC_PI_2));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.range, shot.attack_faces.len()), (1, 4));
+        assert!(
+            rec.events.iter().any(|e| e.contains("+1 attack die (point blank)")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn backstabber_rolls_an_extra_die_from_outside_the_defenders_arc() {
+        let c = content();
+        // Head-on the X-Wing sees him: 2 dice.
+        let mut gs = duel(&c, "backstabber", "bluesquadronnovice");
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 2);
+
+        // Both heading north, the X-Wing ahead: it ends 6 units in front
+        // of the TIE (range 3) with the TIE behind it, out of its arc.
+        let mut gs =
+            duel_at(&c, "backstabber", "bluesquadronnovice", Pose::new(10.0, 10.5, FRAC_PI_2));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(rec.attacks.len(), 1, "the X-Wing has no target: {:?}", rec.attacks);
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.range, shot.attack_faces.len()), (3, 3));
+        assert!(
+            rec.events.iter().any(|e| e.contains("outside the defender's arc")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn scourge_rolls_an_extra_die_against_a_damaged_defender() {
+        let c = content();
+        let mut gs = duel(&c, "scourge", "bluesquadronnovice");
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 2, "undamaged: no bonus");
+
+        // Shields lost do not count; a hull point lost (a Damage card) does.
+        let mut gs = duel(&c, "scourge", "bluesquadronnovice");
+        gs.ships[1].shields = 0;
+        gs.ships[1].hull -= 1;
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 3);
+        assert!(
+            rec.events.iter().any(|e| e.contains("defender already damaged")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn zeta_leader_takes_a_stress_for_an_extra_die_when_unstressed() {
+        let c = content();
+        let mut gs = duel(&c, "zetaleader", "bluesquadronnovice");
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 3);
+        assert_eq!(gs.ships[0].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("takes stress")), "{:?}", rec.events);
+
+        // Already stressed (straight-5 is white on the TIE/fo dial, so
+        // the token survives the move): no extra die, no second token.
+        let mut gs = duel(&c, "zetaleader", "bluesquadronnovice");
+        gs.ships[0].stress = 1;
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(imperial_shot(&rec).attack_faces.len(), 2);
+        assert_eq!(gs.ships[0].stress, 1);
     }
 
     #[test]
