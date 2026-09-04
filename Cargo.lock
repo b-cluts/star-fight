@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "sf-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "bevy",
@@ -3739,7 +3739,7 @@ dependencies = [
 
 [[package]]
 name = "sf-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ron",
  "serde",
@@ -3747,7 +3747,7 @@ dependencies = [
 
 [[package]]
 name = "sf-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustls",
  "serde",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "sf-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "rand",
