@@ -170,8 +170,10 @@ and Server `ws://127.0.0.1:7777`.
       use the `duel(c, imperial_xws, rebel_xws)` helper + `scripted`
       dice (attack d8: 0-2 hit, 3 crit, 4-5 focus, 6-7 blank; defense:
       0-2 evade, 3-4 focus, 5-7 blank). DONE: Poe FocusToResult (attack
-      and defense, token kept). NEXT: extra-dice hook (n_atk) for
-      Mauler/Backstabber/Scourge/Zeta Leader,
+      and defense, token kept); extra-dice hook `extra_attack_dice()`
+      (Mauler Mithel, Backstabber, Scourge, Zeta Leader — Zeta always
+      takes the stress; `ship_in_front_arc()` helper; `duel_at` test
+      helper stages the X-Wing anywhere). NEXT:
       Winged Gundark hit→crit, Jess rerolls, Dark Curse denial,
       Howlrunner friendly reroll, Omega Ace/Leader; then EPTs Wired,
       Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
@@ -359,6 +361,27 @@ pins.txt + last-used menu values), starfield.rs.
   Phase::Obstacles) with drag-and-drop in the client; scenarios can
   pre-place them. Graphics: assets/obstacles/*.png (ours to include).
 
+- **Ship size examples** (requested 2026-09-04): add one or two real
+  ships per base size so Medium/Large/Huge footprints get exercised
+  (movement, bumping, arcs, range all already work per footprint; huge
+  ships also need Epic rules — energy, sections, no dial — later). User
+  will source top-down art; I supply the names. Sprite requirements
+  (see render.rs `ship_visual`): PNG with alpha (32-bit RGBA),
+  transparent background, ship facing UP, cropped tight so the image
+  height is the ship's base length (the sprite is scaled so its height
+  = footprint.length), then ships.ron gets `sprite_px: (w, h)` and
+  `anchor_px` = the nose's pixel (front-center). First Edition ships by
+  base: Small (40 mm) — have TIE/ln, T-70, TIE/fo; candidates A-Wing,
+  Y-Wing, TIE Interceptor, TIE Advanced, TIE Bomber, Z-95 Headhunter.
+  Large (80 mm) — YT-1300 (Millennium Falcon), Firespray-31 (Slave I),
+  Lambda-class Shuttle, VT-49 Decimator, YT-2400 (Outrider),
+  Upsilon-class Shuttle, JumpMaster 5000, VCX-100 (Ghost). Huge (Epic,
+  80 × 192 mm) — CR90 Corvette (Tantive IV), GR-75 Medium Transport,
+  Raider-class Corvette, Gozanti-class Cruiser. Medium (60 mm) does not
+  exist in First Edition; Second Edition moved ARC-170, Scurrg H-6,
+  M12-L Kimogila and Auzituck Gunship onto it, so any of those would do
+  if we want the size exercised. Dials for new classes go in
+  maneuvers.ron (I know the First Edition dials).
 - ~~Ship callsigns + hover tooltip~~ done 2026-09-02 (see above). When
   the squad builder exists, naming moves from the Placement N-key into
   the builder (callsign becomes a field of the squad entry).
