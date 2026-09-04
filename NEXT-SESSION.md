@@ -1,8 +1,8 @@
-# Where we left off (2026-09-02, session 4)
+# Where we left off (2026-09-04, session 5)
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (98 tests),
+`cargo build` clean, `cargo test --workspace` green (108 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -173,9 +173,15 @@ and Server `ws://127.0.0.1:7777`.
       and defense, token kept); extra-dice hook `extra_attack_dice()`
       (Mauler Mithel, Backstabber, Scourge, Zeta Leader — Zeta always
       takes the stress; `ship_in_front_arc()` helper; `duel_at` test
-      helper stages the X-Wing anywhere). NEXT:
-      Winged Gundark hit→crit, Jess rerolls, Dark Curse denial,
-      Howlrunner friendly reroll, Omega Ace/Leader; then EPTs Wired,
+      helper stages the X-Wing anywhere); Winged Gundark hit→crit
+      (`free_attack_mods` takes range); Omega Ace `spend_for_all_crits`
+      (always used when lock+focus held); denials Dark Curse / Omega
+      Leader (`attacker_may_modify` / `attacker_may_spend` /
+      `defender_may_modify` flags in perform_attack_on); friendly
+      rerolls Howlrunner + Jess (`friendly_rerolls`, `reroll_attack_dice`
+      / `reroll_defense_dice`: blanks first, eyes if no focus token;
+      `skirmish()` test helper for multi-ship sides). All pilot dice
+      abilities are live. NEXT: EPTs Wired,
       Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
       Opportunist, Outmaneuver, Trick Shot; tech Weapons Guidance /
       Sensor Cluster; astromech R3/R7.
