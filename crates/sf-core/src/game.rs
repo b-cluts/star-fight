@@ -536,21 +536,67 @@ impl GameState {
 
     /// Attacker-side free result changes before tokens are spent.
     /// Poe Dameron: with a focus token held, one focus result becomes a
-    /// hit (the token itself is not spent).
+    /// hit (the token itself is not spent). Winged Gundark: at Range 1
+    /// one hit becomes a critical hit.
     fn free_attack_mods(
         &self,
         content: &Content,
         a_idx: usize,
+        range: u8,
         faces: &mut [AttackFace],
         events: &mut Vec<String>,
     ) {
-        if self.ability(content, &self.ships[a_idx]) == Some(PilotAbility::FocusToResult)
-            && self.ships[a_idx].focus > 0
-            && let Some(f) = faces.iter_mut().find(|f| **f == AttackFace::Focus)
-        {
-            *f = AttackFace::Hit;
-            events.push(format!("{}: ability — focus result to hit", self.label(content, a_idx)));
+        match self.ability(content, &self.ships[a_idx]) {
+            Some(PilotAbility::FocusToResult) if self.ships[a_idx].focus > 0 => {
+                if let Some(f) = faces.iter_mut().find(|f| **f == AttackFace::Focus) {
+                    *f = AttackFace::Hit;
+                    events.push(format!(
+                        "{}: ability — focus result to hit",
+                        self.label(content, a_idx)
+                    ));
+                }
+            }
+            Some(PilotAbility::HitToCritAtRange1) if range == 1 => {
+                if let Some(f) = faces.iter_mut().find(|f| **f == AttackFace::Hit) {
+                    *f = AttackFace::Crit;
+                    events.push(format!(
+                        "{}: ability — hit result to critical hit",
+                        self.label(content, a_idx)
+                    ));
+                }
+            }
+            _ => {}
         }
+    }
+
+    /// Omega Ace: spend a target lock on the defender and a focus token
+    /// to turn every attack die into a critical hit. Always taken when
+    /// both tokens are available — no modification can beat all crits.
+    /// Returns (lock spent, focus spent).
+    fn spend_for_all_crits(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        defender: ShipId,
+        faces: &mut [AttackFace],
+        events: &mut Vec<String>,
+    ) -> bool {
+        let ship = &self.ships[a_idx];
+        if self.ability(content, ship) != Some(PilotAbility::SpendLockAndFocusForAllCrits)
+            || ship.lock != Some(defender)
+            || ship.focus == 0
+            || faces.is_empty()
+        {
+            return false;
+        }
+        self.ships[a_idx].lock = None;
+        self.ships[a_idx].focus -= 1;
+        faces.fill(AttackFace::Crit);
+        events.push(format!(
+            "{}: ability — lock and focus spent, all dice critical",
+            self.label(content, a_idx)
+        ));
+        true
     }
 
     /// Defender-side free result changes before tokens are spent; only
@@ -1356,8 +1402,10 @@ impl GameState {
         // Modify attack: spend the lock to reroll blanks (and eyes too if
         // no focus token is held), then free ability conversions, then
         // focus converts the remaining eyes to hits.
-        let mut lock_spent = false;
-        if self.ships[a_idx].lock == Some(defender) {
+        let all_crits =
+            self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
+        let mut lock_spent = all_crits;
+        if !all_crits && self.ships[a_idx].lock == Some(defender) {
             let reroll_eyes = self.ships[a_idx].focus == 0;
             let mut any = false;
             for f in attack_faces.iter_mut() {
@@ -1371,8 +1419,8 @@ impl GameState {
                 lock_spent = true;
             }
         }
-        self.free_attack_mods(content, a_idx, &mut attack_faces, events);
-        let mut attacker_focus_spent = false;
+        self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
+        let mut attacker_focus_spent = all_crits;
         if self.ships[a_idx].focus > 0 && attack_faces.contains(&AttackFace::Focus) {
             self.ships[a_idx].focus -= 1;
             attacker_focus_spent = true;
@@ -2196,6 +2244,61 @@ mod tests {
         let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
         assert_eq!(imperial_shot(&rec).attack_faces.len(), 2);
         assert_eq!(gs.ships[0].stress, 1);
+    }
+
+    #[test]
+    fn winged_gundark_turns_a_hit_into_a_crit_at_range_1() {
+        let c = content();
+        // Range 3, [Hit, Hit]: unchanged.
+        let mut gs = duel(&c, "wingedgundark", "bluesquadronnovice");
+        let mut rolls = scripted(vec![0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (2, 0));
+
+        // Range 1, 3 dice [Hit, Hit, Blank]: one hit becomes a crit.
+        let mut gs =
+            duel_at(&c, "wingedgundark", "bluesquadronnovice", Pose::new(10.0, 13.5, -FRAC_PI_2));
+        let mut rolls = scripted(vec![0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.range, shot.hits, shot.crits), (1, 1, 1));
+        assert!(
+            rec.events.iter().any(|e| e.contains("hit result to critical")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn omega_ace_spends_lock_and_focus_for_all_crits() {
+        let c = content();
+        // With only a focus token the ability stays silent: [Blank, Eye]
+        // → the token converts the eye, 1 hit.
+        let mut gs = duel(&c, "omegaace", "bluesquadronnovice");
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        let mut rolls = scripted(vec![7, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.hits, shot.crits, shot.lock_spent), (1, 0, false));
+
+        // Lock on the X-Wing plus a focus token (Push the Limit is not
+        // modelled: give the token by hand): [Blank, Blank] → 2 crits,
+        // both tokens gone, no reroll consumed from the dice stream.
+        let mut gs = duel(&c, "omegaace", "bluesquadronnovice");
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::TargetLock(ShipId(1))).unwrap();
+        let mut rolls = scripted(vec![7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        gs.ships[0].focus = 1;
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (0, 2));
+        assert!(shot.lock_spent && shot.attacker_focus_spent);
+        assert_eq!((gs.ships[0].lock, gs.ships[0].focus), (None, 0));
+        assert!(rec.events.iter().any(|e| e.contains("all dice critical")), "{:?}", rec.events);
     }
 
     #[test]

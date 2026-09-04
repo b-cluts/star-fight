@@ -116,6 +116,8 @@ impl PilotAbility {
                 | PilotAbility::ExtraAttackDieOutsideDefenderArc
                 | PilotAbility::ExtraAttackDieVsDamaged
                 | PilotAbility::StressForExtraAttackDie
+                | PilotAbility::HitToCritAtRange1
+                | PilotAbility::SpendLockAndFocusForAllCrits
         )
     }
 }
