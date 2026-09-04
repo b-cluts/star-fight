@@ -216,8 +216,10 @@ pins.txt + last-used menu values), starfield.rs.
   mode on ubuntu-latest and windows-latest, zips them with assets/, and
   uploads artifacts; on a `v*` tag it also creates a GitHub Release with
   the zips (softprops/action-gh-release). Manual run: Actions → Release
-  builds → Run workflow. First runs may need fixes to the apt package
-  list or Windows packaging — check the Actions tab.
+  builds → Run workflow. Both CI and the Linux+Windows release builds
+  passed on the first run (2026-09-04); tag v0.1.0 pushed → Release with
+  the zips at https://github.com/b-cluts/star-fight/releases. To ship a
+  new build: `git tag -a v0.1.1 -m "..." && git push origin v0.1.1`.
 - README.md: player quick start + dev commands. No LICENSE file yet
   (user's call).
 
