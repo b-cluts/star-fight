@@ -16,7 +16,7 @@ use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose};
 use crate::maneuver::{self, Difficulty, Maneuver};
-use crate::pilot::PilotId;
+use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState};
 use crate::squad::Squad;
@@ -457,6 +457,61 @@ impl GameState {
             }
         }
         bar
+    }
+
+    /// The pilot's card ability, unless an Injured Pilot crit has
+    /// silenced it.
+    fn ability(&self, content: &Content, s: &ShipState) -> Option<PilotAbility> {
+        if s.crits.contains(&CritEffect::InjuredPilot) {
+            return None;
+        }
+        content.pilots.pilot(s.pilot).and_then(|p| p.ability)
+    }
+
+    // ---- Attack pipeline hooks -------------------------------------
+    // perform_attack_on runs: roll attack → modify attack (attacker's
+    // free conversions, lock rerolls, focus spend) → roll defense → modify
+    // defense (free conversions, focus spend, evade spend) → compare →
+    // damage. Card effects plug into the two "modify" stages below.
+
+    /// Attacker-side free result changes before tokens are spent.
+    /// Poe Dameron: with a focus token held, one focus result becomes a
+    /// hit (the token itself is not spent).
+    fn free_attack_mods(
+        &self,
+        content: &Content,
+        a_idx: usize,
+        faces: &mut [AttackFace],
+        events: &mut Vec<String>,
+    ) {
+        if self.ability(content, &self.ships[a_idx]) == Some(PilotAbility::FocusToResult)
+            && self.ships[a_idx].focus > 0
+            && let Some(f) = faces.iter_mut().find(|f| **f == AttackFace::Focus)
+        {
+            *f = AttackFace::Hit;
+            events.push(format!("{}: ability — focus result to hit", self.label(content, a_idx)));
+        }
+    }
+
+    /// Defender-side free result changes before tokens are spent; only
+    /// applied when damage would otherwise still land.
+    fn free_defense_mods(
+        &self,
+        content: &Content,
+        d_idx: usize,
+        faces: &mut [DefenseFace],
+        incoming: u8,
+        events: &mut Vec<String>,
+    ) {
+        let evades = faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+        if evades < incoming
+            && self.ability(content, &self.ships[d_idx]) == Some(PilotAbility::FocusToResult)
+            && self.ships[d_idx].focus > 0
+            && let Some(f) = faces.iter_mut().find(|f| **f == DefenseFace::Focus)
+        {
+            *f = DefenseFace::Evade;
+            events.push(format!("{}: ability — focus result to evade", self.label(content, d_idx)));
+        }
     }
 
     /// "If you are hit by an attack, discard this card": Stealth Device.
@@ -1246,7 +1301,8 @@ impl GameState {
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
 
         // Modify attack: spend the lock to reroll blanks (and eyes too if
-        // no focus token is held), then focus converts eyes to hits.
+        // no focus token is held), then free ability conversions, then
+        // focus converts the remaining eyes to hits.
         let mut lock_spent = false;
         if self.ships[a_idx].lock == Some(defender) {
             let reroll_eyes = self.ships[a_idx].focus == 0;
@@ -1262,6 +1318,7 @@ impl GameState {
                 lock_spent = true;
             }
         }
+        self.free_attack_mods(content, a_idx, &mut attack_faces, events);
         let mut attacker_focus_spent = false;
         if self.ships[a_idx].focus > 0 && attack_faces.contains(&AttackFace::Focus) {
             self.ships[a_idx].focus -= 1;
@@ -1290,8 +1347,9 @@ impl GameState {
 
         // Modify defense: focus converts eyes when it helps, evade token
         // adds one evade result if damage would still land.
-        let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let incoming = raw_hits + raw_crits;
+        self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
+        let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let mut defender_focus_spent = false;
         let eyes = defense_faces.iter().filter(|f| **f == DefenseFace::Focus).count() as u8;
         if !defender_in_bullseye && self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
@@ -1948,6 +2006,78 @@ mod tests {
             "{:?}",
             rec.events
         );
+    }
+
+    /// Two squads of one ship each, placed nose-to-nose 15 units apart
+    /// (range 3 after the TIE flies 5 and the X-Wing 4), maneuvers
+    /// planned, nothing committed yet — so actions can still be planned.
+    fn duel(c: &Content, imperial: &str, rebel: &str) -> GameState {
+        use crate::squad::Squad;
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let a = Squad::basic(c, "i", &[pilot(imperial)]);
+        let b = Squad::basic(c, "r", &[pilot(rebel)]);
+        let mut gs =
+            GameState::from_squads(board(), c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+        gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
+        let s5 =
+            dial_index(c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
+        let s4 = dial_index(c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 4
+        });
+        gs.plan_maneuver(c, P0, ShipId(0), s5).unwrap();
+        gs.plan_maneuver(c, P1, ShipId(1), s4).unwrap();
+        gs
+    }
+
+    #[test]
+    fn poe_turns_one_focus_result_without_spending_the_token() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "poedameron");
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        // Poe (PS8) fires first: [Focus, Blank, Blank] → his ability turns
+        // the eye into a hit for free; the TIE's 4 defense dice are
+        // blanks. Then the TIE rolls [Hit, Hit]; Poe defends with 3 dice
+        // [Focus, Blank, Blank]: the eye becomes an evade for free, one
+        // hit lands on shields. His focus token is never spent.
+        let mut rolls = scripted(vec![4, 7, 7, 7, 7, 7, 7, 0, 0, 3, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        let poe_shot = &rec.attacks[0];
+        assert_eq!(poe_shot.attacker, ShipId(1));
+        assert_eq!((poe_shot.hits, poe_shot.attacker_focus_spent), (1, false));
+        assert_eq!(gs.ships[0].hull, 2);
+        let tie_shot = &rec.attacks[1];
+        assert_eq!((tie_shot.hits, tie_shot.defender_focus_spent), (1, false));
+        assert_eq!(gs.ships[1].shields, 2);
+        assert_eq!(
+            rec.events.iter().filter(|e| e.contains("ability")).count(),
+            2,
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn poe_needs_a_focus_token_and_spends_it_only_for_extra_eyes() {
+        let c = content();
+        // Without a token the ability is silent: two eyes stay eyes (no
+        // focus to spend either) → 0 hits.
+        let mut gs = duel(&c, "academypilot", "poedameron");
+        let mut rolls = scripted(vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(rec.attacks[0].hits, 0);
+        assert!(!rec.events.iter().any(|e| e.contains("ability")));
+
+        // With a token and two eyes: one converts free, the token is
+        // spent on the other → 2 hits, focus 0.
+        let mut gs = duel(&c, "academypilot", "poedameron");
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let mut rolls = scripted(vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!((rec.attacks[0].hits, rec.attacks[0].attacker_focus_spent), (2, true));
     }
 
     #[test]

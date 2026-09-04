@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (96 tests),
+`cargo build` clean, `cargo test --workspace` green (98 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -164,9 +164,14 @@ and Server `ws://127.0.0.1:7777`.
       equipped upgrades; Stealth Device discards on hit; Adaptability is
       two entries (adaptabilityincrease/decrease). Hook points for the
       rest: `effects()` / `count_effect()` in game.rs.
-   b. Dice-modifying pilot abilities in the attack pipeline (game.rs
-      perform_attack_on + combat.rs/dice.rs token policy): Poe
-      FocusToResult, Mauler/Backstabber/Scourge/Zeta Leader extra dice,
+   b. Dice-modifying pilot abilities. HOOKS EXIST (session 5): game.rs
+      `free_attack_mods` / `free_defense_mods` run after lock rerolls and
+      before token spending; `ability()` respects Injured Pilot; tests
+      use the `duel(c, imperial_xws, rebel_xws)` helper + `scripted`
+      dice (attack d8: 0-2 hit, 3 crit, 4-5 focus, 6-7 blank; defense:
+      0-2 evade, 3-4 focus, 5-7 blank). DONE: Poe FocusToResult (attack
+      and defense, token kept). NEXT: extra-dice hook (n_atk) for
+      Mauler/Backstabber/Scourge/Zeta Leader,
       Winged Gundark hit→crit, Jess rerolls, Dark Curse denial,
       Howlrunner friendly reroll, Omega Ace/Leader; then EPTs Wired,
       Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
