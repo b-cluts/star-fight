@@ -297,10 +297,27 @@ pins.txt + last-used menu values), starfield.rs.
   (only surviving/reinforced ships and the banked points) instead of a
   free squad. Needs scenarios first (a battle IS a scenario plus
   goals/outcomes) and the mission objectives from rulebook p.21-24.
-  Design questions for the user when we start: do lost ships come back
-  at a cost, do pilots gain experience (skill +1 after N battles, like
-  the old Heroes of the Aturi Cluster fan campaign), and is the
-  campaign a fixed branching graph or a scripted linear sequence.
+  DECIDED by the user (2026-09-04):
+  - A lost ship does not come back as such; the player may spend banked
+    points on a NEW ship, which may be identical (same class/pilot if
+    the pilot is generic). A lost UNIQUE pilot is gone for the campaign.
+  - Pilots gain experience: a pilot surviving battles gains skill
+    points, faster the more they achieve (kills, scenario goals met).
+    Track per-pilot `kills`, `goals`, `battles` in the campaign roster;
+    skill bonus = f(achievements) applied like Veteran Instincts (cap 12
+    total). Exact thresholds TBD with the user when implementing.
+  - Branching graph: e.g. Rebels win → next battle attacks an Imperial
+    forward outpost; Imperials win → next battle is a retreat where the
+    Imperials try to finish the Rebels off before reinforcements arrive.
+  - ESCAPING: in campaign play a ship that flies off the map is NOT
+    destroyed — it escapes (saved for the next battle) but cannot help
+    win; fleeing ships never count towards victory. Core change:
+    `destroyed: bool` becomes a `ShipStatus { Active, Destroyed,
+    Escaped }` (escaped ships leave the board, take no further part, are
+    excluded from win checks as if destroyed for the OPPONENT's victory
+    but survive into the roster). The base game's "fleeing = destroyed"
+    (p.17) stays the default for generic games; scenarios/campaigns opt
+    into escape via a rule flag.
 - **Obstacles** (requested 2026-09-04): asteroids, moons, wrecked
   stations etc. on the map with graphics (user is sourcing images).
   Rulebook p.20 (already read): obstacles placed during setup before
