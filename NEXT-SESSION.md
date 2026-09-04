@@ -276,6 +276,31 @@ pins.txt + last-used menu values), starfield.rs.
   limits. Menu: a scenario picker (< >) next to the squad picker; the
   builder shows "valid for scenario X" and the joining player sees the
   scenario before choosing a squad.
+- **Campaigns** (requested 2026-09-04): a sequence of linked battles.
+  Each side starts with a squad limit and goals; the outcome of a battle
+  (and its consequences: ships lost, pilots killed, objectives met)
+  decides which battle comes next and what reinforcements each side
+  receives. Plan, data-driven like scenarios: `assets/data/campaigns.ron`
+  with `Campaign { id, name, description, start: BattleId, battles:
+  Vec<CampaignBattle { id, scenario: ScenarioId, goals per side,
+  outcomes: Vec<Outcome { condition: Win(seat) | Draw | ObjectiveMet(id)
+  | ShipsLost{seat, at_least} …, next: Option<BattleId> (None = campaign
+  over), reinforcements: per seat { points: i32, fixed_ships:
+  Vec<PilotId>, allow_classes… }, consequences: e.g. destroyed ships
+  stay destroyed, damaged ships carry hull damage / faceup crits,
+  unique pilots killed are gone for the campaign }> }`. State: a
+  `CampaignState { campaign, current battle, per-seat roster (surviving
+  ShipStates with carried damage), banked points, history }` persisted
+  by the server as a RON file under a campaign code so players can
+  resume across sessions; the lobby gets "Continue campaign <code>".
+  The squad builder then edits a roster within the campaign's limits
+  (only surviving/reinforced ships and the banked points) instead of a
+  free squad. Needs scenarios first (a battle IS a scenario plus
+  goals/outcomes) and the mission objectives from rulebook p.21-24.
+  Design questions for the user when we start: do lost ships come back
+  at a cost, do pilots gain experience (skill +1 after N battles, like
+  the old Heroes of the Aturi Cluster fan campaign), and is the
+  campaign a fixed branching graph or a scripted linear sequence.
 - **Obstacles** (requested 2026-09-04): asteroids, moons, wrecked
   stations etc. on the map with graphics (user is sourcing images).
   Rulebook p.20 (already read): obstacles placed during setup before
