@@ -17,13 +17,72 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    menu, paste the join string into **Server** (Ctrl+V), type the password,
    optionally build a squad (**Squad Builder**), then **Create Game** (share
    the 4-letter code) or **Join Game** with the code.
-3. Card images for the squad builder are optional: clone
-   [xwing-card-images](https://github.com/voidstate/xwing-card-images) into
-   `reference/` next to the client (or point `STARFIGHT_CARDS` at its
-   `images` folder). Without them the builder shows card text.
+3. Card images for the squad builder are optional; see
+   [Card images](#card-images-optional) below. Without them the builder
+   shows the card text.
 
 Downloads: **Actions → Release builds** (or a tagged GitHub Release) has zips
 for Linux and Windows containing both binaries and `assets/`.
+
+## Card images (optional)
+
+The squad builder can show the real pilot and upgrade cards. The scans are
+not part of the game download (they are Fantasy Flight Games' artwork), so
+each player fetches them once from the community repository
+[voidstate/xwing-card-images](https://github.com/voidstate/xwing-card-images)
+and puts its `images` folder where the client looks for it.
+
+The client checks these locations at startup, in order, and uses the first
+one that contains a `pilots` folder:
+
+1. The folder named by the `STARFIGHT_CARDS` environment variable.
+2. `reference/xwing-card-images/images` under the folder the client was
+   started from (this is how the development tree is laid out).
+3. `cards` inside the per-user config folder:
+   - Windows: `%APPDATA%\starfight\cards`
+     (usually `C:\Users\<you>\AppData\Roaming\starfight\cards`)
+   - Linux: `~/.config/starfight/cards`
+     (or `$XDG_CONFIG_HOME/starfight/cards` if that variable is set)
+   - macOS: `~/Library/Application Support/starfight/cards`
+
+The simplest setup for the release zip is option 3. Download the repository
+as a zip from GitHub (green **Code** button → **Download ZIP**) or clone it,
+then copy the contents of its `images` folder so that the layout is:
+
+```
+<config>/starfight/cards/
+    pilots/
+        rebels/t70xwing/poedameron.png
+        imperial/tiefighter/howlrunner.png
+        ...
+    upgrades/
+        talent/veteraninstincts.png
+        torpedo/protontorpedoes.png
+        ...
+```
+
+That is, `cards` must directly contain `pilots` and `upgrades`. The
+`starfight` folder already exists once the client has been run at least
+once (it also holds the saved squads and server pins); create `cards`
+inside it. A Windows player can do it in PowerShell after downloading and
+extracting the zip:
+
+```
+mkdir $env:APPDATA\starfight\cards
+Copy-Item -Recurse .\xwing-card-images-master\images\* $env:APPDATA\starfight\cards\
+```
+
+On Linux:
+
+```
+git clone https://github.com/voidstate/xwing-card-images.git
+mkdir -p ~/.config/starfight/cards
+cp -r xwing-card-images/images/* ~/.config/starfight/cards/
+```
+
+Restart the client afterwards; the folder is only scanned at startup. If a
+card has no image the builder falls back to its text, so a partial copy is
+fine.
 
 ## Developing
 
