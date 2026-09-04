@@ -13,7 +13,7 @@ jobs:
     name: fmt + clippy + tests (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Linux build dependencies (Bevy / winit)
         run: |
           sudo apt-get update
