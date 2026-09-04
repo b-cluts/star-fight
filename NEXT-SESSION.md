@@ -402,7 +402,7 @@ pins.txt + last-used menu values), starfield.rs.
   costs are u8). Turret/missile attacks and the six new pilot abilities
   are data only so far (weapons need the weapon-choice step, roadmap c;
   note in upgrades.ron which cards do NOT spend the lock/focus). Both
-  sprites need a look in the sandbox/online client (Y-Wing is fielded
+  sprites: Y-Wing confirmed good in the sandbox 2026-09-05; A-Wing still to be seen (Y-Wing is fielded
   in the sandbox; A-Wing via the squad builder key 3). Art must be public
   domain / CC0 / CC-BY (repo is MIT/Apache and the release zips
   redistribute assets/); the first two finds (ywing.png: good 1920×1080
