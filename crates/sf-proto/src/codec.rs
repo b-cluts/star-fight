@@ -24,7 +24,7 @@ mod tests {
             password: "pw".into(),
         };
         let c2: ClientMsg = decode(&encode(&c)).unwrap();
-        assert!(matches!(c2, ClientMsg::Hello { proto_version: 1, .. }));
+        assert!(matches!(c2, ClientMsg::Hello { proto_version: crate::PROTOCOL_VERSION, .. }));
 
         let s = ServerMsg::GameCreated { code: "AB12".into() };
         let s2: ServerMsg = decode(&encode(&s)).unwrap();
