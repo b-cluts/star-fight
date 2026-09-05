@@ -304,6 +304,16 @@ impl UpgradeEffect {
                 | BarGainsBarrelRoll
                 | BarGainsTalent
                 | BarGainsEvade
+                | TorpedoFocusToCrit
+                | TorpedoBlanksToFocus
+                | MissileBlankToHit
+                | CannonHitToCrit
+                | CannonCritsToHits
+                | TurretDorsalExtraDieAtRange1
+                | RocketExtraDiceByAgility
+                | MissileDenyEvadeTokens
+                | TurretAutoblasterUncancelable
+                | CannonUncancelableHits
         )
     }
 }

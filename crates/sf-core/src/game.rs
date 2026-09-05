@@ -709,6 +709,42 @@ impl GameState {
         }
     }
 
+    /// Free result changes printed on the weapon card being fired.
+    fn weapon_attack_mods(
+        &self,
+        content: &Content,
+        a_idx: usize,
+        effect: Option<UpgradeEffect>,
+        faces: &mut [AttackFace],
+        events: &mut Vec<String>,
+    ) {
+        let mut change = |from: AttackFace, to: AttackFace, max: usize, what: &str| {
+            let n = faces.iter_mut().filter(|f| **f == from).take(max).map(|f| *f = to).count();
+            if n > 0 {
+                events.push(format!("{}: weapon — {what}", self.label(content, a_idx)));
+            }
+        };
+        match effect {
+            // Proton Torpedoes: one focus result to a critical hit.
+            Some(UpgradeEffect::TorpedoFocusToCrit) => {
+                change(AttackFace::Focus, AttackFace::Crit, 1, "focus result to critical hit")
+            }
+            // Adv. Proton Torpedoes: up to 3 blanks to focus results.
+            Some(UpgradeEffect::TorpedoBlanksToFocus) => {
+                change(AttackFace::Blank, AttackFace::Focus, 3, "blanks to focus results")
+            }
+            // Concussion Missiles: one blank to a hit.
+            Some(UpgradeEffect::MissileBlankToHit) => {
+                change(AttackFace::Blank, AttackFace::Hit, 1, "blank result to hit")
+            }
+            // "Mangler" Cannon: one hit to a critical hit.
+            Some(UpgradeEffect::CannonHitToCrit) => {
+                change(AttackFace::Hit, AttackFace::Crit, 1, "hit result to critical hit")
+            }
+            _ => {}
+        }
+    }
+
     /// Omega Ace: spend a target lock on the defender and a focus token
     /// to turn every attack die into a critical hit. Always taken when
     /// both tokens are available — no modification can beat all crits.
@@ -1585,6 +1621,21 @@ impl GameState {
             None => self.printed(content, &self.ships[a_idx]).attack,
         };
         let range_bonus = u8::from(range == 1 && secondary.is_none());
+        let weapon_effect = weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect);
+        // Dorsal Turret: +1 die at Range 1. Proton Rockets: + agility (max 3).
+        let weapon_extra = match weapon_effect {
+            Some(UpgradeEffect::TurretDorsalExtraDieAtRange1) if range == 1 => 1,
+            Some(UpgradeEffect::RocketExtraDiceByAgility) => {
+                self.agility(content, &self.ships[a_idx]).min(3)
+            }
+            _ => 0,
+        };
+        if weapon_extra > 0 {
+            events.push(format!(
+                "{}: +{weapon_extra} attack dice (weapon)",
+                self.label(content, a_idx)
+            ));
+        }
 
         // Roll attack dice (+1 at range 1). Weapon Malfunction drops one
         // die per copy; a Blinded Pilot fires 0 dice once, then recovers.
@@ -1608,10 +1659,16 @@ impl GameState {
             0
         } else {
             let extra = self.extra_attack_dice(content, a_idx, d_idx, range, events);
-            (a_dice + range_bonus + extra).saturating_sub(malfunctions)
+            (a_dice + range_bonus + extra + weapon_extra).saturating_sub(malfunctions)
         };
         let mut attack_faces: Vec<AttackFace> =
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
+        // Heavy Laser Cannon: crits become hits immediately after rolling.
+        if weapon_effect == Some(UpgradeEffect::CannonCritsToHits) {
+            for f in attack_faces.iter_mut().filter(|f| **f == AttackFace::Crit) {
+                *f = AttackFace::Hit;
+            }
+        }
 
         // Denials. Omega Leader: an enemy he has locked cannot modify any
         // dice against him, and cannot modify any when he attacks it.
@@ -1670,6 +1727,7 @@ impl GameState {
         }
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
+            self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
         }
         attacker_focus_spent |= all_crits;
         if attacker_may_spend
@@ -1726,19 +1784,33 @@ impl GameState {
             }
             evades += eyes;
         }
+        // Homing Missiles: the defender cannot spend evade tokens.
+        let evade_allowed = weapon_effect != Some(UpgradeEffect::MissileDenyEvadeTokens);
         let mut evade_spent = false;
-        if defender_may_spend && self.ships[d_idx].evade > 0 && evades < incoming {
+        if defender_may_spend && evade_allowed && self.ships[d_idx].evade > 0 && evades < incoming {
             self.ships[d_idx].evade -= 1;
             evade_spent = true;
             evades += 1;
         }
 
-        // Compare results: evades cancel hits before crits.
+        // Compare results: evades cancel hits before crits. Autoblasters:
+        // hits cannot be canceled, so evades only strike crits.
         let mut hits = raw_hits;
         let mut crits = raw_crits;
-        let canceled_hits = hits.min(evades);
-        hits -= canceled_hits;
-        crits -= (evades - canceled_hits).min(crits);
+        let uncancelable = matches!(
+            weapon_effect,
+            Some(
+                UpgradeEffect::TurretAutoblasterUncancelable
+                    | UpgradeEffect::CannonUncancelableHits
+            )
+        );
+        if uncancelable {
+            crits -= evades.min(crits);
+        } else {
+            let canceled_hits = hits.min(evades);
+            hits -= canceled_hits;
+            crits -= (evades - canceled_hits).min(crits);
+        }
 
         // Deal damage: hits before crits; shields absorb first. Only crits
         // reaching the hull are critical — each draws one effect from the
@@ -2660,6 +2732,180 @@ mod tests {
         assert_eq!((ywing_shot.weapon, ywing_shot.range), (Some(ion_turret), 2));
         assert_eq!(ywing_shot.attack_faces.len(), 3);
         assert!(gs.ships[1].upgrades.contains(&ion_turret), "turrets are not discarded");
+    }
+
+    /// Fire `weapon` from ship 1 (the Rebel) at ship 0 whatever the
+    /// prompt offers; primary otherwise.
+    fn prefer(weapon: UpgradeId) -> impl FnMut(&PendingAttack) -> (ShipId, Option<UpgradeId>) {
+        move |p| {
+            p.options
+                .iter()
+                .find(|o| o.weapon == Some(weapon))
+                .map(|o| (o.target, o.weapon))
+                .unwrap_or_else(|| {
+                    let o = p.options.iter().find(|o| o.weapon.is_none()).unwrap();
+                    (o.target, None)
+                })
+        }
+    }
+
+    #[test]
+    fn proton_torpedoes_turn_a_focus_result_into_a_crit() {
+        let c = content();
+        let torps = UpgradeId(1);
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[1].upgrades.push(torps);
+        gs.ships[1].lock = Some(ShipId(0));
+        // 4 dice [Eye, Eye, Blank, Blank], no focus token: one eye becomes
+        // a crit, the other stays an eye. TIE defends 3 blanks.
+        let mut rolls = scripted(vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(torps));
+        let shot = &rec.attacks[0];
+        assert_eq!((shot.weapon, shot.hits, shot.crits), (Some(torps), 0, 1));
+        assert!(
+            rec.events.iter().any(|e| e.contains("focus result to critical hit")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn advanced_proton_torpedoes_turn_blanks_into_eyes_for_the_focus_token() {
+        let c = content();
+        let adv = UpgradeId(2); // 5 dice, Range 1 only
+        let mut gs =
+            duel_at(&c, "academypilot", "bluesquadronnovice", Pose::new(10.0, 13.5, -FRAC_PI_2));
+        gs.ships[1].upgrades.push(adv);
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        // 5 blanks: three become eyes, the focus token turns them to hits.
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(adv));
+        let shot = &rec.attacks[0];
+        assert_eq!((shot.weapon, shot.range, shot.attack_faces.len()), (Some(adv), 1, 5));
+        assert_eq!((shot.hits, shot.attacker_focus_spent), (3, true));
+    }
+
+    #[test]
+    fn heavy_laser_cannon_downgrades_crits_and_autoblaster_hits_cannot_be_canceled() {
+        let c = content();
+        let hlc = UpgradeId(190);
+        let north = FRAC_PI_2;
+        // Lambda (PS2 Omicron) vs X-Wing novice (PS2): the shuttle owner
+        // holds initiative (seat 0) and fires first.
+        let mut gs = skirmish(
+            &c,
+            &[("omicrongrouppilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        gs.ships[0].upgrades.push(hlc);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 12.0, -north)); // ends nose at 11: gap 6 → R3
+        // HLC 4 dice [Crit, Crit, Crit, Hit] → all hits; X-Wing 2 defense
+        // dice (no R3 bonus vs a cannon) [Evade, Blank] → 3 hits land.
+        let mut rolls = scripted(vec![3, 3, 3, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| {
+            let o = p.options.iter().find(|o| o.weapon == Some(hlc)).unwrap();
+            (o.target, o.weapon)
+        });
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).unwrap();
+        assert_eq!((shot.weapon, shot.defense_faces.len()), (Some(hlc), 2));
+        assert_eq!((shot.hits, shot.crits), (3, 0));
+
+        // Autoblaster at Range 1: [Hit, Hit, Crit] vs [Evade, Evade]: the
+        // evades may only cancel the crit.
+        let auto = UpgradeId(192);
+        let mut gs = skirmish(
+            &c,
+            &[("omicrongrouppilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        gs.ships[0].upgrades.push(auto);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 8.0, -north)); // nose 7 vs nose 5: gap 2 → R1
+        let mut rolls = scripted(vec![0, 0, 3, 0, 0, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| {
+            let o = p.options.iter().find(|o| o.weapon == Some(auto)).unwrap();
+            (o.target, o.weapon)
+        });
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).unwrap();
+        assert_eq!((shot.range, shot.hits, shot.crits), (1, 2, 0));
+    }
+
+    #[test]
+    fn homing_missiles_keep_the_lock_and_deny_evade_tokens() {
+        let c = content();
+        let homing = UpgradeId(142);
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 5)],
+            &[("greensquadronpilot", Pose::new(10.0, 17.5, -north), 4)],
+        );
+        gs.ships[1].upgrades.push(homing);
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Evade).unwrap();
+        // A-Wing (PS3) fires first: 4 hits; the TIE's 3 defense dice are
+        // blank and its evade token may not be spent: destroyed.
+        let mut rolls = scripted(vec![0, 0, 0, 0, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(homing));
+        let shot = &rec.attacks[0];
+        assert_eq!((shot.weapon, shot.evade_spent, shot.hits), (Some(homing), false, 4));
+        assert!(shot.defender_destroyed);
+        assert!(!shot.lock_spent, "Homing Missiles do not spend the lock");
+        assert!(!gs.ships[1].upgrades.contains(&homing), "but the card is discarded");
+    }
+
+    #[test]
+    fn dorsal_turret_and_proton_rockets_add_dice() {
+        let c = content();
+        let north = FRAC_PI_2;
+        // Dorsal Turret (2 dice) at Range 1 behind the Y-Wing: 3 dice.
+        let dorsal = UpgradeId(13);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        gs.ships[1].upgrades.push(dorsal);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 7.0, north));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(dorsal));
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!((shot.weapon, shot.range, shot.attack_faces.len()), (Some(dorsal), 1, 3));
+
+        // Proton Rockets on an A-Wing (agility 3): 2 + 3 = 5 dice at
+        // Range 1, focus token required but kept.
+        let rockets = UpgradeId(145);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("prototypepilot", Pose::new(10.0, 17.5, -north), 2)],
+        );
+        gs.ships[1].upgrades.push(rockets);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north)); // nose 5 after 1
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.0, -north)); // nose 7 after 2: gap 2 → R1
+        gs.ships[1].focus = 1;
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(rockets));
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!((shot.weapon, shot.range, shot.attack_faces.len()), (Some(rockets), 1, 5));
+        assert!(!shot.attacker_focus_spent);
     }
 
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.
