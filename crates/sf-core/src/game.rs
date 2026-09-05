@@ -210,12 +210,15 @@ pub struct AttackOption {
     pub dist: f64,
 }
 
-/// A declared shot: defender index, range band and weapon.
-#[derive(Debug, Clone, Copy)]
+/// A declared shot: defender index, range band and weapon. `second` marks
+/// the repeat of an "attack twice" weapon (no token cost, card discarded
+/// only after it).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Shot {
     d_idx: usize,
     range: u8,
     weapon: Option<UpgradeId>,
+    second: bool,
 }
 
 /// An attack whose owner must Declare Target (core rules p.10): more than
@@ -235,6 +238,9 @@ pub struct CombatState {
     /// Attackers still to act in the current group (alive at its start).
     current: Vec<ShipId>,
     pub pending: Option<PendingAttack>,
+    /// Second shot of an "attack twice" weapon, fired on the next step.
+    #[serde(default)]
+    followup: Option<(usize, Shot)>,
     attacks: Vec<AttackRecord>,
     events: Vec<String>,
     moves: Vec<MoveRecord>,
@@ -277,6 +283,9 @@ pub struct ShipView {
     pub stress: u8,
     pub focus: u8,
     pub evade: u8,
+    /// Ion tokens: the next maneuver is a forced white straight 1.
+    #[serde(default)]
+    pub ion: u8,
     pub lock: Option<ShipId>,
     /// Active critical effects — public, like faceup cards.
     pub crits: Vec<CritEffect>,
@@ -363,6 +372,7 @@ impl GameState {
                     planned_action: None,
                     focus: 0,
                     evade: 0,
+                    ion: 0,
                     lock: None,
                     crits: Vec::new(),
                     destroyed: false,
@@ -842,6 +852,108 @@ impl GameState {
     }
 
     /// One point of normal damage: shields absorb first, then hull.
+    /// One point of damage straight to the hull (a faceup card dealt
+    /// past the shields).
+    fn hull_point(&mut self, i: usize) -> DamagePoint {
+        let s = &mut self.ships[i];
+        if s.hull > 0 {
+            s.hull -= 1;
+            if s.hull == 0 {
+                s.destroyed = true;
+            }
+            DamagePoint::Hull
+        } else {
+            DamagePoint::None
+        }
+    }
+
+    /// "After you perform this attack" / "if this attack hits" riders on
+    /// weapon cards, resolved after damage is dealt.
+    fn after_attack_effects(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        effect: UpgradeEffect,
+        landed: bool,
+        events: &mut Vec<String>,
+    ) {
+        let who = self.label(content, d_idx);
+        match effect {
+            // Flechette Torpedoes: stress if the defender's hull value is 4 or less.
+            UpgradeEffect::TorpedoStressIfHullLow => {
+                if self.printed(content, &self.ships[d_idx]).hull <= 4
+                    && !self.ships[d_idx].destroyed
+                {
+                    self.ships[d_idx].stress += 1;
+                    events.push(format!("{who}: flechette torpedoes — stressed"));
+                }
+            }
+            // Plasma Torpedoes: after dealing damage, remove 1 shield token.
+            UpgradeEffect::TorpedoStripShield if landed => {
+                if self.ships[d_idx].shields > 0 {
+                    self.ships[d_idx].shields -= 1;
+                    events.push(format!("{who}: plasma torpedoes — 1 shield stripped"));
+                }
+            }
+            // Ion Torpedoes: the defender and every ship at Range 1 of it are ionized.
+            UpgradeEffect::TorpedoIonSplash if landed => {
+                let near: Vec<usize> = (0..self.ships.len())
+                    .filter(|&j| {
+                        j != d_idx
+                            && !self.ships[j].destroyed
+                            && self.range_between(content, d_idx, j) == Some(1)
+                    })
+                    .collect();
+                self.ships[d_idx].ion += 1;
+                let mut names = vec![who.clone()];
+                for j in near {
+                    self.ships[j].ion += 1;
+                    names.push(self.label(content, j));
+                }
+                events.push(format!("ion torpedoes — ionized: {}", names.join(", ")));
+            }
+            // Assault Missiles: each other ship at Range 1 of the defender suffers 1 damage.
+            UpgradeEffect::MissileSplashRange1 if landed => {
+                let near: Vec<usize> = (0..self.ships.len())
+                    .filter(|&j| {
+                        j != d_idx
+                            && !self.ships[j].destroyed
+                            && self.range_between(content, d_idx, j) == Some(1)
+                    })
+                    .collect();
+                for j in near {
+                    self.damage_point(j);
+                    let died = if self.ships[j].destroyed { " — DESTROYED" } else { "" };
+                    events.push(format!(
+                        "{}: assault missiles splash — 1 damage{died}",
+                        self.label(content, j)
+                    ));
+                }
+            }
+            // XX-23 S-Thread Tracers: friends at Range 1-2 of the attacker
+            // lock the defender (those without a lock take it).
+            UpgradeEffect::MissileFriendsLockOnHit if landed => {
+                let defender = self.ships[d_idx].id;
+                let friends: Vec<usize> = (0..self.ships.len())
+                    .filter(|&j| {
+                        j != a_idx
+                            && self.ships[j].owner == self.ships[a_idx].owner
+                            && !self.ships[j].destroyed
+                            && self.ships[j].lock.is_none()
+                            && matches!(self.range_between(content, a_idx, j), Some(1 | 2))
+                    })
+                    .collect();
+                for j in friends {
+                    self.ships[j].lock = Some(defender);
+                    events
+                        .push(format!("{}: locks {who} (thread tracers)", self.label(content, j)));
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn damage_point(&mut self, i: usize) -> DamagePoint {
         let s = &mut self.ships[i];
         if s.shields > 0 {
@@ -1096,6 +1208,7 @@ impl GameState {
             groups,
             current: Vec::new(),
             pending: None,
+            followup: None,
             attacks: Vec::new(),
             events: events.clone(),
             moves: moves.clone(),
@@ -1122,6 +1235,12 @@ impl GameState {
             let cs = self.combat.as_mut().ok_or(Rejection::WrongPhase)?;
             if let Some(p) = &cs.pending {
                 return Ok(CombatStep::NeedTarget(p.clone()));
+            }
+            if let Some((a_idx, shot)) = cs.followup.take() {
+                if self.ships[a_idx].destroyed || self.ships[shot.d_idx].destroyed {
+                    continue;
+                }
+                return Ok(CombatStep::Attack(self.fire(content, a_idx, shot, roll)));
             }
             if cs.current.is_empty() {
                 if cs.groups.is_empty() {
@@ -1152,13 +1271,8 @@ impl GameState {
                 1 => {
                     let o = options[0].clone();
                     let d_idx = self.ships.iter().position(|s| s.id == o.target).expect("option");
-                    let mut ev = Vec::new();
-                    let shot = Shot { d_idx, range: o.range, weapon: o.weapon };
-                    let rec = self.perform_attack_on(content, a_idx, shot, roll, &mut ev);
-                    let cs = self.combat.as_mut().expect("in combat");
-                    cs.events.extend(ev);
-                    cs.attacks.push(rec.clone());
-                    return Ok(CombatStep::Attack(rec));
+                    let shot = Shot { d_idx, range: o.range, weapon: o.weapon, second: false };
+                    return Ok(CombatStep::Attack(self.fire(content, a_idx, shot, roll)));
                 }
                 _ => {
                     let p = PendingAttack { attacker, owner, options };
@@ -1198,14 +1312,34 @@ impl GameState {
             .range;
         let a_idx = self.ship_index(pending.attacker)?;
         let d_idx = self.ship_index(target)?;
+        self.combat.as_mut().expect("checked above").pending = None;
+        let shot = Shot { d_idx, range, weapon, second: false };
+        Ok(self.fire(content, a_idx, shot, roll))
+    }
+
+    /// Resolve a shot inside the Combat phase: record it, and queue the
+    /// repeat for "attack twice" weapons (Cluster Missiles, Twin Laser
+    /// Turret).
+    fn fire(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        shot: Shot,
+        roll: &mut dyn FnMut() -> u8,
+    ) -> AttackRecord {
         let mut ev = Vec::new();
-        let shot = Shot { d_idx, range, weapon };
         let rec = self.perform_attack_on(content, a_idx, shot, roll, &mut ev);
-        let cs = self.combat.as_mut().expect("checked above");
-        cs.pending = None;
+        let twice = matches!(
+            shot.weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect),
+            Some(UpgradeEffect::MissileAttackTwice | UpgradeEffect::TurretTwinLaserTwiceOneDamage)
+        );
+        let cs = self.combat.as_mut().expect("in combat");
         cs.events.extend(ev);
         cs.attacks.push(rec.clone());
-        Ok(rec)
+        if twice && !shot.second {
+            cs.followup = Some((a_idx, Shot { second: true, ..shot }));
+        }
+        rec
     }
 
     /// Automatic choice: the primary weapon when it has any target
@@ -1269,6 +1403,17 @@ impl GameState {
                 && let Some(sub) = substitute_non_red(dial, &self.ships[i].crits)
             {
                 man = sub;
+            }
+            // Ionized ships ignore their dial: a white straight 1, then the
+            // ion tokens come off.
+            if self.ships[i].ion > 0 {
+                man = Maneuver {
+                    steer: maneuver::Steer::Straight,
+                    distance: 1,
+                    difficulty: Difficulty::Normal,
+                };
+                self.ships[i].ion = 0;
+                events.push(format!("{}: ionized — drifts straight 1", self.label(content, i)));
             }
             let start = self.ships[i].pose.expect("placed");
             let path = maneuver::sample_path(start, man).expect("validated at plan time");
@@ -1588,7 +1733,7 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) -> AttackRecord {
-        let Shot { d_idx, range, weapon } = shot;
+        let Shot { d_idx, range, weapon, second } = shot;
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
@@ -1601,8 +1746,9 @@ impl GameState {
         let mut lock_spent = false;
         let mut attacker_focus_spent = false;
         if let Some((name, sw)) = &secondary {
-            events.push(format!("{}: fires {name}", self.label(content, a_idx)));
-            if sw.spend {
+            let again = if second { " again" } else { "" };
+            events.push(format!("{}: fires {name}{again}", self.label(content, a_idx)));
+            if sw.spend && !second {
                 match sw.requires {
                     AttackRequirement::TargetLock => {
                         self.ships[a_idx].lock = None;
@@ -1622,6 +1768,10 @@ impl GameState {
         };
         let range_bonus = u8::from(range == 1 && secondary.is_none());
         let weapon_effect = weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect);
+        let twice = matches!(
+            weapon_effect,
+            Some(UpgradeEffect::MissileAttackTwice | UpgradeEffect::TurretTwinLaserTwiceOneDamage)
+        );
         // Dorsal Turret: +1 die at Range 1. Proton Rockets: + agility (max 3).
         let weapon_extra = match weapon_effect {
             Some(UpgradeEffect::TurretDorsalExtraDieAtRange1) if range == 1 => 1,
@@ -1812,6 +1962,47 @@ impl GameState {
             crits -= (evades - canceled_hits).min(crits);
         }
 
+        // "If this attack hits, … Then cancel all dice results": ion and
+        // flechette weapons deal a fixed 1 damage (plus their token), Adv.
+        // Homing Missiles a faceup card straight to the hull.
+        let landed = hits + crits > 0;
+        let mut bypass_shields = false;
+        if landed {
+            let who = self.label(content, d_idx);
+            match weapon_effect {
+                Some(UpgradeEffect::TurretIonOneDamage | UpgradeEffect::CannonIonOneDamage) => {
+                    (hits, crits) = (1, 0);
+                    self.ships[d_idx].ion += 1;
+                    events.push(format!("{who}: ion cannon — 1 damage, ionized"));
+                }
+                Some(UpgradeEffect::MissileIonOneDamage) => {
+                    (hits, crits) = (1, 0);
+                    self.ships[d_idx].ion += 2;
+                    events.push(format!("{who}: ion pulse — 1 damage, 2 ion tokens"));
+                }
+                Some(UpgradeEffect::CannonOneDamageAndStress) => {
+                    (hits, crits) = (1, 0);
+                    let stressed = if self.ships[d_idx].stress == 0 {
+                        self.ships[d_idx].stress = 1;
+                        " and stressed"
+                    } else {
+                        ""
+                    };
+                    events.push(format!("{who}: flechette — 1 damage{stressed}"));
+                }
+                Some(UpgradeEffect::MissileFaceupDamage) => {
+                    (hits, crits) = (0, 1);
+                    bypass_shields = true;
+                    events.push(format!("{who}: homing warhead — faceup damage card"));
+                }
+                Some(UpgradeEffect::TurretTwinLaserTwiceOneDamage) => {
+                    (hits, crits) = (1, 0);
+                    events.push(format!("{who}: twin laser — 1 damage"));
+                }
+                _ => {}
+            }
+        }
+
         // Deal damage: hits before crits; shields absorb first. Only crits
         // reaching the hull are critical — each draws one effect from the
         // table (no card UI: immediates resolve now, the rest attach).
@@ -1832,7 +2023,9 @@ impl GameState {
             if self.ships[d_idx].destroyed {
                 break;
             }
-            match self.damage_point(d_idx) {
+            let point =
+                if bypass_shields { self.hull_point(d_idx) } else { self.damage_point(d_idx) };
+            match point {
                 DamagePoint::Shield => shields_lost += 1,
                 DamagePoint::Hull => {
                     hull_lost += 1;
@@ -1857,9 +2050,13 @@ impl GameState {
         if hits + crits > 0 {
             self.discard_on_hit(content, d_idx, events);
         }
-        // Ordnance is discarded once fired.
+        if let Some(effect) = weapon_effect {
+            self.after_attack_effects(content, a_idx, d_idx, effect, landed, events);
+        }
+        // Ordnance is discarded once fired (after the repeat, if any).
         if let Some((name, sw)) = &secondary
             && sw.discard_to_fire
+            && (!twice || second)
         {
             self.ships[a_idx].upgrades.retain(|u| Some(*u) != weapon);
             events.push(format!("{}: {name} discarded (fired)", self.label(content, a_idx)));
@@ -1923,6 +2120,7 @@ impl GameState {
                     stress: s.stress,
                     focus: s.focus,
                     evade: s.evade,
+                    ion: s.ion,
                     lock: s.lock,
                     crits: s.crits.clone(),
                     destroyed: s.destroyed,
@@ -2906,6 +3104,148 @@ mod tests {
         let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
         assert_eq!((shot.weapon, shot.range, shot.attack_faces.len()), (Some(rockets), 1, 5));
         assert!(!shot.attacker_focus_spent);
+    }
+
+    #[test]
+    fn ion_cannon_turret_deals_one_damage_and_the_ionized_ship_drifts_next_round() {
+        let c = content();
+        let ion_turret = UpgradeId(10);
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
+        );
+        gs.ships[1].upgrades.push(ion_turret);
+        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.0, north));
+        // Turret [Hit, Hit, Hit] vs 3 blanks: exactly 1 damage lands and
+        // the TIE is ionized. The TIE (behind, out of arc) has no shot.
+        let mut rolls = scripted(vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(ion_turret));
+        let shot = &rec.attacks[0];
+        assert_eq!((shot.weapon, shot.hits, shot.crits), (Some(ion_turret), 1, 0));
+        assert_eq!((gs.ships[0].hull, gs.ships[0].ion), (2, 1));
+
+        // Next round the TIE dials a straight 5 but drifts a white 1.
+        let s5 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
+        gs.plan_maneuver(&c, P0, ShipId(0), s5).unwrap();
+        let s1 = {
+            let set = c.ships.class(gs.ships[1].class).unwrap().maneuver_set;
+            c.dials
+                .set(set)
+                .unwrap()
+                .maneuvers
+                .iter()
+                .position(|m| m.steer == crate::maneuver::Steer::Straight && m.distance == 1)
+                .unwrap() as u8
+        };
+        gs.plan_maneuver(&c, P1, ShipId(1), s1).unwrap();
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        let act = gs.commit_plans_begin(&c, P1, &mut rolls).unwrap().unwrap();
+        let tie = gs.ships[0].pose.unwrap();
+        assert!((tie.anchor.y - 6.0).abs() < 1e-9, "drifted 1 from y=5: {}", tie.anchor.y);
+        assert_eq!((gs.ships[0].ion, gs.ships[0].stress), (0, 0));
+        assert!(act.events.iter().any(|e| e.contains("ionized — drifts")), "{:?}", act.events);
+    }
+
+    #[test]
+    fn cluster_missiles_attack_twice_spending_the_lock_once_and_discarding_after() {
+        let c = content();
+        let cluster = UpgradeId(141); // 3 dice, R1-2, spend lock, twice
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 5)],
+            &[("greensquadronpilot", Pose::new(10.0, 17.5, -north), 4)],
+        );
+        gs.ships[1].upgrades.push(cluster);
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.ships[1].pose = Some(Pose::new(10.0, 14.5, -north)); // nose 10.5 vs 7.5: R2
+        // First salvo [Hit, Blank, Blank] vs 3 blanks: 1 damage. Second
+        // [Hit, Hit, Blank] vs 3 blanks: 2 more — the TIE is destroyed.
+        let mut rolls = scripted(vec![0, 7, 7, 7, 7, 7, 0, 0, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(cluster));
+        assert_eq!(rec.attacks.len(), 2, "{:?}", rec.attacks);
+        assert_eq!((rec.attacks[0].weapon, rec.attacks[0].hits), (Some(cluster), 1));
+        assert_eq!((rec.attacks[1].weapon, rec.attacks[1].hits), (Some(cluster), 2));
+        assert!(rec.attacks[0].lock_spent && !rec.attacks[1].lock_spent);
+        assert!(rec.attacks[1].defender_destroyed);
+        assert!(!gs.ships[1].upgrades.contains(&cluster));
+        assert_eq!(rec.events.iter().filter(|e| e.contains("discarded (fired)")).count(), 1);
+        assert!(rec.events.iter().any(|e| e.contains("fires Cluster Missiles again")));
+    }
+
+    #[test]
+    fn assault_missiles_splash_and_flechette_torpedoes_stress() {
+        let c = content();
+        let assault = UpgradeId(143); // 4 dice, R2-3
+        let north = FRAC_PI_2;
+        // Two TIEs abreast at Range 1 of each other; the X-Wing (with a
+        // lock on the first) fires first at PS2 vs PS1.
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("academypilot", Pose::new(9.0, 2.5, north), 5),
+                ("academypilot", Pose::new(11.0, 2.5, north), 5),
+            ],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -north), 4)],
+        );
+        gs.ships[2].upgrades.push(assault);
+        gs.ships[2].lock = Some(ShipId(0));
+        let mut rolls = scripted(vec![0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(assault));
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(2)).unwrap();
+        assert!(shot.defender_destroyed, "{shot:?}");
+        assert_eq!(gs.ships[1].hull, 2, "wingman splashed");
+        assert!(rec.events.iter().any(|e| e.contains("splash")), "{:?}", rec.events);
+
+        // Flechette Torpedoes stress a hull-3 TIE even on a miss.
+        let flechette = UpgradeId(3);
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[1].upgrades.push(flechette);
+        gs.ships[1].lock = Some(ShipId(0));
+        let mut rolls = scripted(vec![7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(flechette));
+        assert_eq!(rec.attacks[0].hits + rec.attacks[0].crits, 0);
+        assert_eq!(gs.ships[0].stress, 1);
+    }
+
+    #[test]
+    fn advanced_homing_missiles_deal_a_faceup_card_through_the_shields() {
+        let c = content();
+        let adv_homing = UpgradeId(146); // 3 dice, Range 2 only, lock kept
+        let north = FRAC_PI_2;
+        let mut gs = skirmish(
+            &c,
+            &[("tempestsquadronpilot", Pose::new(10.0, 2.5, north), 5)],
+            &[("greensquadronpilot", Pose::new(10.0, 17.5, -north), 4)],
+        );
+        gs.ships[1].upgrades.push(adv_homing);
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.ships[1].pose = Some(Pose::new(10.0, 16.5, -north)); // nose 12.5 vs 7.5: R2
+        // [Hit, Blank, Blank]; the kept lock rerolls the blanks (blank
+        // again) vs 3 blanks → one faceup card: shields untouched, hull
+        // 3→2, crit drawn (4 = Damaged Sensor Array).
+        let mut rolls = scripted(vec![0, 7, 7, 7, 7, 7, 7, 7, 4, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(adv_homing));
+        let shot = &rec.attacks[0];
+        assert_eq!((shot.weapon, shot.range, shot.hits, shot.crits), (Some(adv_homing), 2, 0, 1));
+        assert_eq!((shot.shields_lost, shot.hull_lost, shot.crits_to_hull), (0, 1, 1));
+        assert_eq!((gs.ships[0].shields, gs.ships[0].hull), (2, 2));
+        assert_eq!(gs.ships[0].crits, vec![CritEffect::DamagedSensorArray]);
+        assert!(shot.lock_spent, "the lock survives the launch and is spent on the reroll");
     }
 
     /// Attack dice thrown by the Imperial ship (ShipId 0) in a duel.

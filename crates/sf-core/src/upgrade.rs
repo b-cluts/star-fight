@@ -314,6 +314,19 @@ impl UpgradeEffect {
                 | MissileDenyEvadeTokens
                 | TurretAutoblasterUncancelable
                 | CannonUncancelableHits
+                | TurretIonOneDamage
+                | CannonIonOneDamage
+                | MissileIonOneDamage
+                | CannonOneDamageAndStress
+                | MissileFaceupDamage
+                | TurretTwinLaserTwiceOneDamage
+                | MissileAttackTwice
+                | TorpedoStressIfHullLow
+                | TorpedoStripShield
+                | TorpedoIonSplash
+                | MissileSplashRange1
+                | MissileFriendsLockOnHit
+                | TurretBlasterSpendFocus
         )
     }
 }

@@ -1187,6 +1187,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             view.focus,
             view.evade
         );
+        if view.ion > 0 {
+            line.push_str(&format!(" ion {}", view.ion));
+        }
         if let Some(l) = view.lock {
             line.push_str(&format!(" lock {}", callsign(Some(snap), l.0)));
         }

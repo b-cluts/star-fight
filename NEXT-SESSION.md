@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (110 tests),
+`cargo build` clean, `cargo test --workspace` green (121 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -187,11 +187,36 @@ and Server `ws://127.0.0.1:7777`.
       Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
       Opportunist, Outmaneuver, Trick Shot; tech Weapons Guidance /
       Sensor Cluster; astromech R3/R7.
-   c. Torpedoes: attack choice (primary vs each ready torpedo) in the
-      Declare Target step — extend PendingAttack/ChooseTarget with weapon
-      options and DeclareTarget with a weapon id; range/lock
-      requirements; discard (Extra Munitions tokens, Munitions Failsafe);
-      Guidance Chips.
+   c. ~~Secondary weapons~~ DONE (session 5, 2026-09-05): game.rs
+      `attack_options()` lists (weapon, target) pairs — primary in arc
+      (all round for `turret_primary`), each equipped Torpedo/Missile/
+      Cannon/Turret card in its band (Turret slot ignores the arc) when
+      its requirement holds (lock on that target / focus token);
+      `PendingAttack.options`, proto `ChooseTarget { options:
+      Vec<AttackChoice> }` / `DeclareTarget { target, weapon }`; client
+      prompt lists "n) Weapon -> Target Rn", click = primary on that
+      ship. `perform_attack_on(a_idx, Shot { d_idx, range, weapon,
+      second })`: own dice, no range bonuses either way, token spent up
+      front when `SecondaryWeapon.spend` (false for Homing / Ion Pulse /
+      Adv. Homing / Proton Rockets / XX-23), card discarded after the
+      shot (after the repeat for Cluster Missiles / Twin Laser Turret,
+      queued in `CombatState.followup`); `auto_target` never spends
+      ordnance. Effects live: Proton (eye→crit), Adv. Proton (3
+      blanks→eyes), Concussion (blank→hit), Mangler (hit→crit), HLC
+      (crits→hits), Dorsal (+1 R1), Proton Rockets (+agility), Homing
+      (no evade tokens), Autoblaster/Autoblaster Turret (uncancelable
+      hits), Ion Cannon/Turret/Ion Pulse (1 damage + ion tokens),
+      Flechette Cannon (1 damage + stress), Adv. Homing (faceup card
+      past shields via `hull_point`), TLT (twice, 1 damage each),
+      Flechette Torps (stress if hull ≤4), Plasma (strip shield), Ion
+      Torps (ion splash R1), Assault (1 damage splash R1), XX-23
+      (friends lock). ION TOKENS: `ShipState.ion` / `ShipView.ion`;
+      an ionized ship's next maneuver is a forced white straight 1
+      (resolve_movement), tokens then cleared; HUD shows "ion n".
+      NOT done: Tractor Beam (token unmodelled; event only), Extra
+      Munitions ordnance tokens, Munitions Failsafe, Guidance Chips,
+      BTL-A4 title, Bomblet/Chardaan. Tests use `run_combat` +
+      `prefer(weapon)` helpers.
    d. Token/stress abilities (Red Ace, Night Beast, Nien Nunb, Epsilon
       Leader, Chaser, Wingman, Cool Hand, R2-D2, R5-P9, Comm Relay…),
       then movement ones (Snap free boost, Blue Ace/Zeta Ace templates,

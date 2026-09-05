@@ -150,6 +150,10 @@ pub struct ShipState {
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.
     pub evade: u8,
+    /// Ion tokens (public): while any are held the ship's next maneuver
+    /// is a white straight 1, after which they are all removed.
+    #[serde(default)]
+    pub ion: u8,
     /// Acquired target lock (public). Persists until re-locked or spent.
     pub lock: Option<ShipId>,
     /// Active (faceup) critical effects — public information.
