@@ -1,4 +1,4 @@
-# Where we left off (2026-09-04, session 5)
+# Where we left off (2026-09-05, end of session 5)
 
 ## State: full networked game loop with combat, actions, and crits
 
@@ -148,6 +148,17 @@ and Server `ws://127.0.0.1:7777`.
 
 ## NEXT TASK
 
+0. **START HERE (2026-09-05).** Ask whether the user playtested the new
+   weapon prompt (ordnance squad: Y-Wing turret / Bomber torpedoes /
+   Falcon missiles) and the new ships (A-Wing, Falcon, three TIEs,
+   Lambda) on a real board — none have been seen in the client except
+   the Y-Wing sprite in the sandbox. Then CUT v0.3.0: bump `version` in
+   the workspace Cargo.toml to 0.3.0, run `cargo check` (lockfile), commit
+   "Version 0.3.0", `git tag -a v0.3.0 -m "..."`, push main and the tag;
+   the release workflow builds the zips. Main already carries PROTOCOL
+   2 (weapon choices in ChooseTarget/DeclareTarget), so v0.2.0 clients
+   are refused by a newer server — the user and friend must be on the
+   same zip. After that, continue the effects roadmap at 4.b (talents).
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
    confirmed working by the user.
@@ -259,7 +270,13 @@ pins.txt + last-used menu values), starfield.rs.
   builds → Run workflow. Both CI and the Linux+Windows release builds
   passed on the first run (2026-09-04); tag v0.1.0 pushed → Release with
   the zips at https://github.com/b-cluts/star-fight/releases. To ship a
-  new build: `git tag -a v0.1.1 -m "..." && git push origin v0.1.1`.
+  new build: bump the workspace version, commit, then
+  `git tag -a v0.x.y -m "..." && git push origin v0.x.y`. Released so far:
+  v0.1.0 (2026-09-04), v0.2.0 (2026-09-05: eleven ship classes with
+  sprites, pilot dice abilities, card data for every slot).
+  `sf_proto::PROTOCOL_VERSION` must be bumped on any message-shape
+  change (now 2); the server refuses mismatched clients with an
+  "update required" message.
 - README.md: player quick start + dev commands. No LICENSE file yet
   (user's call).
 
