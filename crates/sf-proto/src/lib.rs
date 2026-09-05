@@ -5,5 +5,5 @@ pub mod messages;
 
 /// Bumped on any incompatible message change; the server cleanly rejects
 /// mismatched clients with an "update required" error.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub mod tls;
