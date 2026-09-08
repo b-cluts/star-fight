@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (123 tests),
+`cargo build` clean, `cargo test --workspace` green (131 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -152,41 +152,53 @@ and Server `ws://127.0.0.1:7777`.
    main (2026-09-08) — new ships and the weapon prompt work ("things
    look good"); the missile option was missing only because no target
    lock had been taken. Agreed next order:
-   a. **Weapon status in the HUD** (promised): for the selected ship
-      list each secondary weapon card with "ready vs <callsign> R<n>" /
-      "needs target lock on the target" / "needs focus token" / "out of
-      range or arc" / "spent". Compute client-side from the snapshot +
-      Content (mirror `attack_options`: band from
-      `combat::range_band_between`, arc via `combat::in_front_arc`,
-      lock == that target, focus > 0), or extend ShipView. Also grey out
-      unavailable weapons in the Declare Target prompt with the reason
-      (needs `ChooseTarget` to carry them → protocol bump to 3).
-   b. **Bombs** (Bomber is fielded, cards exist ids 180-186, nothing
-      drops). FE rules to re-check against the reference clone before
-      encoding: dial-reveal bombs (Proton/Seismic/Ion/Thermal) are
-      dropped BEFORE the move, token placed behind the base with the
-      straight-1 template, detonate at the END of the Activation phase
-      hitting every ship within Range 1 (Proton: faceup card; Seismic +
-      Thermal: 1 damage; Ion: ion tokens); mines (Proximity/Cluster/
-      Conner Net) are dropped as an action after moving and detonate
-      when a base or template overlaps them (attack dice vs that ship).
-      Plan: `ShipState`/proto: planning gets `bomb: Option<UpgradeId>`
-      (drop-on-reveal choice) and `PlannedAction::DropMine(UpgradeId)`;
-      `GameState.bombs: Vec<BombToken { id, kind, pose, owner }>`;
-      resolve_movement drops then moves; end of Activation detonates;
-      obstacle-style overlap test for mines; client draws tokens as our
-      own simple shapes (dark disc + per-type symbol, assets/bombs/ or
-      gizmos) and detonation as an expanding Range-1 ring with the same
-      per-type flavour as the impacts (fireball / shock rings / sparks).
-      User asked specifically for the token left behind and the
-      detonation animation.
-   c. Then CUT v0.3.0: bump `version` in the workspace Cargo.toml, run
+   a. ~~Weapon status in the HUD~~ DONE 2026-09-09 (unseen on screen):
+      `sf_core::weapons::weapon_status()` mirrors `attack_options` from
+      the player's snapshot (ShipView now carries `upgrade_ids`); the HUD
+      prints "weapons (before moving): Primary: ready vs Red-2 R2 •
+      Proton Torpedoes: needs target lock on Red-2 • …: no target in
+      range/arc • OFFLINE (weapons failure)". Discarded ordnance simply
+      leaves the list (the combat log says "discarded (fired)"). Still
+      open: greying out unavailable weapons inside the Declare Target
+      prompt (needs `ChooseTarget` to carry reasons → protocol 3).
+   b. ~~Bombs~~ DONE 2026-09-09 (NOT yet seen on screen — playtest with
+      a TIE Bomber carrying Seismic Charges + Proximity Mines).
+      Rules as encoded (sf-core/src/bombs.rs + game.rs): planning key
+      B cycles the dial-reveal bomb (`ClientMsg::PlanBomb`,
+      `ShipState.bomb`), key M cycles the mine-drop action
+      (`PlannedAction::DropMine`). Reveal bombs drop BEFORE the move,
+      one straight-1 template behind the rear edge (token = 1×1 square,
+      `bombs::drop_pose`), detonate at the END of Activation on every
+      ship (both sides) whose base is within Range 1 of the token
+      square: Proton = faceup card (hull + crit, shields ignored),
+      Seismic = 1 damage, Ion = 2 ion tokens, Thermal = 1 damage + 1
+      stress. Mines drop AFTER the move by the action and go off on the
+      ship whose swept base crosses them (touching counts): Proximity 3
+      attack dice, Cluster = three side-by-side tokens of 2 dice each,
+      Conner Net = 1 damage + 2 ion + the action is skipped
+      (`ActionResult::SkippedNetted`). Mines persist across turns in
+      `GameState.bombs` (public, in Snapshot). Records: MoveRecord
+      `dropped_before` / `dropped_after` / `mines_hit`, MovementResult
+      `detonations`. Client: tokens drawn as squares with a per-kind
+      symbol, blast = expanding ring to the Range-1 reach with fireball
+      / ion-spark / fragment flavour and a flash on each ship caught;
+      HUD narrates "<kind> detonates — Red-2: 1 damage". TO VERIFY
+      against the user's token reference cards: the Thermal Detonator
+      effect (encoded from memory as 1 damage + 1 stress) and whether
+      Range 1 should be measured from the token's edge (as now) or its
+      center. Not modelled: bombs vs obstacles, Bomblet Generator /
+      Extra Munitions / Cad Bane / Sabine crew riders, Cluster Mine
+      placement when the three tokens would overlap ships.
+   c. CUT v0.3.0 once the user has seen bombs + weapon HUD on screen
+      (they asked for the release after a and b; the tag was held back
+      only because the bomb animation is unplaytested): bump `version` in the workspace Cargo.toml, run
       `cargo check` (lockfile), commit "Version 0.3.0", `git tag -a
       v0.3.0 -m "..."`, push main and the tag; the release workflow
       builds the zips. Main is on PROTOCOL 2 (3 if the prompt carries
       unavailable weapons) — v0.2.0 clients are refused by a newer
       server, so the user and friend must run the same zip.
    d. Then the effects roadmap at 4.b (talents), then the glossary.
+      Also open from a: reasons for unavailable weapons in the prompt.
    Done 2026-09-08/09 (all pushed): server refusals now send Error +
    Close and drain (the old drop caused "connection reset by peer" that
    hid the reason) and the client shows "Connection refused: <why>";
