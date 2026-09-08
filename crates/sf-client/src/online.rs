@@ -14,6 +14,7 @@ use sf_core::maneuver::{self, Difficulty};
 use sf_core::rules;
 use sf_core::ship::ShipId;
 use sf_core::upgrade::{Slot, UpgradeEffect, UpgradeId};
+use sf_core::weapons::{WeaponState, weapon_status};
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
 use crate::Screen;
@@ -1362,6 +1363,32 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             }
         }
         lines.push(line);
+        // Weapon readiness from the current positions (own ships only;
+        // during Planning this is before anyone moves).
+        if view.owner.0 == u32::from(seat) && view.pose.is_some() && !view.destroyed {
+            let name = |id: ShipId| callsign(Some(snap), id.0);
+            let parts: Vec<String> = weapon_status(&game.content, &snap.ships, view)
+                .iter()
+                .map(|w| {
+                    let state = match &w.state {
+                        WeaponState::Ready { target, range } => {
+                            format!("ready vs {} R{range}", name(*target))
+                        }
+                        WeaponState::NeedsLock { target } => {
+                            format!("needs target lock on {}", name(*target))
+                        }
+                        WeaponState::NeedsFocus { target } => {
+                            format!("needs focus token (vs {})", name(*target))
+                        }
+                        WeaponState::NoTarget => "no target in range/arc".to_string(),
+                        WeaponState::Offline => "OFFLINE (weapons failure)".to_string(),
+                    };
+                    format!("{}: {state}", w.name)
+                })
+                .collect();
+            let when = if snap.phase == Phase::Planning { " (before moving)" } else { "" };
+            lines.push(format!("weapons{when}: {}", parts.join(" • ")));
+        }
     }
     let help = match snap.phase {
         Phase::Placement => {

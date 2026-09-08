@@ -16,3 +16,4 @@ pub mod ship;
 pub mod squad;
 pub mod templates;
 pub mod upgrade;
+pub mod weapons;

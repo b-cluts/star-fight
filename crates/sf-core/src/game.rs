@@ -271,6 +271,9 @@ pub struct ShipView {
     pub skill: u8,
     /// Equipped upgrade card names.
     pub upgrades: Vec<String>,
+    /// The same cards by id (for client-side weapon status).
+    #[serde(default)]
+    pub upgrade_ids: Vec<crate::upgrade::UpgradeId>,
     /// Effective values after upgrades: hull/shield maxima, agility,
     /// and the action bar (for the planning keys).
     pub max_hull: u8,
@@ -2122,6 +2125,7 @@ impl GameState {
                         .filter_map(|u| content.upgrades.upgrade(*u))
                         .map(|u| u.name.clone())
                         .collect(),
+                    upgrade_ids: s.upgrades.clone(),
                     pose: if own || self.phase != Phase::Placement { s.pose } else { None },
                     hull: s.hull,
                     shields: s.shields,
