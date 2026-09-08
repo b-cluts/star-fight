@@ -94,7 +94,7 @@ async fn pinned_tls_and_password_admit_the_right_client() {
 
     // Wrong password is refused inside the tunnel.
     let mut ws = connect(port, &fp).await.unwrap();
-    match hello(&mut ws, "open-sesamE").await {
+    match hello(&mut ws, "open-sesame2").await {
         ServerMsg::Error { message } => assert!(message.contains("password"), "{message}"),
         other => panic!("expected password error, got {other:?}"),
     }

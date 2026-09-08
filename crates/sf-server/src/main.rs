@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rand::Rng;
-use rand::distributions::Alphanumeric;
-
 use sf_core::data::Content;
 use sf_server::ServerOpts;
 
@@ -26,7 +23,8 @@ fn usage() -> ! {
         "usage: sf-server [--port <port>] [--password <pw>] [--host <name-or-ip>] \
          [--tls-dir <dir>] [--insecure]\n\
          \n\
-         --password  server password players must enter (default: random, printed)\n\
+         --password  server password players must enter (default: random, printed;\n\
+                     compared case-insensitively, surrounding spaces ignored)\n\
          --host      host name / IP to print in the join string (default: detected)\n\
          --tls-dir   where tls_cert.pem / tls_key.pem live (default: current dir)\n\
          --insecure  plaintext ws:// without password — local testing only"
@@ -96,9 +94,7 @@ async fn main() {
         let fp = sf_server::tls::fingerprint(cert.as_ref());
         let tls =
             sf_server::tls::server_config(cert, key).unwrap_or_else(|e| panic!("TLS config: {e}"));
-        let password = password.unwrap_or_else(|| {
-            rand::thread_rng().sample_iter(&Alphanumeric).take(8).map(char::from).collect()
-        });
+        let password = password.unwrap_or_else(sf_server::generate_password);
         println!("certificate SHA-256 fingerprint (players pin this):\n  {fp}");
         println!("server password: {password}");
         println!("join string (paste into the client's Server field):");

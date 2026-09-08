@@ -14,7 +14,9 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    `starfight://host:7777/#<fingerprint>` — send both to the players and open
    port 7777 (TCP).
 2. Players: run `sf-client` from the folder that contains `assets/`. In the
-   menu, paste the join string into **Server** (Ctrl+V), type the password,
+   menu, paste the join string into **Server** (Ctrl+V), type the password
+   (generated ones look like `abcd-efgh-jkmn`, avoid look-alike characters,
+   and are accepted in any letter case),
    optionally build a squad (**Squad Builder**), then **Create Game** (share
    the 4-letter code) or **Join Game** with the code.
 3. Card images for the squad builder are optional; see

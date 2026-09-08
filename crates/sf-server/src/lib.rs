@@ -104,8 +104,29 @@ impl Admission {
 }
 
 /// Constant-time password check (no early exit on the first differing byte).
+/// Characters used for generated passwords and join codes: no 0/O, 1/I/l,
+/// so nothing can be misread when a password is passed along by voice or
+/// a screenshot. Lowercase only; comparison is case-insensitive anyway.
+pub const UNAMBIGUOUS: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+
+/// A random string over `UNAMBIGUOUS`.
+pub fn unambiguous_string(len: usize) -> String {
+    let mut rng = rand::thread_rng();
+    (0..len).map(|_| UNAMBIGUOUS[rng.gen_range(0..UNAMBIGUOUS.len())] as char).collect()
+}
+
+/// A generated server password: three unambiguous groups, `abcd-efgh-jkmn`.
+pub fn generate_password() -> String {
+    (0..3).map(|_| unambiguous_string(4)).collect::<Vec<_>>().join("-")
+}
+
+/// Passwords are compared after trimming and ASCII case-folding both
+/// sides (typing `ABCD-EFGH-JKMN` for `abcd-efgh-jkmn` is fine), in
+/// constant time.
 fn password_ok(expected: &str, given: &str) -> bool {
-    expected.len() == given.len() && bool::from(expected.as_bytes().ct_eq(given.as_bytes()))
+    let e = expected.trim().to_ascii_lowercase();
+    let g = given.trim().to_ascii_lowercase();
+    e.len() == g.len() && bool::from(e.as_bytes().ct_eq(g.as_bytes()))
 }
 
 enum SessionCmd {
@@ -167,12 +188,15 @@ struct Conn {
     ip: IpAddr,
 }
 
+/// Join codes: uppercase unambiguous characters (the lobby uppercases
+/// what players type).
+fn join_code() -> String {
+    unambiguous_string(4).to_ascii_uppercase()
+}
+
+/// Reconnect tokens are never typed: plain alphanumerics.
 fn rand_string(len: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(len)
-        .map(|c| (c as char).to_ascii_uppercase())
-        .collect()
+    rand::thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
 
 /// Refuse a connection politely: tell the client why, send a proper
@@ -259,7 +283,7 @@ where
         match rx.next().await {
             Some(Ok(Message::Text(t))) => match decode::<ClientMsg>(&t) {
                 Ok(ClientMsg::CreateGame { squad }) => {
-                    let code = rand_string(4);
+                    let code = join_code();
                     let (cmd_tx, cmd_rx) = mpsc::channel(64);
                     tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone()));
                     lobby.lock().await.insert(code.clone(), cmd_tx.clone());
@@ -655,4 +679,31 @@ async fn session(
         }
     }
     lobby.lock().await.remove(&code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passwords_and_codes_avoid_lookalike_characters() {
+        for _ in 0..200 {
+            let pw = generate_password();
+            assert_eq!(pw.len(), 14, "{pw}");
+            for c in pw.chars().filter(|c| *c != '-') {
+                assert!(UNAMBIGUOUS.contains(&(c as u8)), "{pw} contains {c:?}");
+            }
+            let code = join_code();
+            assert_eq!(code.len(), 4);
+            assert!(!code.contains(['0', 'O', '1', 'I', 'L']), "{code}");
+        }
+    }
+
+    #[test]
+    fn password_check_ignores_case_and_surrounding_whitespace() {
+        assert!(password_ok("abcd-efgh-jkmn", "ABCD-EFGH-JKMN"));
+        assert!(password_ok("abcd-efgh-jkmn", "  abcd-efgh-jkmn\n"));
+        assert!(!password_ok("abcd-efgh-jkmn", "abcd-efgh-jkmm"));
+        assert!(!password_ok("abcd", "abc"));
+    }
 }
