@@ -175,6 +175,24 @@ fn rand_string(len: usize) -> String {
         .collect()
 }
 
+/// Refuse a connection politely: tell the client why, send a proper
+/// WebSocket Close frame, then read out whatever the client already sent
+/// (it fires Hello and CreateGame back to back) so the TCP teardown is a
+/// FIN rather than a reset that could purge the explanation on its side.
+async fn refuse<T, R>(tx: &mut T, rx: &mut R, ip: IpAddr, message: String)
+where
+    T: futures_util::Sink<Message> + Unpin,
+    R: futures_util::Stream + Unpin,
+{
+    println!("refusing {ip}: {message}");
+    let _ = tx.send(Message::Text(encode(&ServerMsg::Error { message }))).await;
+    let _ = tx.send(Message::Close(None)).await;
+    let _ = tokio::time::timeout(Duration::from_millis(500), async {
+        while rx.next().await.is_some() {}
+    })
+    .await;
+}
+
 async fn handle_conn<S>(stream: S, ctx: Conn)
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -191,32 +209,21 @@ where
             Some(Ok(Message::Text(t))) => match decode::<ClientMsg>(&t) {
                 Ok(ClientMsg::Hello { proto_version, name, password: given }) => {
                     if proto_version != PROTOCOL_VERSION {
-                        let _ = tx
-                            .send(Message::Text(encode(&ServerMsg::Error {
-                                message: format!(
-                                    "protocol {proto_version} unsupported (server: {PROTOCOL_VERSION}) — please update"
-                                ),
-                            })))
-                            .await;
+                        let message = format!(
+                            "protocol {proto_version} unsupported (server: {PROTOCOL_VERSION}) — client and server must run the same release"
+                        );
+                        refuse(&mut tx, &mut rx, ip, message).await;
                         return;
                     }
                     if let Some(expected) = &password {
                         if admission.blocked(ip).await {
-                            let _ = tx
-                                .send(Message::Text(encode(&ServerMsg::Error {
-                                    message: "too many failed password attempts — try again later"
-                                        .into(),
-                                })))
-                                .await;
+                            let message = "too many failed password attempts — try again later";
+                            refuse(&mut tx, &mut rx, ip, message.into()).await;
                             return;
                         }
                         if !password_ok(expected, &given) {
                             admission.failed(ip).await;
-                            let _ = tx
-                                .send(Message::Text(encode(&ServerMsg::Error {
-                                    message: "wrong server password".into(),
-                                })))
-                                .await;
+                            refuse(&mut tx, &mut rx, ip, "wrong server password".into()).await;
                             return;
                         }
                         admission.succeeded(ip).await;
@@ -270,11 +277,7 @@ where
                             break (cmd_tx, seat, rx_srv);
                         }
                         _ => {
-                            let _ = tx
-                                .send(Message::Text(encode(&ServerMsg::Error {
-                                    message: "could not create game".into(),
-                                })))
-                                .await;
+                            refuse(&mut tx, &mut rx, ip, "could not create game".into()).await;
                             return;
                         }
                     }

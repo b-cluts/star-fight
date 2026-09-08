@@ -313,8 +313,15 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                 }
             }
             NetEvent::Closed(e) => {
+                // A server refusal ("wrong password", "protocol … unsupported")
+                // arrives as an Error just before the close: show that reason
+                // rather than the bare socket outcome.
                 if online.over.is_none() {
-                    online.over = Some(format!("Connection closed: {e}"));
+                    let refusal = online.status.strip_prefix("Server: ").map(str::to_owned);
+                    online.over = Some(match refusal {
+                        Some(why) => format!("Connection refused: {why}"),
+                        None => format!("Connection closed: {e}"),
+                    });
                 }
             }
         }

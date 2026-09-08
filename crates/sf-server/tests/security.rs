@@ -39,12 +39,16 @@ async fn start(password: &str) -> (u16, String) {
     (port, fp)
 }
 
+/// Unique per call even when tests start within the same clock tick
+/// (they run concurrently in one process).
 fn rand_suffix() -> u64 {
-    std::time::SystemTime::now()
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1)
-        ^ std::process::id() as u64
+        .unwrap_or(1);
+    (nanos ^ ((std::process::id() as u64) << 32)) ^ COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
