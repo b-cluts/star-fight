@@ -146,6 +146,9 @@ pub struct ShipState {
     /// Secretly planned action, executed right after the maneuver
     /// (defaults to Pass at commit if unset).
     pub planned_action: Option<PlannedAction>,
+    /// Secretly chosen bomb card to drop when the dial is revealed.
+    #[serde(default)]
+    pub bomb: Option<crate::upgrade::UpgradeId>,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

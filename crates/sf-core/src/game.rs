@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{self, ActionKind, ActionResult, PlannedAction};
 use crate::board::{Board, Seat};
+use crate::bombs::{self, BombHit, BombKind, BombToken, Detonation};
 use crate::combat;
 use crate::crit::{self, CritEffect};
 use crate::data::Content;
@@ -50,6 +51,7 @@ pub fn initiative_seat(totals: [u32; 2], tie_roll: crate::dice::AttackFace) -> u
 }
 
 /// Outcome of one point of normal damage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DamagePoint {
     Shield,
     Hull,
@@ -109,6 +111,8 @@ pub enum Rejection {
     BadTarget,
     /// Callsign empty, too long, or already used by another ship.
     BadCallsign(String),
+    /// The card is not equipped on that ship (or is not that kind of card).
+    NoSuchUpgrade,
 }
 
 impl std::fmt::Display for Rejection {
@@ -129,6 +133,7 @@ impl std::fmt::Display for Rejection {
             Rejection::NoPendingAttack => "no attack is waiting for a target",
             Rejection::BadTarget => "that ship is not an eligible target",
             Rejection::BadCallsign(why) => return write!(f, "bad callsign: {why}"),
+            Rejection::NoSuchUpgrade => "that ship does not carry that card",
         };
         f.write_str(s)
     }
@@ -151,6 +156,16 @@ pub struct MoveRecord {
     /// The action that was planned (Pass if none was).
     pub action: PlannedAction,
     pub action_result: ActionResult,
+    /// Bomb tokens dropped on dial reveal, before the move.
+    #[serde(default)]
+    pub dropped_before: Vec<BombToken>,
+    /// Mine tokens dropped by the action, after the move.
+    #[serde(default)]
+    pub dropped_after: Vec<BombToken>,
+    /// Mines this ship set off by crossing them (resolved after the move,
+    /// before the action).
+    #[serde(default)]
+    pub mines_hit: Vec<Detonation>,
 }
 
 /// One resolved attack in the Combat phase.
@@ -185,6 +200,9 @@ pub struct AttackRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnRecords {
     pub moves: Vec<MoveRecord>,
+    /// Bombs that went off at the end of the Activation phase.
+    #[serde(default)]
+    pub detonations: Vec<Detonation>,
     pub attacks: Vec<AttackRecord>,
     /// Narrated side effects: crit draws, Console Fire burns, Stunned
     /// Pilot bumps, destructions from effects.
@@ -195,6 +213,9 @@ pub struct TurnRecords {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationRecords {
     pub moves: Vec<MoveRecord>,
+    /// Bombs that went off at the end of the Activation phase.
+    #[serde(default)]
+    pub detonations: Vec<Detonation>,
     pub events: Vec<String>,
 }
 
@@ -244,6 +265,8 @@ pub struct CombatState {
     attacks: Vec<AttackRecord>,
     events: Vec<String>,
     moves: Vec<MoveRecord>,
+    #[serde(default)]
+    detonations: Vec<Detonation>,
 }
 
 /// Result of advancing the Combat phase one step.
@@ -296,6 +319,9 @@ pub struct ShipView {
     pub plan: Option<u8>,
     /// Own ships only; None on opponent ships.
     pub planned_action: Option<PlannedAction>,
+    /// Own ships only: the bomb card chosen to drop on dial reveal.
+    #[serde(default)]
+    pub bomb: Option<UpgradeId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +338,11 @@ pub struct GameState {
     pub squad_totals: [u32; 2],
     /// Present while the Combat phase is being stepped through.
     pub combat: Option<CombatState>,
+    /// Bomb and mine tokens currently on the board.
+    #[serde(default)]
+    pub bombs: Vec<BombToken>,
+    #[serde(default)]
+    next_bomb_id: u32,
 }
 
 impl GameState {
@@ -373,6 +404,7 @@ impl GameState {
                     stress: 0,
                     plan: None,
                     planned_action: None,
+                    bomb: None,
                     focus: 0,
                     evade: 0,
                     ion: 0,
@@ -393,6 +425,8 @@ impl GameState {
             initiative: PlayerId(0),
             squad_totals: [0, 0],
             combat: None,
+            bombs: Vec::new(),
+            next_bomb_id: 0,
         };
         for i in 0..gs_probe.ships.len() {
             let (h, sh) = (
@@ -415,6 +449,8 @@ impl GameState {
             initiative,
             squad_totals,
             combat: None,
+            bombs: Vec::new(),
+            next_bomb_id: 0,
         })
     }
 
@@ -1129,8 +1165,203 @@ impl GameState {
                 return Err(Rejection::BadLockTarget);
             }
         }
+        if let PlannedAction::DropMine(card) = planned
+            && !self.bomb_kind(content, i, card).is_some_and(BombKind::is_mine)
+        {
+            return Err(Rejection::NoSuchUpgrade);
+        }
         self.ships[i].planned_action = Some(planned);
         Ok(())
+    }
+
+    /// Secretly choose a bomb card to drop when the dial is revealed
+    /// (None = keep it). Only dial-reveal bombs qualify; mines are
+    /// dropped through `PlannedAction::DropMine`.
+    pub fn plan_bomb(
+        &mut self,
+        content: &Content,
+        player: PlayerId,
+        ship_id: ShipId,
+        bomb: Option<UpgradeId>,
+    ) -> Result<(), Rejection> {
+        if self.phase != Phase::Planning {
+            return Err(Rejection::WrongPhase);
+        }
+        if self.committed[player.0 as usize] {
+            return Err(Rejection::AlreadyCommitted);
+        }
+        let i = self.ship_index(ship_id)?;
+        if self.ships[i].owner != player {
+            return Err(Rejection::NotYourShip);
+        }
+        if self.ships[i].destroyed {
+            return Err(Rejection::ShipDestroyed);
+        }
+        if let Some(card) = bomb
+            && !self.bomb_kind(content, i, card).is_some_and(|k| !k.is_mine())
+        {
+            return Err(Rejection::NoSuchUpgrade);
+        }
+        self.ships[i].bomb = bomb;
+        Ok(())
+    }
+
+    /// The bomb kind of `card` if ship `i` carries it and it is a bomb.
+    fn bomb_kind(&self, content: &Content, i: usize, card: UpgradeId) -> Option<BombKind> {
+        if !self.ships[i].upgrades.contains(&card) {
+            return None;
+        }
+        content.upgrades.upgrade(card).and_then(|u| u.effect).and_then(BombKind::from_effect)
+    }
+
+    /// Discard `card` from ship `i` and place its token(s) one template
+    /// behind the ship's current pose.
+    fn drop_bomb(
+        &mut self,
+        content: &Content,
+        i: usize,
+        card: UpgradeId,
+        kind: BombKind,
+        events: &mut Vec<String>,
+    ) -> Vec<BombToken> {
+        let pose = self.ships[i].pose.expect("dropping ships are on the board");
+        let fp = self.class_of(content, &self.ships[i]).footprint;
+        let owner = self.ships[i].owner;
+        self.ships[i].upgrades.retain(|u| *u != card);
+        let name = content.upgrades.upgrade(card).map(|u| u.name.clone()).unwrap_or_default();
+        events.push(format!("{}: drops {name}", self.label(content, i)));
+        let tokens: Vec<BombToken> = bombs::drop_poses(kind, pose, fp)
+            .into_iter()
+            .map(|pose| {
+                let id = self.next_bomb_id;
+                self.next_bomb_id += 1;
+                BombToken { id, kind, card, pose, owner }
+            })
+            .collect();
+        self.bombs.extend(tokens.iter().copied());
+        tokens
+    }
+
+    /// Deal one faceup Damage card: a hull point plus a drawn critical.
+    fn faceup_card(
+        &mut self,
+        content: &Content,
+        i: usize,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        if self.hull_point(i) == DamagePoint::Hull && !self.ships[i].destroyed {
+            let effect = crit::draw(roll());
+            events.push(format!("{}: critical — {}", self.label(content, i), effect.name()));
+            self.apply_crit_effect(content, i, effect, roll, events);
+        }
+    }
+
+    /// A token goes off against the ships at indices `victims`.
+    fn detonate(
+        &mut self,
+        content: &Content,
+        token: BombToken,
+        victims: &[usize],
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) -> Detonation {
+        events.push(format!("{} detonates", token.kind.name()));
+        let mut hits = Vec::new();
+        for &i in victims {
+            let mut hit = BombHit {
+                ship: self.ships[i].id,
+                damage: 0,
+                crits: 0,
+                ion: 0,
+                stress: 0,
+                destroyed: false,
+            };
+            let mut dice = 0;
+            match token.kind {
+                BombKind::Proton => {
+                    self.faceup_card(content, i, roll, events);
+                    hit.crits = 1;
+                }
+                BombKind::Seismic => {
+                    self.damage_point(i);
+                    hit.damage = 1;
+                }
+                BombKind::Ion => {
+                    self.ships[i].ion += 2;
+                    hit.ion = 2;
+                }
+                BombKind::Thermal => {
+                    self.damage_point(i);
+                    hit.damage = 1;
+                    if !self.ships[i].destroyed {
+                        self.ships[i].stress += 1;
+                        hit.stress = 1;
+                    }
+                }
+                BombKind::ProximityMine => dice = 3,
+                BombKind::ClusterMine => dice = 2,
+                BombKind::ConnerNet => {
+                    self.damage_point(i);
+                    self.ships[i].ion += 2;
+                    hit.damage = 1;
+                    hit.ion = 2;
+                }
+            }
+            // Mines: suffer every hit and critical hit rolled (shields
+            // absorb criticals like any other damage).
+            for _ in 0..dice {
+                if self.ships[i].destroyed {
+                    break;
+                }
+                match AttackFace::from_d8(roll()) {
+                    AttackFace::Hit => {
+                        self.damage_point(i);
+                        hit.damage += 1;
+                    }
+                    AttackFace::Crit => {
+                        hit.damage += 1;
+                        if self.damage_point(i) == DamagePoint::Hull && !self.ships[i].destroyed {
+                            hit.crits += 1;
+                            let effect = crit::draw(roll());
+                            events.push(format!(
+                                "{}: critical — {}",
+                                self.label(content, i),
+                                effect.name()
+                            ));
+                            self.apply_crit_effect(content, i, effect, roll, events);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            hit.destroyed = self.ships[i].destroyed;
+            let mut what = Vec::new();
+            if hit.damage > 0 {
+                what.push(format!("{} damage", hit.damage));
+            }
+            if token.kind == BombKind::Proton {
+                what.push("faceup damage card".to_string());
+            }
+            if hit.ion > 0 {
+                what.push(format!("{} ion", hit.ion));
+            }
+            if hit.stress > 0 {
+                what.push("stressed".to_string());
+            }
+            if what.is_empty() {
+                what.push("no damage".to_string());
+            }
+            let died = if hit.destroyed { " — DESTROYED" } else { "" };
+            events.push(format!(
+                "{}: caught by the {} — {}{died}",
+                self.label(content, i),
+                token.kind.name(),
+                what.join(", ")
+            ));
+            hits.push(hit);
+        }
+        Detonation { token, hits }
     }
 
     /// Commit the player's plans. When both players have committed, the
@@ -1185,7 +1416,7 @@ impl GameState {
         if self.committed != [true, true] {
             return Ok(None);
         }
-        let (moves, events) = self.resolve_movement(content, roll);
+        let (moves, detonations, events) = self.resolve_movement(content, roll);
 
         // Combat order: highest pilot skill first (initiative breaks
         // ties), grouped by skill; each group's survivors are fixed when
@@ -1215,8 +1446,9 @@ impl GameState {
             attacks: Vec::new(),
             events: events.clone(),
             moves: moves.clone(),
+            detonations: detonations.clone(),
         });
-        Ok(Some(ActivationRecords { moves, events }))
+        Ok(Some(ActivationRecords { moves, detonations, events }))
     }
 
     /// Narrated events of the turn so far (for streaming deltas).
@@ -1251,6 +1483,7 @@ impl GameState {
                     self.finish_turn();
                     return Ok(CombatStep::Done(TurnRecords {
                         moves: cs.moves,
+                        detonations: cs.detonations,
                         attacks: cs.attacks,
                         events: cs.events,
                     }));
@@ -1374,7 +1607,7 @@ impl GameState {
         &mut self,
         content: &Content,
         roll: &mut dyn FnMut() -> u8,
-    ) -> (Vec<MoveRecord>, Vec<String>) {
+    ) -> (Vec<MoveRecord>, Vec<Detonation>, Vec<String>) {
         let order = movement_order(
             &self
                 .ships
@@ -1417,6 +1650,14 @@ impl GameState {
                 };
                 self.ships[i].ion = 0;
                 events.push(format!("{}: ionized — drifts straight 1", self.label(content, i)));
+            }
+            // Dial-reveal bombs drop before the ship moves.
+            let mut dropped_before = Vec::new();
+            if let Some(card) = self.ships[i].bomb.take()
+                && let Some(kind) = self.bomb_kind(content, i, card)
+                && !kind.is_mine()
+            {
+                dropped_before = self.drop_bomb(content, i, card, kind, &mut events);
             }
             let start = self.ships[i].pose.expect("placed");
             let path = maneuver::sample_path(start, man).expect("validated at plan time");
@@ -1481,6 +1722,33 @@ impl GameState {
                 }
             }
 
+            // Mines: any token the base or template crossed goes off on
+            // this ship, right after the maneuver.
+            let mut mines_hit = Vec::new();
+            let mut netted = false;
+            if !self.ships[i].destroyed {
+                let crossed: Vec<BombToken> = self
+                    .bombs
+                    .iter()
+                    .filter(|t| t.kind.is_mine())
+                    .filter(|t| {
+                        let tc = t.corners();
+                        used_path[..=stop]
+                            .iter()
+                            .any(|p| rules::obbs_overlap(&rules::footprint_corners(*p, fp), &tc))
+                    })
+                    .copied()
+                    .collect();
+                for token in crossed {
+                    self.bombs.retain(|t| t.id != token.id);
+                    if self.ships[i].destroyed {
+                        break;
+                    }
+                    netted |= token.kind == BombKind::ConnerNet;
+                    mines_hit.push(self.detonate(content, token, &[i], roll, &mut events));
+                }
+            }
+
             // Stunned Pilot: bumping costs a point of damage.
             if bumped
                 && !self.ships[i].destroyed
@@ -1496,12 +1764,15 @@ impl GameState {
             // Perform Action step: one action, right after moving. Stress,
             // bumping, destruction, or damaged sensors all forfeit it.
             let planned = self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
+            let mut dropped_after = Vec::new();
             let action_result = if destroyed {
                 ActionResult::Failed
             } else if self.ships[i].stress > 0 {
                 ActionResult::SkippedStressed
             } else if bumped {
                 ActionResult::SkippedBumped
+            } else if netted {
+                ActionResult::SkippedNetted
             } else if planned != PlannedAction::Pass
                 && self.ships[i].crits.contains(&CritEffect::DamagedSensorArray)
             {
@@ -1586,6 +1857,13 @@ impl GameState {
                             ActionResult::Failed
                         }
                     }
+                    PlannedAction::DropMine(card) => match self.bomb_kind(content, i, card) {
+                        Some(kind) if kind.is_mine() => {
+                            dropped_after = self.drop_bomb(content, i, card, kind, &mut events);
+                            ActionResult::Performed
+                        }
+                        _ => ActionResult::Failed,
+                    },
                 }
             };
 
@@ -1600,7 +1878,31 @@ impl GameState {
                 stress,
                 action: planned,
                 action_result,
+                dropped_before,
+                dropped_after,
+                mines_hit,
             });
+        }
+
+        // End of the Activation phase: every dial-reveal bomb goes off
+        // against all ships (either side) within Range 1 of its token.
+        let mut detonations = Vec::new();
+        let armed: Vec<BombToken> =
+            self.bombs.iter().filter(|t| !t.kind.is_mine()).copied().collect();
+        for token in armed {
+            self.bombs.retain(|t| t.id != token.id);
+            let tc = token.corners();
+            let victims: Vec<usize> = (0..self.ships.len())
+                .filter(|&k| !self.ships[k].destroyed)
+                .filter(|&k| {
+                    self.ships[k].pose.is_some_and(|p| {
+                        let fp = self.class_of(content, &self.ships[k]).footprint;
+                        combat::base_distance(&tc, &rules::footprint_corners(p, fp))
+                            <= combat::RANGE_BAND_UNITS
+                    })
+                })
+                .collect();
+            detonations.push(self.detonate(content, token, &victims, roll, &mut events));
         }
 
         // Console Fire burns at the start of each Combat phase: one attack
@@ -1619,7 +1921,7 @@ impl GameState {
             }
         }
 
-        (records, events)
+        (records, detonations, events)
     }
 
     /// End phase and turn bookkeeping once combat is complete.
@@ -2138,6 +2440,7 @@ impl GameState {
                     destroyed: s.destroyed,
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
+                    bomb: if own { s.bomb } else { None },
                 }
             })
             .collect()
@@ -3901,5 +4204,153 @@ mod tests {
         assert_eq!(gs.resign(P1), P0);
         assert_eq!(gs.phase, Phase::GameOver);
         assert_eq!(gs.winner, Some(P0));
+    }
+
+    // ---------------- Bombs ----------------
+
+    /// A Gamma Squadron Pilot (TIE Bomber) at the south edge carrying
+    /// `card`, an X-Wing far north; both fly straight `bomber_dist`/1.
+    fn bomber_duel(c: &Content, card: UpgradeId, bomber_dist: u8) -> GameState {
+        let mut gs = skirmish(
+            c,
+            &[("gammasquadronpilot", Pose::new(10.0, 3.0, FRAC_PI_2), bomber_dist)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].upgrades.push(card);
+        gs
+    }
+
+    #[test]
+    fn seismic_charge_drops_behind_and_blows_at_end_of_activation() {
+        let c = content();
+        let seismic = UpgradeId(181);
+        let mut gs = bomber_duel(&c, seismic, 1);
+        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic)).unwrap();
+        // Mines cannot be planned as dial-reveal bombs, nor unequipped cards.
+        assert_eq!(
+            gs.plan_bomb(&c, P0, ShipId(0), Some(UpgradeId(182))),
+            Err(Rejection::NoSuchUpgrade)
+        );
+        let mut blanks = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut blanks).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut blanks).unwrap().unwrap();
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.dropped_before.len(), 1);
+        let token = mv.dropped_before[0];
+        assert_eq!(token.kind, BombKind::Seismic);
+        // Rear edge at y=2, template to y=1: token front-center there.
+        assert!((token.pose.anchor.y - 1.0).abs() < 1e-9, "{:?}", token.pose);
+        // A straight 1 leaves the bomber's rear 2 units from the token —
+        // inside Range 1 — so it eats its own charge; the X-Wing is safe.
+        assert_eq!(rec.detonations.len(), 1);
+        assert_eq!(rec.detonations[0].hits.len(), 1);
+        assert_eq!(rec.detonations[0].hits[0].ship, ShipId(0));
+        assert_eq!(rec.detonations[0].hits[0].damage, 1);
+        assert_eq!(gs.ships[0].hull, 5);
+        assert_eq!(gs.ships[1].hull, 3);
+        assert!(gs.bombs.is_empty(), "reveal bombs never linger");
+        assert!(!gs.ships[0].upgrades.contains(&seismic), "card discarded");
+        assert!(rec.events.iter().any(|e| e.contains("drops Seismic Charges")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn proton_bomb_deals_a_faceup_card_and_a_fast_bomber_escapes_it() {
+        let c = content();
+        let proton = UpgradeId(180);
+        let mut gs = bomber_duel(&c, proton, 1);
+        gs.ships[0].shields = 2; // pretend shields: the faceup card ignores them
+        gs.plan_bomb(&c, P0, ShipId(0), Some(proton)).unwrap();
+        // crit::draw(9) = Stunned Pilot: no immediate extra damage.
+        let mut rolls = scripted(vec![9]);
+        gs.commit_plans(&c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
+        assert_eq!(rec.detonations[0].hits[0].crits, 1);
+        assert_eq!(gs.ships[0].shields, 2);
+        assert_eq!(gs.ships[0].hull, 5);
+        assert!(gs.ships[0].crits.contains(&CritEffect::StunnedPilot));
+
+        // Straight 2 puts the rear 3 units away: out of Range 1.
+        let mut gs = bomber_duel(&c, proton, 2);
+        gs.plan_bomb(&c, P0, ShipId(0), Some(proton)).unwrap();
+        let mut blanks = scripted(vec![7]);
+        gs.commit_plans(&c, P0, &mut blanks).unwrap();
+        let rec = gs.commit_plans(&c, P1, &mut blanks).unwrap().unwrap();
+        assert_eq!(rec.detonations.len(), 1);
+        assert!(rec.detonations[0].hits.is_empty());
+        assert_eq!(gs.ships[0].hull, 6);
+    }
+
+    /// Turn 1: the bomber drops `card` as its action; turn 2: the X-Wing
+    /// is moved by hand to just south of the token and flies straight 2
+    /// through it. Returns the state and the X-Wing's turn-2 move record.
+    fn cross_mine(c: &Content, card: UpgradeId, rolls: Vec<u8>) -> (GameState, MoveRecord) {
+        let mut gs = bomber_duel(c, card, 1);
+        gs.plan_action(c, P0, ShipId(0), PlannedAction::DropMine(card)).unwrap();
+        let mut blanks = scripted(vec![7]);
+        gs.commit_plans(c, P0, &mut blanks).unwrap();
+        let rec = gs.commit_plans(c, P1, &mut blanks).unwrap().unwrap();
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        assert!(!mv.dropped_after.is_empty());
+        assert!(!gs.ships[0].upgrades.contains(&card));
+        assert_eq!(gs.bombs.len(), mv.dropped_after.len());
+        // Bomber now front y=4; token behind it at y 1..2. Park the
+        // bomber out of the way and aim the X-Wing at the token.
+        gs.ships[0].pose = Some(Pose::new(4.0, 12.0, FRAC_PI_2));
+        gs.ships[1].pose = Some(Pose::new(10.0, 1.0, FRAC_PI_2));
+        let s1 = dial_index(c, gs.ships[0].class, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 1
+        });
+        let s2 = dial_index(c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 2
+        });
+        gs.plan_maneuver(c, P0, ShipId(0), s1).unwrap();
+        gs.plan_maneuver(c, P1, ShipId(1), s2).unwrap();
+        gs.plan_action(c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let mut rolls = scripted(rolls);
+        gs.commit_plans(c, P0, &mut rolls).unwrap();
+        let rec = gs.commit_plans(c, P1, &mut rolls).unwrap().unwrap();
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap().clone();
+        (gs, mv)
+    }
+
+    #[test]
+    fn proximity_mine_rolls_three_dice_on_the_ship_that_crosses_it() {
+        let c = content();
+        // hit, crit, blank; everything after is blank.
+        let (gs, mv) = cross_mine(&c, UpgradeId(182), vec![0, 3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(mv.mines_hit.len(), 1);
+        let hit = mv.mines_hit[0].hits[0];
+        assert_eq!(hit.ship, ShipId(1));
+        assert_eq!(hit.damage, 2);
+        assert_eq!(hit.crits, 0, "shields absorb the critical");
+        assert_eq!(gs.ships[1].shields, 1);
+        assert_eq!(gs.ships[1].hull, 3);
+        assert_eq!(mv.action_result, ActionResult::Performed, "mines don't cost the action");
+        assert!(gs.bombs.is_empty(), "a detonated mine is removed");
+    }
+
+    #[test]
+    fn conner_net_ionizes_and_denies_the_action() {
+        let c = content();
+        let (gs, mv) = cross_mine(&c, UpgradeId(185), vec![7]);
+        let hit = mv.mines_hit[0].hits[0];
+        assert_eq!((hit.damage, hit.ion), (1, 2));
+        assert_eq!(gs.ships[1].shields, 2);
+        assert_eq!(gs.ships[1].ion, 2);
+        assert_eq!(mv.action_result, ActionResult::SkippedNetted);
+        assert_eq!(gs.ships[1].focus, 0);
+    }
+
+    #[test]
+    fn cluster_mines_drop_three_tokens_each_firing_two_dice() {
+        let c = content();
+        let (gs, mv) = cross_mine(&c, UpgradeId(184), vec![0, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        // The X-Wing (1 wide) flies up the middle: the center token for
+        // sure; the outer two only graze its edges (touching counts as
+        // overlap, so either outcome of the rounding is accepted).
+        assert!(!mv.mines_hit.is_empty());
+        assert_eq!(mv.mines_hit[0].hits[0].damage, 2, "two hits from the first token");
+        assert_eq!(gs.bombs.len() + mv.mines_hit.len(), 3, "untriggered mines stay armed");
     }
 }

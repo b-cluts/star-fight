@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geometry::{Footprint, Pose, Vec2};
 use crate::ship::ShipId;
+use crate::upgrade::UpgradeId;
 
 /// An entry on a ship's action bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +61,9 @@ pub enum PlannedAction {
     Boost(BoostDir),
     /// Lock a target at range 1-3 (any point to any point, 360°).
     TargetLock(ShipId),
+    /// Card action: discard this mine card to drop its token(s) behind
+    /// the ship (Proximity Mines, Cluster Mines, Conner Net).
+    DropMine(UpgradeId),
 }
 
 impl PlannedAction {
@@ -72,6 +76,7 @@ impl PlannedAction {
             PlannedAction::BarrelRoll(_) => Some(ActionKind::BarrelRoll),
             PlannedAction::Boost(_) => Some(ActionKind::Boost),
             PlannedAction::TargetLock(_) => Some(ActionKind::TargetLock),
+            PlannedAction::DropMine(_) => None,
         }
     }
 }
@@ -88,6 +93,8 @@ pub enum ActionResult {
     SkippedDamaged,
     /// The action was impossible (barrel roll blocked, lock out of range).
     Failed,
+    /// Caught in a Conner Net: the Perform Action step is skipped.
+    SkippedNetted,
 }
 
 /// Barrel-roll destination: one end of a straight-1 template against the

@@ -433,6 +433,7 @@ async fn session(
                         committed: gs.committed,
                         initiative: gs.initiative.0 as u8,
                         squad_totals: gs.squad_totals,
+                        bombs: gs.bombs.clone(),
                     }
                 );
             }
@@ -576,6 +577,25 @@ async fn session(
                                     committed: gs.committed,
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
+                                    bombs: gs.bombs.clone(),
+                                }
+                            ),
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
+                    ClientMsg::PlanBomb { ship_id, bomb } => {
+                        match gs.plan_bomb(&content, player, ship_id, bomb) {
+                            // Plans are secret: only the planner's view changes.
+                            Ok(()) => send_to!(
+                                seat,
+                                ServerMsg::Snapshot {
+                                    phase: gs.phase,
+                                    turn: gs.turn,
+                                    ships: gs.snapshot_for(&content, player),
+                                    committed: gs.committed,
+                                    initiative: gs.initiative.0 as u8,
+                                    squad_totals: gs.squad_totals,
+                                    bombs: gs.bombs.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -593,6 +613,7 @@ async fn session(
                                     committed: gs.committed,
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
+                                    bombs: gs.bombs.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -603,13 +624,15 @@ async fn session(
                         {
                             Ok(None) => snapshots!(&*gs),
                             Ok(Some(act)) => {
-                                let (moves, events) = (act.moves, act.events);
+                                let (moves, detonations, events) =
+                                    (act.moves, act.detonations, act.events);
                                 streamed = events.len();
                                 for s in 0..players.len() as u8 {
                                     send_to!(
                                         s,
                                         ServerMsg::MovementResult {
                                             moves: moves.clone(),
+                                            detonations: detonations.clone(),
                                             events: events.clone(),
                                         }
                                     );

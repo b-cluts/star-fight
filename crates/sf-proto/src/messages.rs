@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use sf_core::action::PlannedAction;
 use sf_core::board::Board;
+use sf_core::bombs::{BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::ship::ShipId;
@@ -43,6 +44,12 @@ pub enum ClientMsg {
     PlanAction {
         ship_id: ShipId,
         action: PlannedAction,
+    },
+    /// Secretly choose a bomb card to drop when the dial is revealed
+    /// (None = keep it).
+    PlanBomb {
+        ship_id: ShipId,
+        bomb: Option<UpgradeId>,
     },
     CommitPlans,
     /// Answer to ChooseTarget: which eligible enemy to attack, and with
@@ -92,6 +99,9 @@ pub enum ServerMsg {
         /// moves first AND fires first at equal skill).
         initiative: u8,
         squad_totals: [u32; 2],
+        /// Bomb and mine tokens on the board (public).
+        #[serde(default)]
+        bombs: Vec<BombToken>,
     },
     /// A command of yours was refused.
     Rejected {
@@ -102,6 +112,9 @@ pub enum ServerMsg {
     /// / OpponentChoosing messages, closed by TurnEnd.
     MovementResult {
         moves: Vec<MoveRecord>,
+        /// Bombs that went off at the end of the Activation phase.
+        #[serde(default)]
+        detonations: Vec<Detonation>,
         events: Vec<String>,
     },
     /// One attack resolved in the Combat phase.
