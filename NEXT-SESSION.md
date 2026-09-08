@@ -1,8 +1,8 @@
-# Where we left off (2026-09-05, end of session 5)
+# Where we left off (2026-09-09, session 6)
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (121 tests),
+`cargo build` clean, `cargo test --workspace` green (123 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -148,17 +148,57 @@ and Server `ws://127.0.0.1:7777`.
 
 ## NEXT TASK
 
-0. **START HERE (2026-09-05).** Ask whether the user playtested the new
-   weapon prompt (ordnance squad: Y-Wing turret / Bomber torpedoes /
-   Falcon missiles) and the new ships (A-Wing, Falcon, three TIEs,
-   Lambda) on a real board — none have been seen in the client except
-   the Y-Wing sprite in the sandbox. Then CUT v0.3.0: bump `version` in
-   the workspace Cargo.toml to 0.3.0, run `cargo check` (lockfile), commit
-   "Version 0.3.0", `git tag -a v0.3.0 -m "..."`, push main and the tag;
-   the release workflow builds the zips. Main already carries PROTOCOL
-   2 (weapon choices in ChooseTarget/DeclareTarget), so v0.2.0 clients
-   are refused by a newer server — the user and friend must be on the
-   same zip. After that, continue the effects roadmap at 4.b (talents).
+0. **START HERE (2026-09-09).** Playtest status: the user played on
+   main (2026-09-08) — new ships and the weapon prompt work ("things
+   look good"); the missile option was missing only because no target
+   lock had been taken. Agreed next order:
+   a. **Weapon status in the HUD** (promised): for the selected ship
+      list each secondary weapon card with "ready vs <callsign> R<n>" /
+      "needs target lock on the target" / "needs focus token" / "out of
+      range or arc" / "spent". Compute client-side from the snapshot +
+      Content (mirror `attack_options`: band from
+      `combat::range_band_between`, arc via `combat::in_front_arc`,
+      lock == that target, focus > 0), or extend ShipView. Also grey out
+      unavailable weapons in the Declare Target prompt with the reason
+      (needs `ChooseTarget` to carry them → protocol bump to 3).
+   b. **Bombs** (Bomber is fielded, cards exist ids 180-186, nothing
+      drops). FE rules to re-check against the reference clone before
+      encoding: dial-reveal bombs (Proton/Seismic/Ion/Thermal) are
+      dropped BEFORE the move, token placed behind the base with the
+      straight-1 template, detonate at the END of the Activation phase
+      hitting every ship within Range 1 (Proton: faceup card; Seismic +
+      Thermal: 1 damage; Ion: ion tokens); mines (Proximity/Cluster/
+      Conner Net) are dropped as an action after moving and detonate
+      when a base or template overlaps them (attack dice vs that ship).
+      Plan: `ShipState`/proto: planning gets `bomb: Option<UpgradeId>`
+      (drop-on-reveal choice) and `PlannedAction::DropMine(UpgradeId)`;
+      `GameState.bombs: Vec<BombToken { id, kind, pose, owner }>`;
+      resolve_movement drops then moves; end of Activation detonates;
+      obstacle-style overlap test for mines; client draws tokens as our
+      own simple shapes (dark disc + per-type symbol, assets/bombs/ or
+      gizmos) and detonation as an expanding Range-1 ring with the same
+      per-type flavour as the impacts (fireball / shock rings / sparks).
+      User asked specifically for the token left behind and the
+      detonation animation.
+   c. Then CUT v0.3.0: bump `version` in the workspace Cargo.toml, run
+      `cargo check` (lockfile), commit "Version 0.3.0", `git tag -a
+      v0.3.0 -m "..."`, push main and the tag; the release workflow
+      builds the zips. Main is on PROTOCOL 2 (3 if the prompt carries
+      unavailable weapons) — v0.2.0 clients are refused by a newer
+      server, so the user and friend must run the same zip.
+   d. Then the effects roadmap at 4.b (talents), then the glossary.
+   Done 2026-09-08/09 (all pushed): server refusals now send Error +
+   Close and drain (the old drop caused "connection reset by peer" that
+   hid the reason) and the client shows "Connection refused: <why>";
+   generated passwords `abcd-efgh-jkmn` over an unambiguous alphabet,
+   join codes likewise, password check trims + case-folds (still
+   constant time); TIE/X-Wing dials reordered speed-major; the Planning
+   help line lists only the selected ship's action bar; failed target
+   locks are narrated in the turn events (lock needs Range 1-3 right
+   after the ship's own move); ordnance flies as a warhead from the nose
+   (turret shots from the base center); impacts by weapon type:
+   Blast / Sparks (ion) / Fragments (cluster, assault, flechette) /
+   Flash — none of the effects have been seen on screen yet.
 1. ~~Playtest M4~~ done 2026-09-02 (join string wrap confirmed good).
 2. ~~Playtest callsigns~~ done 2026-09-02: hover name tag and N-rename
    confirmed working by the user.
