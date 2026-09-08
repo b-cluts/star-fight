@@ -8,6 +8,7 @@ use std::f64::consts::FRAC_PI_2;
 
 use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, Side};
 use sf_core::board::Seat;
+use sf_core::bombs::{BombKind, BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
@@ -26,6 +27,8 @@ use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, ShowArcs}
 /// (samples are 0.1 units apart → 4 units/second).
 const ANIM_SAMPLES_PER_SEC: f32 = 40.0;
 
+/// Seconds a bomb or mine detonation plays for.
+const DETONATION_DUR: f32 = 1.1;
 /// Seconds per attack in the combat animation.
 const ATTACK_DUR: f32 = 1.1;
 /// Fraction of an attack spent in bolt flight (the rest: impact / fade).
@@ -38,6 +41,8 @@ pub struct Snap {
     pub committed: [bool; 2],
     pub initiative: u8,
     pub totals: [u32; 2],
+    /// Bomb and mine tokens on the board.
+    pub bombs: Vec<BombToken>,
 }
 
 /// One step of the turn playback queue, fed by server messages as the
@@ -67,6 +72,8 @@ pub enum AnimItem {
     Waiting {
         attacker: u32,
     },
+    /// A bomb or mine token going off.
+    Detonation(Detonation),
     /// Combat finished: adopt the post-turn snapshot after this.
     TurnEnd,
 }
@@ -79,16 +86,20 @@ pub struct Anim {
     pub end_poses: HashMap<u32, Pose>,
     /// Attacks animated so far this turn (miss side alternation).
     pub attack_no: usize,
+    /// Tokens on the board as the playback stands (drops appear as the
+    /// move plays, detonated tokens vanish when their blast ends).
+    pub tokens: Vec<BombToken>,
 }
 
 impl Anim {
-    fn new() -> Self {
+    fn new(tokens: Vec<BombToken>) -> Self {
         Self {
             queue: VecDeque::new(),
             current: None,
             t: 0.0,
             end_poses: HashMap::new(),
             attack_no: 0,
+            tokens,
         }
     }
 
@@ -227,7 +238,15 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online.status = format!("Matched with {opponent} — place your ships");
                     online.opponent = opponent;
                 }
-                ServerMsg::Snapshot { phase, turn, ships, committed, initiative, squad_totals } => {
+                ServerMsg::Snapshot {
+                    phase,
+                    turn,
+                    ships,
+                    committed,
+                    initiative,
+                    squad_totals,
+                    bombs,
+                } => {
                     if phase != Phase::Placement {
                         online.overrides.clear();
                         online.drag = None;
@@ -237,8 +256,15 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         online.sel =
                             ships.iter().find(|s| s.owner.0 == seat as u32).map(|s| s.id.0);
                     }
-                    let snap =
-                        Snap { phase, turn, ships, committed, initiative, totals: squad_totals };
+                    let snap = Snap {
+                        phase,
+                        turn,
+                        ships,
+                        committed,
+                        initiative,
+                        totals: squad_totals,
+                        bombs,
+                    };
                     if online.anim.is_some() {
                         online.pending_snap = Some(snap);
                     } else {
@@ -253,13 +279,17 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                 ServerMsg::Rejected { reason } => {
                     online.status = format!("Rejected: {reason}");
                 }
-                ServerMsg::MovementResult { moves, events } => {
+                ServerMsg::MovementResult { moves, detonations, events } => {
                     online.status.clear();
                     online.waiting_on = None;
                     online.combat_log = events;
-                    let anim = online.anim.get_or_insert_with(Anim::new);
+                    let tokens = online.snap.as_ref().map(|s| s.bombs.clone()).unwrap_or_default();
+                    let anim = online.anim.get_or_insert_with(|| Anim::new(tokens));
                     for m in moves {
                         anim.push(AnimItem::Move(m));
+                    }
+                    for d in detonations {
+                        anim.push(AnimItem::Detonation(d));
                     }
                 }
                 ServerMsg::AttackResult { attack, events } => {
@@ -269,7 +299,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online.waiting_on = None;
                     online
                         .anim
-                        .get_or_insert_with(Anim::new)
+                        .get_or_insert_with(|| Anim::new(Vec::new()))
                         .push(AnimItem::Attack { rec: attack, line });
                 }
                 ServerMsg::ChooseTarget { attacker, options } => {
@@ -283,18 +313,21 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         .collect();
                     online
                         .anim
-                        .get_or_insert_with(Anim::new)
+                        .get_or_insert_with(|| Anim::new(Vec::new()))
                         .push(AnimItem::Prompt { attacker: attacker.0, options });
                 }
                 ServerMsg::OpponentChoosing { attacker } => {
                     online
                         .anim
-                        .get_or_insert_with(Anim::new)
+                        .get_or_insert_with(|| Anim::new(Vec::new()))
                         .push(AnimItem::Waiting { attacker: attacker.0 });
                 }
                 ServerMsg::TurnEnd { events } => {
                     online.combat_log.extend(events);
-                    online.anim.get_or_insert_with(Anim::new).push(AnimItem::TurnEnd);
+                    online
+                        .anim
+                        .get_or_insert_with(|| Anim::new(Vec::new()))
+                        .push(AnimItem::TurnEnd);
                 }
                 ServerMsg::GameOver { winner, reason } => {
                     let text = match (winner, online.seat) {
@@ -530,6 +563,9 @@ fn animate(
         if a.current.is_none() {
             match a.queue.pop_front() {
                 Some(item) => {
+                    if let AnimItem::Move(m) = &item {
+                        a.tokens.extend(m.dropped_before.iter().copied());
+                    }
                     a.current = Some(item);
                     a.t = 0.0;
                 }
@@ -561,6 +597,27 @@ fn animate(
                     }
                 }
                 if k >= mv.path.len() {
+                    a.tokens.extend(mv.dropped_after.iter().copied());
+                    // Mines this move set off play right after it.
+                    for d in mv.mines_hit.iter().rev() {
+                        a.queue.push_front(AnimItem::Detonation(d.clone()));
+                    }
+                    a.current = None;
+                    continue;
+                }
+                return;
+            }
+            AnimItem::Detonation(d) => {
+                a.t += time.delta_secs();
+                if a.t >= DETONATION_DUR {
+                    for hit in d.hits.iter().filter(|h| h.destroyed) {
+                        for (ship, _, _, mut vis) in &mut ships_q {
+                            if ship.0 == hit.ship.0 {
+                                *vis = Visibility::Hidden;
+                            }
+                        }
+                    }
+                    a.tokens.retain(|t| t.id != d.token.id);
                     a.current = None;
                     continue;
                 }
@@ -866,6 +923,32 @@ fn planning_input(
             plan_action(&mut online, PlannedAction::Boost(BoostDir::BankRight));
         }
     }
+    // B: cycle the bomb card to drop on dial reveal (then none);
+    // M: cycle the mine card dropped as this turn's action (then Pass).
+    let (reveal, mines, cur_bomb, cur_action) = {
+        let Some(snap) = &online.snap else { return };
+        let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
+            return;
+        };
+        let (reveal, mines) = bomb_cards(&game, view);
+        (reveal, mines, view.bomb, view.planned_action)
+    };
+    if keys.just_pressed(KeyCode::KeyB) && !reveal.is_empty() {
+        let bomb = match cur_bomb.and_then(|c| reveal.iter().position(|u| *u == c)) {
+            None => Some(reveal[0]),
+            Some(i) => reveal.get(i + 1).copied(),
+        };
+        online.send(ClientMsg::PlanBomb { ship_id: ShipId(selected), bomb });
+    }
+    if keys.just_pressed(KeyCode::KeyM) && !mines.is_empty() {
+        let next = match cur_action {
+            Some(PlannedAction::DropMine(c)) => {
+                mines.iter().position(|u| *u == c).and_then(|i| mines.get(i + 1).copied())
+            }
+            _ => Some(mines[0]),
+        };
+        plan_action(&mut online, next.map(PlannedAction::DropMine).unwrap_or(PlannedAction::Pass));
+    }
     if online.lock_pick
         && buttons.just_pressed(MouseButton::Left)
         && let Some(cur) = cursor.0
@@ -1131,7 +1214,7 @@ fn draw_volley(
     }
 }
 
-fn action_name(snap: Option<&Snap>, a: PlannedAction) -> String {
+fn action_name(game: &Game, snap: Option<&Snap>, a: PlannedAction) -> String {
     match a {
         PlannedAction::Pass => "Pass".into(),
         PlannedAction::Focus => "Focus".into(),
@@ -1142,6 +1225,181 @@ fn action_name(snap: Option<&Snap>, a: PlannedAction) -> String {
         PlannedAction::Boost(BoostDir::BankLeft) => "Boost L".into(),
         PlannedAction::Boost(BoostDir::BankRight) => "Boost R".into(),
         PlannedAction::TargetLock(id) => format!("Lock {}", callsign(snap, id.0)),
+        PlannedAction::DropMine(card) => format!("Drop {}", card_name(game, card)),
+    }
+}
+
+/// The ship's equipped bomb cards: (dial-reveal bombs, mines).
+fn bomb_cards(game: &Game, view: &ShipView) -> (Vec<UpgradeId>, Vec<UpgradeId>) {
+    let kind = |u: &UpgradeId| {
+        game.content.upgrades.upgrade(*u).and_then(|c| c.effect).and_then(BombKind::from_effect)
+    };
+    let pick = |mine: bool| -> Vec<UpgradeId> {
+        view.upgrade_ids
+            .iter()
+            .filter(|u| kind(u).is_some_and(|k| k.is_mine() == mine))
+            .copied()
+            .collect()
+    };
+    (pick(false), pick(true))
+}
+
+fn card_name(game: &Game, card: UpgradeId) -> String {
+    game.content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_else(|| "card".into())
+}
+
+/// One-line narration of a detonation for the HUD.
+fn detonation_line(snap: &Snap, d: &Detonation) -> String {
+    if d.hits.is_empty() {
+        return format!("{} detonates — nobody within Range 1", d.token.kind.name());
+    }
+    let hits: Vec<String> = d
+        .hits
+        .iter()
+        .map(|h| {
+            let mut what = Vec::new();
+            if h.damage > 0 {
+                what.push(format!("{} damage", h.damage));
+            }
+            if h.crits > 0 && d.token.kind == BombKind::Proton {
+                what.push("faceup card".to_string());
+            } else if h.crits > 0 {
+                what.push(format!("{} critical", h.crits));
+            }
+            if h.ion > 0 {
+                what.push(format!("{} ion", h.ion));
+            }
+            if h.stress > 0 {
+                what.push("stress".to_string());
+            }
+            let died = if h.destroyed { " DESTROYED" } else { "" };
+            format!("{}: {}{died}", callsign(Some(snap), h.ship.0), what.join(", "))
+        })
+        .collect();
+    format!("{} detonates — {}", d.token.kind.name(), hits.join("; "))
+}
+
+/// A bomb or mine token: a square outline in the owner's shade with a
+/// symbol for its kind.
+fn draw_bomb_token(gizmos: &mut Gizmos, game: &Game, t: &BombToken, own: bool) {
+    let c = t.corners();
+    let outline = if own { Color::srgb(0.85, 0.85, 0.85) } else { Color::srgb(0.7, 0.45, 0.45) };
+    for i in 0..4 {
+        gizmos.line_2d(game.to_world(c[i]), game.to_world(c[(i + 1) % 4]), outline);
+    }
+    let center = game.to_world(t.center());
+    let r = render::PX * 0.32;
+    let tint = bomb_color(t.kind);
+    match t.kind {
+        BombKind::Proton | BombKind::Seismic | BombKind::Thermal => {
+            // A round bomb with a fuse tick.
+            gizmos.circle_2d(center, r, tint);
+            gizmos.circle_2d(center, r * 0.55, tint);
+            gizmos.line_2d(center + Vec2::new(0.0, r), center + Vec2::new(r * 0.4, r * 1.5), tint);
+        }
+        BombKind::Ion => {
+            gizmos.circle_2d(center, r, tint);
+            for k in 0..4 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_2 + 0.4;
+                gizmos.line_2d(center, center + Vec2::from_angle(a) * r * 0.9, tint);
+            }
+        }
+        BombKind::ProximityMine | BombKind::ClusterMine => {
+            // Spiked mine: circle with eight studs.
+            gizmos.circle_2d(center, r * 0.7, tint);
+            for k in 0..8 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                let dir = Vec2::from_angle(a);
+                gizmos.line_2d(center + dir * r * 0.7, center + dir * r * 1.1, tint);
+            }
+        }
+        BombKind::ConnerNet => {
+            // A net: crossed lines inside the square.
+            let s = r * 1.1;
+            for k in -1..=1 {
+                let o = k as f32 * s * 0.66;
+                gizmos.line_2d(center + Vec2::new(-s, o), center + Vec2::new(s, o), tint);
+                gizmos.line_2d(center + Vec2::new(o, -s), center + Vec2::new(o, s), tint);
+            }
+        }
+    }
+}
+
+fn bomb_color(kind: BombKind) -> Color {
+    match kind {
+        BombKind::Proton => Color::srgb(1.0, 0.6, 0.2),
+        BombKind::Seismic => Color::srgb(1.0, 0.8, 0.3),
+        BombKind::Thermal => Color::srgb(1.0, 0.35, 0.25),
+        BombKind::Ion | BombKind::ConnerNet => Color::srgb(0.5, 0.8, 1.0),
+        BombKind::ProximityMine | BombKind::ClusterMine => Color::srgb(1.0, 0.45, 0.35),
+    }
+}
+
+/// Detonation: an expanding blast out to the token's Range-1 reach (a
+/// short one for mines, which only hurt the ship on top of them), with
+/// per-kind flavour — fireball, ion sparks, or flying fragments — and a
+/// flash on every ship it caught.
+fn draw_detonation(gizmos: &mut Gizmos, game: &Game, snap: &Snap, anim: &Anim, d: &Detonation) {
+    let center = game.to_world(d.token.center());
+    let q = (anim.t / DETONATION_DUR).clamp(0.0, 1.0);
+    let alpha = 1.0 - q * q;
+    let reach =
+        if d.token.kind.is_mine() { 1.2 } else { (sf_core::combat::RANGE_BAND_UNITS + 0.5) as f32 }
+            * render::PX;
+    let tint = bomb_color(d.token.kind).with_alpha(alpha);
+    match d.token.kind {
+        BombKind::Proton | BombKind::Seismic | BombKind::Thermal => {
+            // Fireball core, then a white shock ring racing to Range 1.
+            let core = (q * 3.0).min(1.0);
+            gizmos.circle_2d(center, 6.0 + core * 34.0, Color::srgba(1.0, 0.5, 0.1, alpha));
+            gizmos.circle_2d(center, 3.0 + core * 18.0, Color::srgba(1.0, 0.9, 0.5, alpha));
+            gizmos.circle_2d(center, q * reach, Color::srgba(1.0, 1.0, 1.0, alpha * 0.6));
+            gizmos.circle_2d(center, (q * reach - 8.0).max(0.0), tint);
+        }
+        BombKind::Ion | BombKind::ConnerNet => {
+            // Blue shock rings and jittering arcs.
+            gizmos.circle_2d(center, q * reach, Color::srgba(0.6, 0.85, 1.0, alpha));
+            gizmos.circle_2d(center, q * reach * 0.6, Color::srgba(0.8, 0.95, 1.0, alpha * 0.7));
+            let seed = d.token.id.wrapping_mul(97).wrapping_add((anim.t * 40.0) as u32);
+            for k in 0..14u32 {
+                let a0 = hash01(seed.wrapping_mul(7).wrapping_add(k)) * std::f32::consts::TAU;
+                let r0 = hash01(seed.wrapping_add(k * 13)) * q * reach;
+                let a1 = a0 + (hash01(seed.wrapping_add(k * 29)) - 0.5) * 1.2;
+                let p0 = center + Vec2::from_angle(a0) * r0;
+                let p1 = center + Vec2::from_angle(a1) * (r0 + 12.0);
+                gizmos.line_2d(p0, p1, Color::srgba(0.6, 0.85, 1.0, alpha));
+            }
+        }
+        BombKind::ProximityMine | BombKind::ClusterMine => {
+            // Flash plus fragments flying outward.
+            gizmos.circle_2d(
+                center,
+                4.0 + (q * 3.0).min(1.0) * 16.0,
+                Color::srgba(1.0, 0.9, 0.6, alpha),
+            );
+            let seed = d.token.id.wrapping_mul(131);
+            for k in 0..16u32 {
+                let a = hash01(seed.wrapping_add(k * 17)) * std::f32::consts::TAU;
+                let speed = 0.6 + hash01(seed.wrapping_add(k * 41)) * 0.8;
+                let dir = Vec2::from_angle(a);
+                let head = center + dir * q * reach * 1.4 * speed;
+                gizmos.line_2d(head - dir * 6.0, head, tint);
+            }
+        }
+    }
+    for hit in &d.hits {
+        let Some(pose) = anim.end_pose(hit.ship.0, snap) else { continue };
+        let Some(view) = snap.ships.iter().find(|v| v.id.0 == hit.ship.0) else { continue };
+        let fp = game.ships.classes[game.class_index(view.class)].footprint;
+        let at = game.to_world(sf_core::combat::base_center(pose, fp));
+        let flash = if hit.ion > 0 && hit.damage == 0 {
+            Color::srgba(0.5, 0.75, 1.0, alpha)
+        } else {
+            Color::srgba(1.0, 0.6, 0.2, alpha)
+        };
+        let wide = if hit.destroyed { 2.0 } else { 1.0 };
+        gizmos.circle_2d(at, (6.0 + q * 26.0) * wide, flash);
+        gizmos.circle_2d(at, 3.0 + q * 12.0, Color::srgba(1.0, 1.0, 0.9, alpha));
     }
 }
 
@@ -1175,6 +1433,13 @@ fn draw(
     *gvis = Visibility::Hidden;
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
+    let tokens: &[BombToken] = match &online.anim {
+        Some(a) => &a.tokens,
+        None => &snap.bombs,
+    };
+    for t in tokens {
+        draw_bomb_token(&mut gizmos, &game, t, t.owner.0 == u32::from(seat));
+    }
     // Name tag for the ship under the cursor (post-move pose while a turn
     // animates, provisional pose while placing).
     hover.0 = render::hovered(
@@ -1236,6 +1501,9 @@ fn draw(
             }
             Some(AnimItem::Attack { rec, .. }) => {
                 draw_attack_fx(&mut gizmos, &game, snap, a, rec);
+            }
+            Some(AnimItem::Detonation(d)) => {
+                draw_detonation(&mut gizmos, &game, snap, a, d);
             }
             Some(AnimItem::Prompt { attacker, options }) => {
                 if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
@@ -1344,7 +1612,10 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             line.push_str(&format!(" | crits: {}", names.join(", ")));
         }
         if let Some(a) = view.planned_action {
-            line.push_str(&format!(" | action: {}", action_name(Some(snap), a)));
+            line.push_str(&format!(" | action: {}", action_name(&game, Some(snap), a)));
+        }
+        if let Some(b) = view.bomb {
+            line.push_str(&format!(" | bomb: {} (drops on reveal)", card_name(&game, b)));
         }
         if snap.phase == Phase::Planning {
             let dial = game.dial(class);
@@ -1417,8 +1688,17 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             if bar.contains(&ActionKind::Boost) {
                 acts.push("7/8/9 Boost");
             }
+            let (reveal, mines) = online
+                .sel
+                .and_then(|id| snap.ships.iter().find(|v| v.id.0 == id))
+                .map(|v| bomb_cards(&game, v))
+                .unwrap_or_default();
+            if !mines.is_empty() {
+                acts.push("M Drop mine");
+            }
+            let bomb = if reveal.is_empty() { "" } else { " • B: bomb on reveal" };
             format!(
-                "Tab: ship • Left/Right+Enter: maneuver • actions: {} • C: commit • X: resign",
+                "Tab: ship • Left/Right+Enter: maneuver • actions: {}{bomb} • C: commit • X: resign",
                 acts.join(" ")
             )
         }
@@ -1439,16 +1719,18 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     ActionResult::SkippedBumped => " (skipped: bumped)".to_string(),
                     ActionResult::SkippedDamaged => " (sensors damaged)".to_string(),
                     ActionResult::Failed => " (failed)".to_string(),
+                    ActionResult::SkippedNetted => " (netted: no action)".to_string(),
                 };
                 lines.push(format!(
                     "{} flies {} {} — action: {}{result}",
                     name(mv.ship.0),
                     render::steer_name(mv.maneuver.steer),
                     mv.maneuver.distance,
-                    action_name(Some(snap), mv.action),
+                    action_name(&game, Some(snap), mv.action),
                 ));
             }
             Some(AnimItem::Attack { line, .. }) => lines.push(line.clone()),
+            Some(AnimItem::Detonation(d)) => lines.push(detonation_line(snap, d)),
             Some(AnimItem::Prompt { attacker, options }) => {
                 let opts: Vec<String> = options
                     .iter()
