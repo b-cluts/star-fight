@@ -13,7 +13,7 @@ use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
 use sf_core::rules;
 use sf_core::ship::ShipId;
-use sf_core::upgrade::UpgradeId;
+use sf_core::upgrade::{Slot, UpgradeId};
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
 use crate::Screen;
@@ -924,7 +924,16 @@ fn draw_attack_fx(
         Faction::RebelAlliance => Color::srgb(1.0, 0.25, 0.15),
         Faction::Empire => Color::srgb(0.25, 1.0, 0.3),
     };
-    let start = game.to_world(atk_pose.anchor);
+    // Ordnance (torpedoes, missiles) flies as a warhead; turret weapons
+    // and turret primaries fire from the base center, all round.
+    let slot = rec.weapon.and_then(|u| game.content.upgrades.upgrade(u)).map(|c| c.slot);
+    let ordnance = matches!(slot, Some(Slot::Torpedo | Slot::Missile));
+    let from_center = atk_class.turret_primary || slot == Some(Slot::Turret);
+    let start = if from_center {
+        game.to_world(sf_core::combat::base_center(atk_pose, atk_class.footprint))
+    } else {
+        game.to_world(atk_pose.anchor)
+    };
     let target = game.to_world(sf_core::combat::base_center(def_pose, def_class.footprint));
     let hit = rec.hits + rec.crits > 0;
     let to_target = target - start;
@@ -937,11 +946,18 @@ fn draw_attack_fx(
 
     let p = (anim.t / ATTACK_DUR).clamp(0.0, 1.0);
     let nbolts = rec.attack_faces.len().min(4);
+    let volley = |gizmos: &mut Gizmos, head: Vec2, alpha: f32| {
+        if ordnance {
+            draw_missile(gizmos, start, head, dir, alpha);
+        } else {
+            draw_volley(gizmos, start, head, dir, nbolts, bolt_color, alpha);
+        }
+    };
     if hit {
         // Bolt flight until impact.
         if p < FLY_FRAC {
             let head = start + (aim - start) * (p / FLY_FRAC);
-            draw_volley(gizmos, start, head, dir, nbolts, bolt_color, 1.0);
+            volley(gizmos, head, 1.0);
         } else {
             // Impact flash: blue-white when shields soaked it, orange for
             // hull damage, and a wide burst on a kill.
@@ -963,7 +979,39 @@ fn draw_attack_fx(
         let beyond = aim + dir * 3.0 * render::PX;
         let head = start + (beyond - start) * p;
         let fade = if p > 0.55 { 1.0 - (p - 0.55) / 0.45 } else { 1.0 };
-        draw_volley(gizmos, start, head, dir, nbolts, bolt_color, fade);
+        volley(gizmos, head, fade);
+    }
+}
+
+/// A warhead in flight: pointed body, fins, exhaust flare and a fading
+/// smoke trail back toward the launcher.
+fn draw_missile(gizmos: &mut Gizmos, start: Vec2, head: Vec2, dir: Vec2, alpha: f32) {
+    if (head - start).dot(dir) <= 0.0 {
+        return;
+    }
+    let a = alpha.clamp(0.0, 1.0);
+    let body = Color::srgba(0.95, 0.95, 0.9, a);
+    let flame = Color::srgba(1.0, 0.55, 0.15, a);
+    let perp = Vec2::new(-dir.y, dir.x);
+    let len = 18.0_f32.min((head - start).length());
+    let tail = head - dir * len;
+    // Body with a pointed nose.
+    gizmos.line_2d(tail + perp * 2.0, head - dir * 4.0 + perp * 2.0, body);
+    gizmos.line_2d(tail - perp * 2.0, head - dir * 4.0 - perp * 2.0, body);
+    gizmos.line_2d(head - dir * 4.0 + perp * 2.0, head, body);
+    gizmos.line_2d(head - dir * 4.0 - perp * 2.0, head, body);
+    gizmos.line_2d(tail + perp * 2.0, tail - perp * 2.0, body);
+    // Fins.
+    gizmos.line_2d(tail + perp * 2.0, tail - dir * 4.0 + perp * 6.0, body);
+    gizmos.line_2d(tail - perp * 2.0, tail - dir * 4.0 - perp * 6.0, body);
+    // Exhaust flare and a dotted smoke trail.
+    gizmos.circle_2d(tail - dir * 3.0, 3.0, flame);
+    let trail = (tail - start).length();
+    let mut d = 10.0;
+    while d < trail {
+        let fade = (1.0 - d / trail.max(1.0)) * 0.5 * a;
+        gizmos.circle_2d(tail - dir * d, 1.5, Color::srgba(0.8, 0.8, 0.8, fade));
+        d += 10.0;
     }
 }
 
@@ -1227,15 +1275,40 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
     }
     let help = match snap.phase {
         Phase::Placement => {
-            "drag ships • Q/E or scroll rotates • N: rename • A: submit all • +/- zoom, right-drag pan, Home reset"
+            "drag ships • Q/E or scroll rotates • N: rename • A: submit all • +/- zoom, right-drag pan, Home reset".to_string()
         }
         Phase::Planning => {
-            "Tab: ship • Left/Right+Enter: maneuver • actions: 1 Pass 2 Focus 3 Evade 4/5 Roll 6 Lock 7/8/9 Boost • C: commit • X: resign"
+            // Only the selected ship's own action bar is offered.
+            let bar = online
+                .sel
+                .and_then(|id| snap.ships.iter().find(|v| v.id.0 == id))
+                .map(|v| v.actions.clone())
+                .unwrap_or_default();
+            let mut acts = vec!["1 Pass"];
+            if bar.contains(&ActionKind::Focus) {
+                acts.push("2 Focus");
+            }
+            if bar.contains(&ActionKind::Evade) {
+                acts.push("3 Evade");
+            }
+            if bar.contains(&ActionKind::BarrelRoll) {
+                acts.push("4/5 Roll");
+            }
+            if bar.contains(&ActionKind::TargetLock) {
+                acts.push("6 Lock");
+            }
+            if bar.contains(&ActionKind::Boost) {
+                acts.push("7/8/9 Boost");
+            }
+            format!(
+                "Tab: ship • Left/Right+Enter: maneuver • actions: {} • C: commit • X: resign",
+                acts.join(" ")
+            )
         }
-        Phase::Combat => "combat resolving…",
-        Phase::GameOver => "game over",
+        Phase::Combat => "combat resolving…".to_string(),
+        Phase::GameOver => "game over".to_string(),
     };
-    lines.push(help.into());
+    lines.push(help);
     if let Some((_, buf)) = &online.rename {
         lines.push(format!("CALLSIGN: {buf}_   (Enter confirms, Esc cancels)"));
     }

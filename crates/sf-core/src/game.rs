@@ -1572,6 +1572,14 @@ impl GameState {
                             self.ships[i].lock = Some(target);
                             ActionResult::Performed
                         } else {
+                            let who = self.label(content, i);
+                            let whom = self
+                                .ship_index(target)
+                                .map(|t| self.label(content, t))
+                                .unwrap_or_else(|_| "target".into());
+                            events.push(format!(
+                                "{who}: target lock on {whom} FAILED — not within Range 1-3 after moving"
+                            ));
                             ActionResult::Failed
                         }
                     }
