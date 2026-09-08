@@ -13,7 +13,7 @@ use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
 use sf_core::rules;
 use sf_core::ship::ShipId;
-use sf_core::upgrade::{Slot, UpgradeId};
+use sf_core::upgrade::{Slot, UpgradeEffect, UpgradeId};
 use sf_proto::messages::{ClientMsg, ServerMsg};
 
 use crate::Screen;
@@ -926,7 +926,9 @@ fn draw_attack_fx(
     };
     // Ordnance (torpedoes, missiles) flies as a warhead; turret weapons
     // and turret primaries fire from the base center, all round.
-    let slot = rec.weapon.and_then(|u| game.content.upgrades.upgrade(u)).map(|c| c.slot);
+    let card = rec.weapon.and_then(|u| game.content.upgrades.upgrade(u));
+    let slot = card.map(|c| c.slot);
+    let impact = impact_style(card.and_then(|c| c.effect));
     let ordnance = matches!(slot, Some(Slot::Torpedo | Slot::Missile));
     let from_center = atk_class.turret_primary || slot == Some(Slot::Turret);
     let start = if from_center {
@@ -968,8 +970,48 @@ fn draw_attack_fx(
             } else {
                 Color::srgba(0.5, 0.75, 1.0, alpha)
             };
-            gizmos.circle_2d(target, 6.0 + q * 26.0, flash);
-            gizmos.circle_2d(target, 3.0 + q * 14.0, Color::srgba(1.0, 1.0, 0.9, alpha));
+            match impact {
+                ImpactStyle::Flash => {
+                    gizmos.circle_2d(target, 6.0 + q * 26.0, flash);
+                    gizmos.circle_2d(target, 3.0 + q * 14.0, Color::srgba(1.0, 1.0, 0.9, alpha));
+                }
+                ImpactStyle::Blast => {
+                    // Warhead detonation: a big orange fireball and a shock ring.
+                    gizmos.circle_2d(target, 8.0 + q * 40.0, Color::srgba(1.0, 0.5, 0.1, alpha));
+                    gizmos.circle_2d(target, 4.0 + q * 22.0, Color::srgba(1.0, 0.85, 0.4, alpha));
+                    gizmos.circle_2d(
+                        target,
+                        12.0 + q * 60.0,
+                        Color::srgba(1.0, 1.0, 1.0, alpha * 0.4),
+                    );
+                }
+                ImpactStyle::Sparks => {
+                    // Ion discharge: jittering blue-white arcs crawling over the hull.
+                    let seed = anim.attack_no as u32 * 31 + (anim.t * 40.0) as u32;
+                    for k in 0..10u32 {
+                        let a0 =
+                            hash01(seed.wrapping_mul(7).wrapping_add(k)) * std::f32::consts::TAU;
+                        let r0 = 6.0 + hash01(seed.wrapping_add(k * 13)) * 22.0;
+                        let a1 = a0 + (hash01(seed.wrapping_add(k * 29)) - 0.5) * 1.2;
+                        let p0 = target + Vec2::from_angle(a0) * r0;
+                        let p1 = target + Vec2::from_angle(a1) * (r0 + 10.0);
+                        gizmos.line_2d(p0, p1, Color::srgba(0.6, 0.85, 1.0, alpha));
+                    }
+                    gizmos.circle_2d(target, 4.0 + q * 10.0, Color::srgba(0.8, 0.95, 1.0, alpha));
+                }
+                ImpactStyle::Fragments => {
+                    // Fragmentation: a cloud of shards flying apart.
+                    let seed = anim.attack_no as u32 * 17;
+                    for k in 0..18u32 {
+                        let ang = hash01(seed.wrapping_add(k * 11)) * std::f32::consts::TAU;
+                        let speed = 30.0 + hash01(seed.wrapping_add(k * 23)) * 50.0;
+                        let d = Vec2::from_angle(ang);
+                        let pos = target + d * (q * speed);
+                        gizmos.line_2d(pos, pos + d * 4.0, Color::srgba(1.0, 0.8, 0.5, alpha));
+                    }
+                    gizmos.circle_2d(target, 5.0 + q * 16.0, flash);
+                }
+            }
             if rec.defender_destroyed {
                 gizmos.circle_2d(target, 10.0 + q * 55.0, Color::srgba(1.0, 0.45, 0.1, alpha));
             }
@@ -981,6 +1023,54 @@ fn draw_attack_fx(
         let fade = if p > 0.55 { 1.0 - (p - 0.55) / 0.45 } else { 1.0 };
         volley(gizmos, head, fade);
     }
+}
+
+/// How a weapon's hit is drawn.
+#[derive(Clone, Copy, PartialEq)]
+enum ImpactStyle {
+    /// Laser bolts: a quick flash.
+    Flash,
+    /// Warheads: fireball and shock ring.
+    Blast,
+    /// Ion weapons: electric discharge.
+    Sparks,
+    /// Cluster/assault/flechette weapons: shards flying apart.
+    Fragments,
+}
+
+fn impact_style(effect: Option<UpgradeEffect>) -> ImpactStyle {
+    use UpgradeEffect::*;
+    match effect {
+        Some(TurretIonOneDamage | CannonIonOneDamage | MissileIonOneDamage | TorpedoIonSplash) => {
+            ImpactStyle::Sparks
+        }
+        Some(
+            MissileAttackTwice
+            | MissileSplashRange1
+            | CannonOneDamageAndStress
+            | TorpedoStressIfHullLow,
+        ) => ImpactStyle::Fragments,
+        Some(
+            TorpedoFocusToCrit
+            | TorpedoBlanksToFocus
+            | TorpedoStripShield
+            | MissileBlankToHit
+            | MissileDenyEvadeTokens
+            | MissileFaceupDamage
+            | RocketExtraDiceByAgility
+            | MissileFriendsLockOnHit,
+        ) => ImpactStyle::Blast,
+        _ => ImpactStyle::Flash,
+    }
+}
+
+/// Cheap deterministic 0..1 noise for effect jitter.
+fn hash01(x: u32) -> f32 {
+    let mut h = x.wrapping_mul(0x9E37_79B9);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85EB_CA6B);
+    h ^= h >> 13;
+    (h & 0xFFFF) as f32 / 65535.0
 }
 
 /// A warhead in flight: pointed body, fins, exhaust flare and a fading
