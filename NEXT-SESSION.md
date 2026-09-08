@@ -411,6 +411,26 @@ pins.txt + last-used menu values), starfield.rs.
   Phase::Obstacles) with drag-and-drop in the client; scenarios can
   pre-place them. Graphics: assets/obstacles/*.png (ours to include).
 
+- **In-game index / glossary** (requested 2026-09-08): an icon or
+  button (and a key, e.g. `?` or F1) available on every screen — menu,
+  squad builder, online game, sandbox — that opens an overlay where a
+  player can look up what anything does: ship classes (stats, action
+  bar, upgrade bar, dial), pilots (skill, cost, ability text), every
+  upgrade card by slot (cost, restrictions, verbatim text; Proton
+  Torpedoes, bombs, crew…), tokens (focus, evade, stress, ion, target
+  lock), actions, damage cards (crit effects — CritEffect::name +
+  a description string to add), and rules terms (range bands, firing
+  arc, bullseye, initiative, K-turn…). Plan: the card/ship/pilot text
+  already lives in `Content` (ships.ron / pilots.ron / upgrades.ron
+  `text` fields); add `assets/data/glossary.ron` for tokens, actions,
+  crits and terms; a `glossary` Bevy state or overlay resource with
+  category tabs (Ships / Pilots / Upgrades / Tokens & Actions / Damage
+  / Rules), a type-to-filter search box, Up/Down scroll, Esc to close;
+  show the card image when the cards dir is present (same loader as
+  the squad builder) and mark cards whose effect is not yet enforced
+  ("not yet automated") via `implemented()`. Reachable mid-game
+  without disturbing the game state (pure overlay; the online
+  connection keeps pumping).
 - **Ship size examples** (requested 2026-09-04): add one or two real
   ships per base size so Medium/Large/Huge footprints get exercised
   (movement, bumping, arcs, range all already work per footprint; huge
