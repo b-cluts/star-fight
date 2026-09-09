@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (193 tests),
+`cargo build` clean, `cargo test --workspace` green (214 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -232,39 +232,32 @@ and Server `ws://127.0.0.1:7777`.
       `v*` workflow). Still unplaytested on screen: the setup screen,
       the second-action keys, the black hole pull, the torpedo pick and
       Lorrir's keys — ask the user for feedback next session.
-      >>> RESUME HERE (session stopped 2026-09-09 at the usage limit):
-      upgrade-effect batches 1 and 2 are DONE (commits 0c80143,
-      85bf2e1; 193 tests; `used_round` once-per-round bookkeeping,
-      `ordnance` tokens, `Shot.focus_hit`, `auto_lock`,
-      `after_attack_cards`, `after_reposition_cards`). NEXT = batch 3,
-      planned but NOT started (no code written): Royal Guard TIE (+1
-      Modification slot) and TIE/x1 (+System slot, system cost −4) in
-      squad.rs validate_squad/ship_cost; R3-A2 (stress both when the
-      defender is in arc, attacker unstressed); A Score to Settle (mark
-      the most expensive enemy like Agent Kallus — refactor
-      `kallus_target` into `marked_enemy(effect)`, focus→crit); Tractor
-      Beam (`ShipState.tractor`, agility −1 per token, cleared in the
-      End phase); BTL-A4 title (turrets need arc; after a primary
-      attack a turret follow-up via `fire()` like Gunner); Rey
-      (`stored_focus`: store one at the End phase, return it at combat
-      start); Leia (`GameState.white_reds: [bool; 2]`, discard at
-      Activation start when a friend planned red; `maneuver_difficulty`
-      turns Hard into Normal); Navigator / Stay on Target (auto-rotate
-      the dial only when the planned maneuver would leave the board or
-      bump: same bearing / same speed flown red — insert after the
-      `obstacles` vec in resolve_movement); card actions for K: Fleet
-      Officer, Squad Leader (friend at R1-2 with lower PS gets a focus),
-      R7-T1 (lock if inside the enemy's arc, then a straight boost) in
-      perform_action's CardAction arm, and dice card actions Lando
-      (2 defense dice → tokens), Saboteur (attack die → faceup card on
-      an enemy at R1 with facedown cards), R5-D8 (defense die → discard
-      a facedown card) via a `dice_card_action` branch in the main
-      action step (like fire_seismic_torpedo). Then the 26 pilot
-      abilities. Skipped on purpose (need a player choice or a bigger
-      refactor): Electronic Baffle, Weapons Engineer (two locks), Jan
-      Ors, Lightning Reflexes, Millennium Falcon title, Daredevil,
+      >>> RESUME HERE: card automation is essentially COMPLETE
+      (2026-09-09, 214 tests). Upgrade-effect batches 1-3 (commits
+      0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B
+      (add020a, c709fd4) are in. Machinery worth knowing: `used_round`
+      (once-per-round cards, cleared in the End phase), `ordnance`
+      tokens (Extra Munitions), `Shot.focus_hit` (Luke), `auto_lock` /
+      `auto_lock_within` (Kagi-aware), `after_attack_cards`,
+      `after_reposition_cards`, `dial_rotation` (Navigator, Stay on
+      Target, Juno, Tetran — only when the planned move would leave the
+      board or bump), `dice_card_action` (Lando, Saboteur, R5-D8 via K),
+      `marked_enemy` (Kallus, A Score to Settle: the most expensive
+      enemy), `white_reds` (Leia), `lingers` (Fel's Wrath), `tractor`,
+      `stored_focus` (Rey), `CritEffect::severity` (Maarek).
+      Policies chosen for "may" effects are documented at each hook.
+      STILL DATA-ONLY (need a player choice or a bigger refactor):
+      upgrades Electronic Baffle, Weapons Engineer (two locks), Jan Ors,
+      Lightning Reflexes, Millennium Falcon title, Daredevil,
       Experimental Interface, Snap Shot, Decoy, Hyperwave Comm Scanner,
-      Intelligence Agent. Also still open: multi-player seats.
+      Intelligence Agent; pilot Han Solo HotR (setup anywhere beyond
+      Range 3). Unplaytested on screen: everything since v0.4.0 plus
+      the setup screen, second-action keys, black hole pull, torpedo
+      pick, Lorrir keys. NEXT candidates: playtest feedback → v0.5.0;
+      multi-player seats (GameSetup already reserves >2 players;
+      GameState/Seat/server session are 2-player; protocol change);
+      the data-only cards above as planning toggles (a "reveal card"
+      slot like `bomb` for Lightning Reflexes / Falcon title / Decoy).
       Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3

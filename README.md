@@ -29,8 +29,9 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    ship, Left/Right + Enter set the maneuver, number keys pick the action
    (6 then click an enemy = target lock), **B** cycles a bomb to drop on
    dial reveal, **M** makes a mine drop the action, **K** cycles card
-   actions (Marksmanship, Rage, Expose, R2-F2; Seismic Torpedo then asks
-   you to click the obstacle to blast), C commits, X resigns. Pilots
+   actions (Marksmanship, Rage, Expose, R2-F2, Fleet Officer, Squad
+   Leader, R7-T1, Lando, Saboteur, R5-D8; Seismic Torpedo then asks you
+   to click the obstacle to blast), C commits, X resigns. Pilots
    with a second action (Push the Limit, Darth Vader, Snap Wexley, Jake
    Farrell, BB-8, Turr Phennir's reposition after attacking) press **0**
    and then an action key to fill it; Blue Ace boosts with the turn
