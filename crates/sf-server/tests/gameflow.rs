@@ -520,3 +520,98 @@ async fn mission_games_fix_factions_and_field_the_printed_forces() {
         }
     }
 }
+
+/// A bot seat fills the game at once, places its ships, plans and
+/// commits every round, and answers Declare Target prompts — a solo game
+/// against the computer plays through without a second client.
+#[tokio::test]
+async fn a_bot_seat_plays_a_solo_game_through() {
+    use sf_core::scenario::GameSetup;
+    let c = content();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    send(
+        &mut a,
+        &ClientMsg::Hello {
+            proto_version: sf_proto::PROTOCOL_VERSION,
+            name: "solo".into(),
+            password: String::new(),
+        },
+    )
+    .await;
+    assert!(matches!(recv(&mut a).await, ServerMsg::Welcome { .. }));
+    let setup = GameSetup { points: 40, asteroids: 2, bots: 1, ..GameSetup::default() };
+    send(&mut a, &ClientMsg::CreateGame { squad: None, setup: Some(setup) }).await;
+    // The bot is seated with the host: the game starts immediately.
+    let players = recv_until(&mut a, |m| match m {
+        ServerMsg::GameStart { seat: 0, players, .. } => Some(players),
+        _ => None,
+    })
+    .await;
+    assert_eq!(players, vec!["solo", "Bot 1"]);
+    let ships = recv_until(&mut a, |m| match m {
+        ServerMsg::Snapshot { phase: Phase::Placement, ships, .. } => Some(ships),
+        _ => None,
+    })
+    .await;
+    // Host: two basic TIEs (seat 0); bot: the cheapest Rebel generic
+    // pilot, repeated up to 40 points.
+    let mine: Vec<u32> = ships.iter().filter(|s| s.owner.0 == 0).map(|s| s.id.0).collect();
+    assert_eq!(mine, vec![0, 1]);
+    let bots: Vec<&sf_core::game::ShipView> = ships.iter().filter(|s| s.owner.0 == 1).collect();
+    assert!(bots.len() >= 2 && bots.iter().all(|s| s.pilot == bots[0].pilot), "{bots:?}");
+    for (id, x) in [(0u32, 8.0), (1, 12.0)] {
+        send(
+            &mut a,
+            &ClientMsg::PlaceShip { ship_id: ShipId(id), pose: Pose::new(x, 2.0, FRAC_PI_2) },
+        )
+        .await;
+    }
+    // The bot places on its own: Planning arrives with every pose set.
+    let ships = recv_until(&mut a, |m| match m {
+        ServerMsg::Snapshot { phase: Phase::Planning, ships, .. } => Some(ships),
+        _ => None,
+    })
+    .await;
+    assert!(ships.iter().all(|s| s.pose.is_some()));
+    let tie_s2 = dial_index(&c, ShipClassId(1), Steer::Straight, 2);
+    // Three rounds: the bot commits by itself each time.
+    for _ in 0..3 {
+        for id in [0u32, 1] {
+            send(&mut a, &ClientMsg::PlanManeuver { ship_id: ShipId(id), maneuver_index: tie_s2 })
+                .await;
+        }
+        send(&mut a, &ClientMsg::CommitPlans).await;
+        recv_until(&mut a, |m| match m {
+            ServerMsg::MovementResult { .. } => Some(()),
+            _ => None,
+        })
+        .await;
+        // Combat streams by; a Declare Target prompt for our TIEs is
+        // answered with the first option.
+        loop {
+            match recv(&mut a).await {
+                ServerMsg::TurnEnd { .. } => break,
+                ServerMsg::GameOver { .. } => return,
+                ServerMsg::ChooseTarget { options, .. } => {
+                    let o = &options[0];
+                    send(&mut a, &ClientMsg::DeclareTarget { target: o.target, weapon: o.weapon })
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        let (turn, committed) = recv_until(&mut a, |m| match m {
+            ServerMsg::Snapshot { phase: Phase::Planning, turn, committed, .. } => {
+                Some((turn, committed))
+            }
+            _ => None,
+        })
+        .await;
+        assert!(turn >= 2);
+        assert!(!committed[0]);
+    }
+}

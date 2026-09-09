@@ -32,7 +32,7 @@ pub struct SetupForm {
     pub team_mode: bool,
 }
 
-const FIELDS: [&str; 8] = [
+const FIELDS: [&str; 9] = [
     "Asteroids",
     "Debris clouds",
     "Black holes",
@@ -41,6 +41,7 @@ const FIELDS: [&str; 8] = [
     "Mode",
     "Board width",
     "Board height",
+    "Bots (computer players)",
 ];
 
 pub fn plugin(app: &mut App) {
@@ -116,6 +117,7 @@ fn input(
             }
             4 => {
                 s.players = bump_u8(s.players, MAX_PLAYERS).max(2);
+                s.bots = s.bots.min(s.players - 1);
                 s.set_teams(team_mode);
             }
             5 => {
@@ -126,10 +128,11 @@ fn input(
                 s.board_width =
                     (s.board_width + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
-            _ => {
+            7 => {
                 s.board_height =
                     (s.board_height + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
+            _ => s.bots = bump_u8(s.bots, s.players.saturating_sub(1)),
         }
         if let Some(t) = toggled {
             form.team_mode = t;
@@ -197,6 +200,7 @@ fn show(
         mode,
         s.board_width.to_string(),
         s.board_height.to_string(),
+        s.bots.to_string(),
     ];
     for (i, (name, value)) in FIELDS.iter().zip(values.iter()).enumerate() {
         let (o, c) = if i == form.field { ("[", "]") } else { (" ", " ") };

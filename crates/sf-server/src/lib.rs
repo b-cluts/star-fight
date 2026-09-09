@@ -6,6 +6,7 @@
 //! Plaintext is still available for tests and local development
 //! (`ServerOpts::insecure`).
 
+mod bot;
 pub mod tls;
 
 use std::collections::HashMap;
@@ -294,6 +295,7 @@ where
                     let (cmd_tx, cmd_rx) = mpsc::channel(64);
                     tokio::spawn(session(
                         cmd_rx,
+                        cmd_tx.clone(),
                         content.clone(),
                         lobby.clone(),
                         code.clone(),
@@ -417,6 +419,7 @@ where
 /// the rules run free of locks.
 async fn session(
     mut cmds: mpsc::Receiver<SessionCmd>,
+    self_tx: mpsc::Sender<SessionCmd>,
     content: Arc<Content>,
     lobby: Lobby,
     code: String,
@@ -429,6 +432,8 @@ async fn session(
     let mut players: Vec<Option<(String, mpsc::Sender<ServerMsg>, Squad)>> = Vec::new();
     let capacity = setup.players.max(2) as usize;
     let mut game: Option<GameState> = None;
+    // Bot seats are filled right after the host takes seat 0.
+    let mut bots_seated = setup.bots == 0;
 
     // Combat streaming: how many narrated events have gone out this turn,
     // and whether the game just ended (macros can't `break` the loop).
@@ -600,6 +605,31 @@ async fn session(
                     players[seat as usize] = Some((name, tx, squad));
                 } else {
                     players.push(Some((name, tx, squad)));
+                }
+                if !bots_seated {
+                    bots_seated = true;
+                    for n in 1..=usize::from(setup.bots) {
+                        let bot_seat = players.len() as u8;
+                        let faction = setup.faction_for_seat(bot_seat).unwrap_or({
+                            if bot_seat.is_multiple_of(2) {
+                                sf_core::ship::Faction::Empire
+                            } else {
+                                sf_core::ship::Faction::RebelAlliance
+                            }
+                        });
+                        let squad = match setup.mission {
+                            Some(kind) => sf_core::mission::fixed_squad(&content, kind, faction)
+                                .expect("mission forces are in the data"),
+                            None => sf_core::bot::squad(
+                                &content,
+                                faction,
+                                setup.points_for_seat(bot_seat),
+                            ),
+                        };
+                        let (btx, brx) = mpsc::channel(64);
+                        tokio::spawn(bot::run(brx, self_tx.clone(), bot_seat, content.clone()));
+                        players.push(Some((bot::name(n), btx, squad)));
+                    }
                 }
                 let seated = players.iter().flatten().count();
                 let full = seated == capacity;

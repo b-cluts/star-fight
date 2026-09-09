@@ -67,6 +67,9 @@ pub struct GameSetup {
     /// the mission's setup, special rules and objectives apply.
     #[serde(default)]
     pub mission: Option<MissionKind>,
+    /// Seats taken by computer players (after the host), for solo play.
+    #[serde(default)]
+    pub bots: u8,
 }
 
 impl Default for GameSetup {
@@ -82,6 +85,7 @@ impl Default for GameSetup {
             board_height: 20.0,
             teams: Vec::new(),
             mission: None,
+            bots: 0,
         }
     }
 }
@@ -99,6 +103,7 @@ impl From<&Scenario> for GameSetup {
             board_height: s.board_height,
             teams: s.teams.clone(),
             mission: s.mission,
+            bots: 0,
         }
     }
 }
@@ -179,6 +184,9 @@ impl GameSetup {
         if self.mission.is_some() && sides != 2 {
             return Err("missions are played between two sides".into());
         }
+        if self.bots >= self.players {
+            return Err("at least one human seat".into());
+        }
         if self.points < POINTS_RANGE.0 || self.points > POINTS_RANGE.1 {
             return Err(format!("squad points must be {}-{}", POINTS_RANGE.0, POINTS_RANGE.1));
         }
@@ -243,6 +251,11 @@ impl GameSetup {
         let mut parts = vec![format!("{} pts", self.points)];
         if let Some(m) = self.mission {
             parts.push(format!("mission {}", m.number()));
+        }
+        match self.bots {
+            0 => {}
+            1 => parts.push("1 bot".into()),
+            n => parts.push(format!("{n} bots")),
         }
         if self.players > 2 {
             parts.push(format!("{} players, {}", self.players, self.mode_name()));

@@ -4,6 +4,7 @@
 pub mod action;
 pub mod board;
 pub mod bombs;
+pub mod bot;
 pub mod combat;
 pub mod crit;
 pub mod data;
