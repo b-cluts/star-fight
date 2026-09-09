@@ -89,7 +89,7 @@ async fn two_clients_play_a_full_turn() {
     }
 
     // Create + join.
-    send(&mut a, &ClientMsg::CreateGame { squad: None }).await;
+    send(&mut a, &ClientMsg::CreateGame { squad: None, setup: None }).await;
     let code = recv_until(&mut a, |m| match m {
         ServerMsg::GameCreated { code } => Some(code),
         _ => None,
@@ -235,7 +235,7 @@ async fn custom_squads_are_validated_and_used() {
             SquadShip { pilot: pilot("academypilot"), upgrades: vec![], callsign: String::new() },
         ],
     };
-    send(&mut a, &ClientMsg::CreateGame { squad: Some(imperial) }).await;
+    send(&mut a, &ClientMsg::CreateGame { squad: Some(imperial), setup: None }).await;
     let code = recv_until(&mut a, |m| match m {
         ServerMsg::GameCreated { code } => Some(code),
         _ => None,

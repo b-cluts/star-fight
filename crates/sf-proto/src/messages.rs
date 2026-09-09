@@ -6,6 +6,7 @@ use sf_core::bombs::{BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
 use sf_core::obstacle::Obstacle;
+use sf_core::scenario::GameSetup;
 use sf_core::ship::ShipId;
 use sf_core::squad::Squad;
 use sf_core::upgrade::UpgradeId;
@@ -22,6 +23,10 @@ pub enum ClientMsg {
     /// for your seat. Validated server-side (SquadRules).
     CreateGame {
         squad: Option<Squad>,
+        /// Board, obstacles, squad points and player count chosen by the
+        /// host; None = the server's defaults.
+        #[serde(default)]
+        setup: Option<GameSetup>,
     },
     JoinGame {
         code: String,
@@ -95,6 +100,9 @@ pub enum ServerMsg {
         seat: u8,
         opponent: String,
         board: Board,
+        /// The host's setup (scenario name and numbers).
+        #[serde(default)]
+        setup: Option<GameSetup>,
     },
     /// Your current view of the game (already filtered for you).
     Snapshot {

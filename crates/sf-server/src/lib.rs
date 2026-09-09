@@ -23,10 +23,10 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite::Message;
 
-use sf_core::board::Board;
 use sf_core::data::Content;
 use sf_core::game::{CombatStep, GameState, Phase};
 use sf_core::pilot::PilotId;
+use sf_core::scenario::GameSetup;
 use sf_core::ship::{PlayerId, ShipClassId};
 use sf_core::squad::{Squad, SquadRules, validate_squad};
 use sf_proto::PROTOCOL_VERSION;
@@ -41,10 +41,6 @@ const FLEET_NORTH: [ShipClassId; 2] = [ShipClassId(2), ShipClassId(2)];
 
 fn basic_fleet(content: &Content, classes: &[ShipClassId]) -> Vec<PilotId> {
     classes.iter().map(|k| content.pilots.basic_for(*k).expect("basic pilot").id).collect()
-}
-
-fn default_board() -> Board {
-    Board { width: 20.0, height: 20.0, deploy_depth: 3.0 }
 }
 
 type Lobby = Arc<Mutex<HashMap<String, mpsc::Sender<SessionCmd>>>>;
@@ -286,10 +282,30 @@ where
     let (session_tx, seat, mut session_rx) = loop {
         match rx.next().await {
             Some(Ok(Message::Text(t))) => match decode::<ClientMsg>(&t) {
-                Ok(ClientMsg::CreateGame { squad }) => {
+                Ok(ClientMsg::CreateGame { squad, setup }) => {
+                    // No setup (older client): the server's defaults.
+                    let setup = setup.unwrap_or_else(|| GameSetup {
+                        asteroids: opts.asteroids,
+                        ..GameSetup::default()
+                    });
+                    if let Err(why) = setup.validate() {
+                        let _ = tx
+                            .send(Message::Text(encode(&ServerMsg::Error {
+                                message: format!("game setup rejected: {why}"),
+                            })))
+                            .await;
+                        continue;
+                    }
                     let code = join_code();
                     let (cmd_tx, cmd_rx) = mpsc::channel(64);
-                    tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone(), opts.clone()));
+                    tokio::spawn(session(
+                        cmd_rx,
+                        content.clone(),
+                        lobby.clone(),
+                        code.clone(),
+                        opts.clone(),
+                        setup,
+                    ));
                     lobby.lock().await.insert(code.clone(), cmd_tx.clone());
                     let (resp_tx, resp_rx) = oneshot::channel();
                     let _ = cmd_tx
@@ -409,9 +425,11 @@ async fn session(
     lobby: Lobby,
     code: String,
     opts: Arc<ServerOpts>,
+    setup: GameSetup,
 ) {
+    let _ = &opts;
     let mut players: Vec<(String, mpsc::Sender<ServerMsg>, Squad)> = Vec::new();
-    let rules = SquadRules::default();
+    let rules = SquadRules { max_points: setup.points, ..SquadRules::default() };
     let mut game: Option<GameState> = None;
 
     // Combat streaming: how many narrated events have gone out this turn,
@@ -545,18 +563,24 @@ async fn session(
                     // One red die, drawn now — only used if squad totals tie.
                     let tie_roll = sf_core::dice::AttackFace::from_d8(rand::random::<u8>());
                     let mut gs = GameState::from_squads(
-                        default_board(),
+                        setup.board(),
                         &content,
                         [&players[0].2, &players[1].2],
                         tie_roll,
                     )
                     .expect("validated squads");
-                    let kinds =
-                        vec![sf_core::obstacle::ObstacleKind::Asteroid; opts.asteroids as usize];
-                    gs.place_obstacles(&kinds, rand::random::<u64>());
+                    gs.place_obstacles(&setup.obstacle_kinds(), rand::random::<u64>());
                     for s in 0..2u8 {
                         let opponent = players[1 - s as usize].0.clone();
-                        send_to!(s, ServerMsg::GameStart { seat: s, opponent, board: gs.board });
+                        send_to!(
+                            s,
+                            ServerMsg::GameStart {
+                                seat: s,
+                                opponent,
+                                board: gs.board,
+                                setup: Some(setup.clone()),
+                            }
+                        );
                     }
                     snapshots!(&gs);
                     game = Some(gs);
