@@ -2552,6 +2552,10 @@ impl GameState {
                                 self.faceup_card(content, i, roll, &mut events);
                             }
                         }
+                        ObstacleKind::BlackHole => {
+                            self.ships[i].destroyed = true;
+                            events.push(format!("{who}: swallowed by the black hole — LOST"));
+                        }
                     }
                     if self.ships[i].destroyed {
                         break;
@@ -6270,5 +6274,24 @@ mod tests {
         let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
         assert_eq!(mv.action_result, ActionResult::Failed);
         assert!((gs.ships[0].pose.unwrap().anchor.x - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_black_hole_core_swallows_a_ship_that_touches_it() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(Obstacle {
+            id: 0,
+            kind: ObstacleKind::BlackHole,
+            center: Vec2::new(10.0, 5.0),
+            heading: 0.0,
+            shape: 0,
+        });
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.obstacles_hit, vec![0]);
+        assert!(gs.ships[0].destroyed);
+        assert!(rec.events.iter().any(|e| e.contains("swallowed")), "{:?}", rec.events);
+        assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(0)));
     }
 }

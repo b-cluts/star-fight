@@ -17,13 +17,21 @@ pub enum ObstacleKind {
     /// Overlap: receive a stress token, roll one attack die (crit:
     /// faceup card). Attacks and (stress permitting) actions go on.
     Debris,
+    /// A black core (`CORE_RADIUS`) that swallows any ship whose base
+    /// touches it. The gravity pull (every ship within Range 5 dragged
+    /// one unit toward the core after all moves) is not implemented yet.
+    BlackHole,
 }
+
+/// Radius of a black hole's core, in units (1-unit diameter).
+pub const CORE_RADIUS: f64 = 0.5;
 
 impl ObstacleKind {
     pub fn name(self) -> &'static str {
         match self {
             ObstacleKind::Asteroid => "asteroid",
             ObstacleKind::Debris => "debris cloud",
+            ObstacleKind::BlackHole => "black hole",
         }
     }
 }
@@ -47,8 +55,19 @@ pub struct Obstacle {
 }
 
 impl Obstacle {
-    /// World-space outline.
+    /// World-space outline (a black hole's is its core, as a 12-gon).
     pub fn polygon(&self) -> Vec<Vec2> {
+        if self.kind == ObstacleKind::BlackHole {
+            return (0..12)
+                .map(|k| {
+                    let a = k as f64 * std::f64::consts::TAU / 12.0;
+                    Vec2::new(
+                        self.center.x + CORE_RADIUS * a.cos(),
+                        self.center.y + CORE_RADIUS * a.sin(),
+                    )
+                })
+                .collect();
+        }
         let (s, c) = self.heading.sin_cos();
         SHAPES[self.shape as usize % SHAPES.len()]
             .iter()

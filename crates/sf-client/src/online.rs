@@ -309,10 +309,29 @@ fn demo_snap(game: &Game) -> Snap {
             id: i as u32,
             kind,
             card: card(kind),
-            pose: Pose::new(4.0 + i as f64 * 2.0, 10.5, north),
+            // Five bombs across the middle, the two mines off to the right
+            // (the asteroid sits at x=14 between Onyx-2 and Gold-1).
+            pose: Pose::new(
+                if i < 5 { 3.0 + i as f64 * 2.0 } else { 16.5 + (i - 5) as f64 * 2.0 },
+                10.5,
+                north,
+            ),
             owner: sf_core::ship::PlayerId((i % 2) as u32),
         })
         .collect();
+    let rock = |id, kind, x, y, shape| Obstacle {
+        id,
+        kind,
+        center: GVec2::new(x, y),
+        heading: 0.6,
+        shape,
+    };
+    let obstacles = vec![
+        rock(0, ObstacleKind::Asteroid, 14.0, 10.0, 0),
+        rock(1, ObstacleKind::Asteroid, 3.0, 4.0, 1),
+        rock(2, ObstacleKind::Debris, 17.0, 4.0, 3),
+        rock(3, ObstacleKind::BlackHole, 17.5, 17.0, 0),
+    ];
     Snap {
         phase: Phase::Combat,
         turn: 1,
@@ -321,7 +340,7 @@ fn demo_snap(game: &Game) -> Snap {
         initiative: 0,
         totals: [100, 100],
         bombs,
-        obstacles: Vec::new(),
+        obstacles,
     }
 }
 
@@ -340,7 +359,14 @@ fn demo_queue(game: &Game, snap: &Snap) -> Anim {
         ("primary weapon — shields soak it (blue flash)", 0, 2, None, true, false),
         ("primary weapon — hull damage (orange flash)", 2, 0, None, true, true),
         ("primary weapon — miss (bolts fly past)", 1, 3, None, false, false),
-        ("YT-1300 turret primary — fires from the base center", 3, 1, None, true, false),
+        (
+            "YT-1300 turret primary — fires from the base center, obstructed by the asteroid (+1 defense die)",
+            3,
+            1,
+            None,
+            true,
+            false,
+        ),
         ("Proton Torpedoes — warhead, Blast impact", 0, 2, card("protontorpedoes"), true, true),
         (
             "Concussion Missiles — warhead, Blast impact",
@@ -377,7 +403,8 @@ fn demo_queue(game: &Game, snap: &Snap) -> Anim {
             defender: ShipId(def),
             range: 2,
             weapon,
-            obstructed: false,
+            // Shots between Onyx-2 and Gold-1 cross the asteroid.
+            obstructed: matches!((atk, def), (1, 3) | (3, 1)),
             attack_faces: vec![AttackFace::Hit; 3],
             defense_faces: Vec::new(),
             lock_spent: false,
@@ -1586,10 +1613,45 @@ fn detonation_line(snap: &Snap, d: &Detonation) -> String {
 
 /// An obstacle token: asteroids as a craggy outline with a few inner
 /// fracture lines, debris as a dotted cloud.
-fn draw_obstacle(gizmos: &mut Gizmos, game: &Game, o: &Obstacle) {
+fn draw_obstacle(gizmos: &mut Gizmos, game: &Game, o: &Obstacle, t: f32) {
     let poly: Vec<Vec2> = o.polygon().into_iter().map(|p| game.to_world(p)).collect();
     let center = game.to_world(o.center);
     match o.kind {
+        ObstacleKind::BlackHole => {
+            // A solid black core (stacked rings) with three arms of gas
+            // spiralling in, brighter and faster toward the horizon.
+            let core = sf_core::obstacle::CORE_RADIUS as f32 * render::PX;
+            let mut r = core;
+            while r > 0.5 {
+                gizmos.circle_2d(center, r, Color::BLACK);
+                r -= 1.2;
+            }
+            gizmos.circle_2d(center, core + 1.5, Color::srgba(0.6, 0.4, 1.0, 0.8));
+            for arm in 0..3u32 {
+                let phase = t * 0.9 + arm as f32 * std::f32::consts::TAU / 3.0;
+                let mut prev: Option<Vec2> = None;
+                for step in 0..48u32 {
+                    let k = step as f32 / 48.0;
+                    let radius = core + (1.0 - k) * 2.2 * render::PX;
+                    let a = phase + k * 3.6 * std::f32::consts::PI;
+                    let p = center + Vec2::from_angle(a) * radius;
+                    if let Some(q) = prev {
+                        let alpha = 0.15 + k * 0.7;
+                        gizmos.line_2d(q, p, Color::srgba(0.55 + k * 0.3, 0.35, 0.95, alpha));
+                    }
+                    prev = Some(p);
+                }
+            }
+            // Drifting gas motes on the outer disc.
+            let seed = o.id.wrapping_mul(29);
+            for k in 0..10u32 {
+                let a0 = hash01(seed.wrapping_add(k * 7)) * std::f32::consts::TAU;
+                let r0 = 1.0 + hash01(seed.wrapping_add(k * 13)) * 1.6;
+                let a = a0 + t * (0.4 + 0.6 / r0);
+                let p = center + Vec2::from_angle(a) * r0 * render::PX;
+                gizmos.circle_2d(p, 1.5, Color::srgba(0.7, 0.55, 1.0, 0.5));
+            }
+        }
         ObstacleKind::Asteroid => {
             let rim = Color::srgb(0.55, 0.5, 0.42);
             let mut pts = poly.clone();
@@ -1769,6 +1831,7 @@ fn leave_keys(
 
 fn draw(
     mut gizmos: Gizmos,
+    time: Res<Time>,
     online: Res<Online>,
     game: Res<Game>,
     arcs: Res<ShowArcs>,
@@ -1792,7 +1855,17 @@ fn draw(
         None => &snap.bombs,
     };
     for o in &snap.obstacles {
-        draw_obstacle(&mut gizmos, &game, o);
+        draw_obstacle(&mut gizmos, &game, o, time.elapsed_secs());
+    }
+    // Effects demo: keep Onyx-2's firing arc up so the asteroid's shadow
+    // over Gold-1 is on show.
+    if online.demo
+        && let Some(v) = snap.ships.iter().find(|v| v.id.0 == 1)
+        && let Some(p) = v.pose
+    {
+        let fp = game.ships.classes[game.class_index(v.class)].footprint;
+        render::draw_firing_arc(&mut gizmos, &game, p, fp, 0.5);
+        render::draw_obstacle_shadows(&mut gizmos, &game, p, fp, &snap.obstacles, 0.5);
     }
     for t in tokens {
         draw_bomb_token(&mut gizmos, &game, t, t.owner.0 == u32::from(seat));

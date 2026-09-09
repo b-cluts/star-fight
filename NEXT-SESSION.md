@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (172 tests),
+`cargo build` clean, `cargo test --workspace` green (173 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -629,7 +629,7 @@ pins.txt + last-used menu values), starfield.rs.
   request): `render::draw_obstacle_shadows` hatches the part of the
   arc behind each token (angular extent of its outline seen from the
   arc origin, from its near edge out to Range 3) in the planning
-  preview and the Declare Target prompt; the exact rule (range ruler
+  preview, the Declare Target prompt and the Effects Demo; the exact rule (range ruler
   between the closest points) drives `AttackOption.obstructed` →
   `AttackChoice.obstructed` → "(obstructed)" in the prompt options and
   ", obstructed" in the HUD weapons line (`WeaponState::Ready` now
@@ -643,7 +643,16 @@ pins.txt + last-used menu values), starfield.rs.
   Range 5 (12.5 units) of the core is pulled 1 unit straight toward the
   center (translate the pose along the line to the core, heading
   unchanged); a ship whose base overlaps the core after the pull is
-  swallowed — destroyed, no wreck, narrated. Open questions for the
+  swallowed — destroyed, no wreck, narrated. PARTLY DONE 2026-09-09:
+  `ObstacleKind::BlackHole` exists (core = 12-gon of `CORE_RADIUS`
+  0.5; a ship whose base or template touches the core is swallowed in
+  `resolve_movement`, test `a_black_hole_core_swallows…`), the client
+  draws it (stacked black rings, three spiralling gas arms animated
+  with `Time`, drifting motes) and the Effects Demo shows one at
+  (17.5, 17) plus two asteroids, a debris cloud and Onyx-2's arc with
+  the asteroid's shadow over Gold-1 (obstructed shots labelled). NOT
+  done: the gravity pull, scatter/scenario support for black holes,
+  glossary entry. Open questions for the
   user: does a pulled ship stop when it would overlap another ship
   (suggest: yes, bump-style back-off, no damage); are huge/large ships
   pulled the same distance; do bomb tokens get pulled (suggest no); is
