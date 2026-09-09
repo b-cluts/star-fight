@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (141 tests),
+`cargo build` clean, `cargo test --workspace` green (150 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -203,10 +203,13 @@ and Server `ws://127.0.0.1:7777`.
       `cargo check` (lockfile), commit "Version x.y.z", `git tag -a
       vx.y.z -m "..."`, push main and the tag. Bump PROTOCOL_VERSION
       whenever a released client would misread the new messages.
-   d. ~~Talent cards (4.b)~~ DONE 2026-09-09, see 4.b for the list and
-      what was skipped. NEXT: token/movement pilot abilities (4.d in
-      the roadmap), then the in-game glossary (backlog entry below).
-      Also open from a: reasons for unavailable weapons in the prompt.
+   d. ~~Talent cards (4.b)~~ DONE 2026-09-09; ~~first batch of 4.d
+      token/stress/movement abilities~~ DONE 2026-09-09 (see 4.b / 4.d
+      for what is live and what was skipped). NEXT: the in-game
+      glossary (backlog entry below), then a "second action / template
+      choice" in the planning UI which unlocks Push the Limit, Snap,
+      Blue Ace, Zeta Ace, BB-8 and friends. Also open from a: reasons
+      for unavailable weapons in the prompt.
    Done 2026-09-08/09 (all pushed): server refusals now send Error +
    Close and drain (the old drop caused "connection reset by peer" that
    hid the reason) and the client shows "Connection refused: <why>";
@@ -307,15 +310,33 @@ and Server `ws://127.0.0.1:7777`.
       Munitions ordnance tokens, Munitions Failsafe, Guidance Chips,
       BTL-A4 title, Bomblet/Chardaan. Tests use `run_combat` +
       `prefer(weapon)` helpers.
-   d. Token/stress abilities (Red Ace, Night Beast, Nien Nunb, Epsilon
-      Leader, Chaser, Wingman, Cool Hand, R2-D2, R5-P9, Comm Relay…),
-      then movement ones (Snap free boost, Blue Ace/Zeta Ace templates,
-      Ello Asty/Adrenaline Rush/Stay on Target colours, BB-8, R2
-      Astromech, Twin Ion Engine, Push the Limit free action), Epsilon
-      Ace skill 12, Wampa, damage-card ones (Determination, Integrated
-      Astromech, R5 Astromech, Draw Their Fire). Youngster/Squad Leader/
-      Swarm Tactics/Decoy need multi-ship hooks; Seismic Torpedo and
-      Trick Shot need obstacles (p.20, not implemented).
+   d. Token/stress/movement abilities — FIRST BATCH DONE 2026-09-09
+      (nine tests): Night Beast (free focus after green), Red Ace (evade
+      on the first shield lost per round — `ShipState.shield_lost_round`,
+      reset in finish_turn; also fires from bombs), Epsilon Leader +
+      Wingman (`combat_start_stress_relief` after movement), Nien Nunb
+      pilot / Soontir Fel / Cool Hand via `gain_stress` (every stress
+      source now goes through it: red maneuvers, Zeta Leader,
+      Opportunist, flechettes, Thermal Detonators), Kyle Katarn crew
+      via `lose_stress`, Tycho (acts while stressed), Chaser
+      (`friend_spent_focus` after either side spends focus), Epsilon Ace
+      (skill 12 while hull is full), Gemmer Sojan (+1 agility with an
+      enemy at Range 1), maneuver colours in `maneuver_difficulty`
+      (Ello Asty white Tallons unstressed, R2 Astromech 1-2 straights,
+      Nien Nunb crew straights, TIE Mk. II banks green, Adrenaline Rush
+      red→white discarded on reveal; plan_maneuver uses it too), and
+      faceup-card riders in `apply_crit_effect` (Chewbacca pilot flips
+      facedown, Determination discards Pilot-trait cards —
+      `CritEffect::is_pilot_trait`). STILL OPEN: policy/UI-bound ones —
+      Snap free boost, Blue Ace/Zeta Ace/Lorrir templates, BB-8, Stay on
+      Target / Juno speed change / Tetran K-turn speeds, Push the Limit,
+      Jake Farrell / Turr Phennir free repositions, Darth Vader two
+      actions (all need a second action or template choice in the
+      planning UI); R2-D2 / R5-P9 / R5 / Integrated Astromech (end-phase
+      repairs), Draw Their Fire, Wampa, Carnor Jax, Kir Kanos, Zertik
+      Strom, Fel's Wrath, Lando/Youngster/Squad Leader/Swarm Tactics/
+      Decoy (multi-ship), Comm Relay (keep an evade), Seismic Torpedo and
+      Trick Shot (obstacles, p.20 not implemented).
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.
 
