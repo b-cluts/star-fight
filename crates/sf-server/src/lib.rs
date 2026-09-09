@@ -583,6 +583,24 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
+                    ClientMsg::PlanSecondAction { ship_id, action } => {
+                        match gs.plan_second_action(&content, player, ship_id, action) {
+                            // Plans are secret: only the planner's view changes.
+                            Ok(()) => send_to!(
+                                seat,
+                                ServerMsg::Snapshot {
+                                    phase: gs.phase,
+                                    turn: gs.turn,
+                                    ships: gs.snapshot_for(&content, player),
+                                    committed: gs.committed,
+                                    initiative: gs.initiative.0 as u8,
+                                    squad_totals: gs.squad_totals,
+                                    bombs: gs.bombs.clone(),
+                                }
+                            ),
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
                     ClientMsg::PlanBomb { ship_id, bomb } => {
                         match gs.plan_bomb(&content, player, ship_id, bomb) {
                             // Plans are secret: only the planner's view changes.

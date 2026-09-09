@@ -51,6 +51,12 @@ pub enum ClientMsg {
         ship_id: ShipId,
         bomb: Option<UpgradeId>,
     },
+    /// Secretly plan a second action where an ability grants one
+    /// (ShipView.extras.second); None clears it.
+    PlanSecondAction {
+        ship_id: ShipId,
+        action: Option<PlannedAction>,
+    },
     CommitPlans,
     /// Answer to ChooseTarget: which eligible enemy to attack, and with
     /// which weapon (None = primary weapon).
