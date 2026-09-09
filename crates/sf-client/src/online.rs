@@ -158,6 +158,8 @@ pub struct Online {
     pub demo: bool,
     /// The next action key sets the ship's SECOND action.
     pub second_pick: bool,
+    /// The host's scenario choice (from GameStart, or our own setup).
+    pub setup: Option<sf_core::scenario::GameSetup>,
 }
 
 /// Callsign of a ship in the current snapshot ("ship" if unknown).
@@ -447,10 +449,18 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
             NetEvent::Msg(msg) => match msg {
                 ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
                 ServerMsg::GameCreated { code } => {
-                    online.status = format!("Game code: {code}  —  waiting for opponent…");
+                    let what = online
+                        .setup
+                        .as_ref()
+                        .map(|s| format!(" — {}", s.summary()))
+                        .unwrap_or_default();
+                    online.status = format!("Game code: {code}{what}  —  waiting for opponent…");
                     online.code = Some(code);
                 }
-                ServerMsg::GameStart { seat, opponent, board } => {
+                ServerMsg::GameStart { seat, opponent, board, setup } => {
+                    if setup.is_some() {
+                        online.setup = setup;
+                    }
                     game.board = board;
                     online.seat = Some(seat);
                     online.status = format!("Matched with {opponent} — place your ships");
@@ -1928,8 +1938,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if snap.committed[seat as usize] { "✔" } else { "—" },
         if snap.committed[1 - seat as usize] { "✔" } else { "—" },
     );
+    let scenario = online.setup.as_ref().map(|s| format!(" | {}", s.summary())).unwrap_or_default();
     let mut lines = vec![format!(
-        "TURN {} | {:?} | initiative: {init} ({} vs {} pts) | {committed}",
+        "TURN {} | {:?} | initiative: {init} ({} vs {} pts) | {committed}{scenario}",
         snap.turn,
         snap.phase,
         snap.totals[seat as usize],

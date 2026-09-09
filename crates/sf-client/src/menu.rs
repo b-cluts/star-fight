@@ -13,6 +13,7 @@ use sf_proto::tls::{Target, parse_target};
 
 use crate::online::Online;
 use crate::render::{Game, HudText};
+use crate::setup::PendingCreate;
 use crate::squad_builder::Builder;
 use crate::{Screen, net, pins};
 
@@ -354,6 +355,7 @@ fn buttons(
     mut next: ResMut<NextState<Screen>>,
     mut builder: ResMut<Builder>,
     game: Res<Game>,
+    mut pending: ResMut<PendingCreate>,
 ) {
     for (interaction, field, action) in &interactions {
         if *interaction != Interaction::Pressed {
@@ -390,8 +392,16 @@ fn buttons(
                     password: form.password.clone(),
                 };
                 let squad = builder.squad_for_play(&game);
+                if matches!(action, MenuAction::Create) {
+                    // The host picks the scenario first; the setup screen
+                    // connects once it is chosen.
+                    form.error.clear();
+                    pins::save_menu(form.name.trim(), form.addr.trim());
+                    *pending = PendingCreate { target: Some(target), hello: Some(hello), squad };
+                    next.set(Screen::Setup);
+                    continue;
+                }
                 let second = match action {
-                    MenuAction::Create => ClientMsg::CreateGame { squad },
                     MenuAction::Join => {
                         if form.code.trim().is_empty() {
                             form.error = "enter the game code to join".into();

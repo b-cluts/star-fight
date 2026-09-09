@@ -12,6 +12,7 @@ mod online;
 mod pins;
 mod render;
 mod sandbox;
+mod setup;
 mod squad_builder;
 mod starfield;
 
@@ -31,6 +32,8 @@ pub enum Screen {
     Sandbox,
     Online,
     Squad,
+    /// Host's scenario / obstacle / points choice before Create Game.
+    Setup,
 }
 
 fn assets_dir() -> String {
@@ -95,7 +98,7 @@ fn main() {
             ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin, squad_builder::plugin))
-        .add_plugins(glossary::plugin)
+        .add_plugins((glossary::plugin, setup::plugin))
         .run();
 }
 
