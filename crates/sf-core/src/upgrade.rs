@@ -355,6 +355,12 @@ impl UpgradeEffect {
                 | FlipShipCritFacedown
                 | RecoverShieldOnGreen
                 | RecoverShieldSpendFocus
+                | FreeActionThenStress
+                | FreeBarrelRollOnGreen
+                | FocusToCritOthersToHitAction
+                | RerollUpTo3ForFocusAnd2Stress
+                | ExposeAction
+                | AgilityPlus1Action
         )
     }
 }

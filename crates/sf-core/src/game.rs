@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::action::{self, ActionKind, ActionResult, PlannedAction};
+use crate::action::{
+    self, ActionExtras, ActionKind, ActionResult, PlannedAction, SecondActionKind,
+};
 use crate::board::{Board, Seat};
 use crate::bombs::{self, BombHit, BombKind, BombToken, Detonation};
 use crate::combat;
@@ -133,6 +135,10 @@ pub enum Rejection {
     BadCallsign(String),
     /// The card is not equipped on that ship (or is not that kind of card).
     NoSuchUpgrade,
+    /// A boost or barrel-roll template only some pilots may use.
+    TemplateNotAllowed,
+    /// Nothing grants this ship a second action, or not that one.
+    SecondActionNotAllowed,
 }
 
 impl std::fmt::Display for Rejection {
@@ -154,6 +160,8 @@ impl std::fmt::Display for Rejection {
             Rejection::BadTarget => "that ship is not an eligible target",
             Rejection::BadCallsign(why) => return write!(f, "bad callsign: {why}"),
             Rejection::NoSuchUpgrade => "that ship does not carry that card",
+            Rejection::TemplateNotAllowed => "that template is not available to this pilot",
+            Rejection::SecondActionNotAllowed => "this ship cannot take that second action",
         };
         f.write_str(s)
     }
@@ -186,6 +194,13 @@ pub struct MoveRecord {
     /// before the action).
     #[serde(default)]
     pub mines_hit: Vec<Detonation>,
+    /// A free barrel roll taken before the move (BB-8 on a green reveal).
+    #[serde(default)]
+    pub pre: Option<(PlannedAction, ActionResult)>,
+    /// A second action (Push the Limit, Darth Vader, "Snap" Wexley's
+    /// boost, Jake Farrell's reposition).
+    #[serde(default)]
+    pub second: Option<(PlannedAction, ActionResult)>,
 }
 
 /// One resolved attack in the Combat phase.
@@ -342,6 +357,12 @@ pub struct ShipView {
     /// Own ships only: the bomb card chosen to drop on dial reveal.
     #[serde(default)]
     pub bomb: Option<UpgradeId>,
+    /// Own ships only: the planned second action.
+    #[serde(default)]
+    pub planned_action2: Option<PlannedAction>,
+    /// Own ships only: what beyond the action bar may be planned.
+    #[serde(default)]
+    pub extras: ActionExtras,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,6 +446,8 @@ impl GameState {
                     plan: None,
                     planned_action: None,
                     bomb: None,
+                    planned_action2: None,
+                    card_actions: Vec::new(),
                     shield_lost_round: false,
                     focus: 0,
                     evade: 0,
@@ -549,10 +572,13 @@ impl GameState {
                         && self.range_between(content, i, e) == Some(1)
                 })
             });
+        let r2f2 = u8::from(self.card_action_active(content, s, UpgradeEffect::AgilityPlus1Action));
+        let expose = u8::from(self.card_action_active(content, s, UpgradeEffect::ExposeAction));
         (self.printed(content, s).agility
             + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit)
-            + u8::from(gemmer))
-        .saturating_sub(structural)
+            + u8::from(gemmer)
+            + r2f2)
+            .saturating_sub(structural + expose)
     }
 
     /// Action bar with icons granted by modifications (Targeting
@@ -806,6 +832,19 @@ impl GameState {
             if done > 0 {
                 events.push(format!(
                     "{}: Predator — rerolls {done} attack dice",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
+        if self.card_action_active(
+            content,
+            &self.ships[a_idx],
+            UpgradeEffect::RerollUpTo3ForFocusAnd2Stress,
+        ) {
+            let done = self.reroll_attack_dice(a_idx, faces, 3, roll);
+            if done > 0 {
+                events.push(format!(
+                    "{}: Rage — rerolls {done} attack dice",
                     self.label(content, a_idx)
                 ));
             }
@@ -1535,13 +1574,276 @@ impl GameState {
                 return Err(Rejection::BadLockTarget);
             }
         }
-        if let PlannedAction::DropMine(card) = planned
-            && !self.bomb_kind(content, i, card).is_some_and(BombKind::is_mine)
-        {
-            return Err(Rejection::NoSuchUpgrade);
-        }
+        self.check_action_extras(content, i, planned)?;
         self.ships[i].planned_action = Some(planned);
         Ok(())
+    }
+
+    /// Card-bound checks shared by both action slots: mine cards, card
+    /// actions, and the "Blue Ace" / "Zeta Ace" templates.
+    fn check_action_extras(
+        &self,
+        content: &Content,
+        i: usize,
+        planned: PlannedAction,
+    ) -> Result<(), Rejection> {
+        let extras = self.action_extras(content, &self.ships[i]);
+        match planned {
+            PlannedAction::DropMine(card)
+                if !self.bomb_kind(content, i, card).is_some_and(BombKind::is_mine) =>
+            {
+                Err(Rejection::NoSuchUpgrade)
+            }
+            PlannedAction::CardAction(card) if !extras.card_actions.contains(&card) => {
+                Err(Rejection::NoSuchUpgrade)
+            }
+            PlannedAction::Boost(action::BoostDir::TurnLeft | action::BoostDir::TurnRight)
+                if !extras.turn_boost =>
+            {
+                Err(Rejection::TemplateNotAllowed)
+            }
+            PlannedAction::BarrelRollFar(_) if !extras.far_roll => {
+                Err(Rejection::TemplateNotAllowed)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Secretly plan the ship's second action (None clears it). What is
+    /// allowed depends on what grants it — see `SecondActionKind`.
+    pub fn plan_second_action(
+        &mut self,
+        content: &Content,
+        player: PlayerId,
+        ship_id: ShipId,
+        planned: Option<PlannedAction>,
+    ) -> Result<(), Rejection> {
+        if self.phase != Phase::Planning {
+            return Err(Rejection::WrongPhase);
+        }
+        if self.committed[player.0 as usize] {
+            return Err(Rejection::AlreadyCommitted);
+        }
+        let i = self.ship_index(ship_id)?;
+        if self.ships[i].owner != player {
+            return Err(Rejection::NotYourShip);
+        }
+        if self.ships[i].destroyed {
+            return Err(Rejection::ShipDestroyed);
+        }
+        let Some(planned) = planned else {
+            self.ships[i].planned_action2 = None;
+            return Ok(());
+        };
+        let extras = self.action_extras(content, &self.ships[i]);
+        let Some(kind) = extras.second else { return Err(Rejection::SecondActionNotAllowed) };
+        let reposition = matches!(
+            planned,
+            PlannedAction::Boost(_)
+                | PlannedAction::BarrelRoll(_)
+                | PlannedAction::BarrelRollFar(_)
+        );
+        let allowed = match kind {
+            SecondActionKind::FreeBarAction => {
+                planned != PlannedAction::Pass
+                    && planned
+                        .kind()
+                        .is_some_and(|k| self.action_bar(content, &self.ships[i]).contains(&k))
+            }
+            SecondActionKind::TwoActions => planned != PlannedAction::Pass,
+            SecondActionKind::BoostAfterMove => matches!(planned, PlannedAction::Boost(_)),
+            SecondActionKind::RepositionAfterFocus => reposition,
+            SecondActionKind::RollOnGreenReveal => {
+                matches!(planned, PlannedAction::BarrelRoll(_) | PlannedAction::BarrelRollFar(_))
+            }
+        };
+        if !allowed {
+            return Err(Rejection::SecondActionNotAllowed);
+        }
+        // Granted repositions (BB-8, Snap, Jake Farrell) need no icon on
+        // the bar; the other kinds are ordinary actions.
+        let needs_icon =
+            matches!(kind, SecondActionKind::FreeBarAction | SecondActionKind::TwoActions);
+        if needs_icon
+            && let Some(k) = planned.kind()
+            && !self.action_bar(content, &self.ships[i]).contains(&k)
+        {
+            return Err(Rejection::ActionNotOnBar);
+        }
+        if let PlannedAction::TargetLock(target) = planned {
+            let t = self.ship_index(target)?;
+            if self.ships[t].owner == player || self.ships[t].destroyed {
+                return Err(Rejection::BadLockTarget);
+            }
+        }
+        self.check_action_extras(content, i, planned)?;
+        self.ships[i].planned_action2 = Some(planned);
+        Ok(())
+    }
+
+    /// What this ship may plan beyond its action bar.
+    pub fn action_extras(&self, content: &Content, s: &ShipState) -> ActionExtras {
+        let ability = self.ability(content, s);
+        let second = if ability == Some(PilotAbility::TwoActions) {
+            Some(SecondActionKind::TwoActions)
+        } else if self.count_effect(content, s, UpgradeEffect::FreeActionThenStress) > 0 {
+            Some(SecondActionKind::FreeBarAction)
+        } else if ability == Some(PilotAbility::FreeBoostAfterSpeed2To4) {
+            Some(SecondActionKind::BoostAfterMove)
+        } else if ability == Some(PilotAbility::FreeRepositionAfterFocus) {
+            Some(SecondActionKind::RepositionAfterFocus)
+        } else if self.count_effect(content, s, UpgradeEffect::FreeBarrelRollOnGreen) > 0 {
+            Some(SecondActionKind::RollOnGreenReveal)
+        } else {
+            None
+        };
+        let card_actions = s
+            .upgrades
+            .iter()
+            .copied()
+            .filter(|u| {
+                matches!(
+                    content.upgrades.upgrade(*u).and_then(|c| c.effect),
+                    Some(
+                        UpgradeEffect::FocusToCritOthersToHitAction
+                            | UpgradeEffect::RerollUpTo3ForFocusAnd2Stress
+                            | UpgradeEffect::ExposeAction
+                            | UpgradeEffect::AgilityPlus1Action
+                    )
+                )
+            })
+            .collect();
+        ActionExtras {
+            second,
+            turn_boost: ability == Some(PilotAbility::BoostWithTurnTemplate),
+            far_roll: ability == Some(PilotAbility::BarrelRollWithStraight2),
+            card_actions,
+        }
+    }
+
+    /// Was a card action with effect `e` performed this round?
+    fn card_action_active(&self, content: &Content, s: &ShipState, e: UpgradeEffect) -> bool {
+        s.card_actions
+            .iter()
+            .any(|u| content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(e))
+    }
+
+    /// Execute one action for ship `i` at its current pose. Repositions
+    /// are blocked by other ships and the board edge.
+    fn perform_action(
+        &mut self,
+        content: &Content,
+        i: usize,
+        planned: PlannedAction,
+        fp: Footprint,
+        obstacles: &[[Vec2; 4]],
+        events: &mut Vec<String>,
+    ) -> (ActionResult, Vec<BombToken>) {
+        let pose = self.ships[i].pose.expect("acting ships are on the board");
+        let clear = |board: &Board, candidate: Pose| {
+            let corners = rules::footprint_corners(candidate, fp);
+            rules::within_board(board, &corners)
+                && obstacles.iter().all(|oc| !rules::obbs_overlap(&corners, oc))
+        };
+        let result = match planned {
+            PlannedAction::Pass => ActionResult::Performed,
+            PlannedAction::Focus => {
+                self.ships[i].focus += 1;
+                ActionResult::Performed
+            }
+            PlannedAction::Evade => {
+                self.ships[i].evade += 1;
+                ActionResult::Performed
+            }
+            PlannedAction::BarrelRoll(side) | PlannedAction::BarrelRollFar(side) => {
+                let template =
+                    if matches!(planned, PlannedAction::BarrelRollFar(_)) { 2.0 } else { 1.0 };
+                let candidate = action::barrel_roll_pose_with(pose, fp, side, template);
+                if clear(&self.board, candidate) {
+                    self.ships[i].pose = Some(candidate);
+                    ActionResult::Performed
+                } else {
+                    ActionResult::Failed
+                }
+            }
+            PlannedAction::Boost(dir) => {
+                // Not a maneuver: no stress interaction. Blocked if it
+                // would overlap a ship or leave the board.
+                match maneuver::apply(pose, action::boost_maneuver(dir)) {
+                    Ok(candidate) if clear(&self.board, candidate) => {
+                        self.ships[i].pose = Some(candidate);
+                        ActionResult::Performed
+                    }
+                    _ => ActionResult::Failed,
+                }
+            }
+            PlannedAction::TargetLock(target) => {
+                let in_range = self
+                    .ship_index(target)
+                    .ok()
+                    .and_then(|t| {
+                        let ts = &self.ships[t];
+                        if ts.destroyed {
+                            return None;
+                        }
+                        let tp = ts.pose?;
+                        let tfp = self.class_of(content, ts).footprint;
+                        let my = rules::footprint_corners(pose, fp);
+                        combat::range_band_between(&my, &rules::footprint_corners(tp, tfp))
+                    })
+                    .is_some();
+                if in_range {
+                    self.ships[i].lock = Some(target);
+                    ActionResult::Performed
+                } else {
+                    let who = self.label(content, i);
+                    let whom = self
+                        .ship_index(target)
+                        .map(|t| self.label(content, t))
+                        .unwrap_or_else(|_| "target".into());
+                    events.push(format!(
+                        "{who}: target lock on {whom} FAILED — not within Range 1-3 after moving"
+                    ));
+                    ActionResult::Failed
+                }
+            }
+            PlannedAction::DropMine(card) => match self.bomb_kind(content, i, card) {
+                Some(kind) if kind.is_mine() => {
+                    let tokens = self.drop_bomb(content, i, card, kind, events);
+                    return (ActionResult::Performed, tokens);
+                }
+                _ => ActionResult::Failed,
+            },
+            PlannedAction::CardAction(card) => {
+                if !self.action_extras(content, &self.ships[i]).card_actions.contains(&card) {
+                    return (ActionResult::Failed, Vec::new());
+                }
+                let name =
+                    content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_default();
+                self.ships[i].card_actions.push(card);
+                events.push(format!("{}: {name} action", self.label(content, i)));
+                // Rage: a focus token now and two stress tokens.
+                if content.upgrades.upgrade(card).and_then(|c| c.effect)
+                    == Some(UpgradeEffect::RerollUpTo3ForFocusAnd2Stress)
+                {
+                    self.ships[i].focus += 1;
+                    self.gain_stress(content, i, events);
+                    self.gain_stress(content, i, events);
+                }
+                ActionResult::Performed
+            }
+        };
+        (result, Vec::new())
+    }
+
+    /// May ship `i` perform a free action right now (not stressed, no
+    /// Damaged Sensor Array, alive)?
+    fn may_act_freely(&self, content: &Content, i: usize) -> bool {
+        let s = &self.ships[i];
+        !s.destroyed
+            && (s.stress == 0
+                || self.ability(content, s) == Some(PilotAbility::ActionsWhileStressed))
+            && !s.crits.contains(&CritEffect::DamagedSensorArray)
     }
 
     /// Secretly choose a bomb card to drop when the dial is revealed
@@ -2071,9 +2373,6 @@ impl GameState {
             {
                 dropped_before = self.drop_bomb(content, i, card, kind, &mut events);
             }
-            let start = self.ships[i].pose.expect("placed");
-            let path = maneuver::sample_path(start, man).expect("validated at plan time");
-
             // Everyone else still on the board, as obstacles.
             let obstacles: Vec<_> = self
                 .ships
@@ -2083,6 +2382,28 @@ impl GameState {
                     s.pose.map(|p| rules::footprint_corners(p, self.class_of(content, s).footprint))
                 })
                 .collect();
+            let extras = self.action_extras(content, &self.ships[i]);
+            let mut planned2 = self.ships[i].planned_action2.take();
+            // BB-8: a free barrel roll on a green reveal, before moving.
+            let mut pre = None;
+            if extras.second == Some(SecondActionKind::RollOnGreenReveal)
+                && difficulty == Difficulty::Easy
+                && matches!(
+                    planned2,
+                    Some(PlannedAction::BarrelRoll(_) | PlannedAction::BarrelRollFar(_))
+                )
+                && self.may_act_freely(content, i)
+            {
+                let a = planned2.take().expect("matched above");
+                let (r, _) = self.perform_action(content, i, a, fp, &obstacles, &mut events);
+                events.push(format!(
+                    "{}: BB-8 — free barrel roll before moving",
+                    self.label(content, i)
+                ));
+                pre = Some((a, r));
+            }
+            let start = self.ships[i].pose.expect("placed");
+            let path = maneuver::sample_path(start, man).expect("validated at plan time");
 
             // Core rules p.17: ships move THROUGH occupied space freely —
             // only the FINAL position matters. A K-turn (or Tallon roll)
@@ -2200,6 +2521,24 @@ impl GameState {
             }
             let destroyed = self.ships[i].destroyed;
 
+            // "Snap" Wexley: a free boost after a 2-4 speed maneuver when
+            // not touching a ship, before the Perform Action step.
+            let mut second = None;
+            if extras.second == Some(SecondActionKind::BoostAfterMove)
+                && (2..=4).contains(&man.distance)
+                && !bumped
+                && matches!(planned2, Some(PlannedAction::Boost(_)))
+                && self.may_act_freely(content, i)
+            {
+                let a = planned2.take().expect("matched above");
+                let (r, _) = self.perform_action(content, i, a, fp, &obstacles, &mut events);
+                events.push(format!(
+                    "{}: ability — free boost after the maneuver",
+                    self.label(content, i)
+                ));
+                second = Some((a, r));
+            }
+
             // Perform Action step: one action, right after moving. Stress,
             // bumping, destruction, or damaged sensors all forfeit it.
             let planned = self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
@@ -2219,93 +2558,39 @@ impl GameState {
             {
                 ActionResult::SkippedDamaged
             } else {
-                match planned {
-                    PlannedAction::Pass => ActionResult::Performed,
-                    PlannedAction::Focus => {
-                        self.ships[i].focus += 1;
-                        ActionResult::Performed
+                let (r, tokens) =
+                    self.perform_action(content, i, planned, fp, &obstacles, &mut events);
+                dropped_after = tokens;
+                // Second action: Darth Vader (always), Push the Limit
+                // (after a performed action, then stress), Jake Farrell
+                // (a reposition after a focus action).
+                let grants = match extras.second {
+                    Some(SecondActionKind::TwoActions) => true,
+                    Some(SecondActionKind::FreeBarAction) => {
+                        r == ActionResult::Performed && planned != PlannedAction::Pass
                     }
-                    PlannedAction::Evade => {
-                        self.ships[i].evade += 1;
-                        ActionResult::Performed
+                    Some(SecondActionKind::RepositionAfterFocus) => {
+                        r == ActionResult::Performed && planned == PlannedAction::Focus
                     }
-                    PlannedAction::BarrelRoll(side) => {
-                        let candidate = action::barrel_roll_pose(end, fp, side);
-                        let corners = rules::footprint_corners(candidate, fp);
-                        let clear = rules::within_board(&self.board, &corners)
-                            && obstacles.iter().all(|oc| !rules::obbs_overlap(&corners, oc));
-                        if clear {
-                            self.ships[i].pose = Some(candidate);
-                            ActionResult::Performed
-                        } else {
-                            ActionResult::Failed
-                        }
+                    _ => false,
+                };
+                if grants
+                    && let Some(a) = planned2.take()
+                    && self.may_act_freely(content, i)
+                {
+                    let (r2, more) =
+                        self.perform_action(content, i, a, fp, &obstacles, &mut events);
+                    dropped_after.extend(more);
+                    if extras.second == Some(SecondActionKind::FreeBarAction) {
+                        events.push(format!(
+                            "{}: Push the Limit — second action, then stress",
+                            self.label(content, i)
+                        ));
+                        self.gain_stress(content, i, &mut events);
                     }
-                    PlannedAction::Boost(dir) => {
-                        // Not a maneuver: no stress interaction. Blocked if
-                        // it would overlap a ship or leave the board.
-                        let boosted = maneuver::apply(
-                            self.ships[i].pose.expect("just set"),
-                            action::boost_maneuver(dir),
-                        );
-                        match boosted {
-                            Ok(candidate) => {
-                                let corners = rules::footprint_corners(candidate, fp);
-                                let clear = rules::within_board(&self.board, &corners)
-                                    && obstacles
-                                        .iter()
-                                        .all(|oc| !rules::obbs_overlap(&corners, oc));
-                                if clear {
-                                    self.ships[i].pose = Some(candidate);
-                                    ActionResult::Performed
-                                } else {
-                                    ActionResult::Failed
-                                }
-                            }
-                            Err(_) => ActionResult::Failed,
-                        }
-                    }
-                    PlannedAction::TargetLock(target) => {
-                        let in_range = self
-                            .ship_index(target)
-                            .ok()
-                            .and_then(|t| {
-                                let ts = &self.ships[t];
-                                if ts.destroyed {
-                                    return None;
-                                }
-                                let tp = ts.pose?;
-                                let tfp = self.class_of(content, ts).footprint;
-                                let my = rules::footprint_corners(
-                                    self.ships[i].pose.expect("just set"),
-                                    fp,
-                                );
-                                combat::range_band_between(&my, &rules::footprint_corners(tp, tfp))
-                            })
-                            .is_some();
-                        if in_range {
-                            self.ships[i].lock = Some(target);
-                            ActionResult::Performed
-                        } else {
-                            let who = self.label(content, i);
-                            let whom = self
-                                .ship_index(target)
-                                .map(|t| self.label(content, t))
-                                .unwrap_or_else(|_| "target".into());
-                            events.push(format!(
-                                "{who}: target lock on {whom} FAILED — not within Range 1-3 after moving"
-                            ));
-                            ActionResult::Failed
-                        }
-                    }
-                    PlannedAction::DropMine(card) => match self.bomb_kind(content, i, card) {
-                        Some(kind) if kind.is_mine() => {
-                            dropped_after = self.drop_bomb(content, i, card, kind, &mut events);
-                            ActionResult::Performed
-                        }
-                        _ => ActionResult::Failed,
-                    },
+                    second = Some((a, r2));
                 }
+                r
             };
 
             let stress = self.ships[i].stress;
@@ -2322,6 +2607,8 @@ impl GameState {
                 dropped_before,
                 dropped_after,
                 mines_hit,
+                pre,
+                second,
             });
         }
 
@@ -2410,6 +2697,8 @@ impl GameState {
             ship.focus = 0;
             ship.evade = 0;
             ship.shield_lost_round = false;
+            ship.card_actions.clear();
+            ship.planned_action2 = None;
             if let Some(l) = ship.lock
                 && dead.contains(&l)
             {
@@ -2578,7 +2867,14 @@ impl GameState {
         }
         let a_dice = match &secondary {
             Some((_, sw)) => sw.dice,
-            None => self.printed(content, &self.ships[a_idx]).attack,
+            None => {
+                self.printed(content, &self.ships[a_idx]).attack
+                    + u8::from(self.card_action_active(
+                        content,
+                        &self.ships[a_idx],
+                        UpgradeEffect::ExposeAction,
+                    ))
+            }
         };
         let range_bonus = u8::from(range == 1 && secondary.is_none());
         let weapon_effect = weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect);
@@ -2700,6 +2996,24 @@ impl GameState {
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
             self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
+            // Marksmanship (action this round): one focus result to a
+            // critical hit, the rest to hits, no token needed.
+            if self.card_action_active(
+                content,
+                &self.ships[a_idx],
+                UpgradeEffect::FocusToCritOthersToHitAction,
+            ) && attack_faces.contains(&AttackFace::Focus)
+            {
+                let mut first = true;
+                for f in attack_faces.iter_mut().filter(|f| **f == AttackFace::Focus) {
+                    *f = if first { AttackFace::Crit } else { AttackFace::Hit };
+                    first = false;
+                }
+                events.push(format!(
+                    "{}: Marksmanship — focus results converted",
+                    self.label(content, a_idx)
+                ));
+            }
             // Expertise: every focus result becomes a hit for free while
             // unstressed (so the focus token is kept).
             if self.has_effect(content, a_idx, UpgradeEffect::AllFocusToHitIfUnstressed)
@@ -3082,6 +3396,12 @@ impl GameState {
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
                     bomb: if own { s.bomb } else { None },
+                    planned_action2: if own { s.planned_action2 } else { None },
+                    extras: if own {
+                        self.action_extras(content, s)
+                    } else {
+                        ActionExtras::default()
+                    },
                 }
             })
             .collect()
@@ -3091,6 +3411,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::{BoostDir, Side};
     use crate::ship::ShipClassId;
     use std::f64::consts::FRAC_PI_2;
 
@@ -5515,5 +5836,183 @@ mod tests {
         let rec = resolve(&c, &mut gs, vec![7]);
         assert_eq!(gs.ships[1].shields, 2);
         assert!(rec.events.iter().any(|e| e.contains("R2-D2")), "{:?}", rec.events);
+    }
+
+    // ---------------- Second actions, templates, card actions ----------------
+
+    #[test]
+    fn push_the_limit_grants_a_second_bar_action_then_stress() {
+        let c = content();
+        let ptl = UpgradeId(102);
+        let mut gs = talent_duel(&c, ptl);
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        // Only bar actions, and not on a ship without the card.
+        assert_eq!(
+            gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::Evade)),
+            Err(Rejection::SecondActionNotAllowed)
+        );
+        assert_eq!(
+            gs.plan_second_action(&c, P0, ShipId(0), Some(PlannedAction::Focus)),
+            Err(Rejection::SecondActionNotAllowed)
+        );
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::Boost(BoostDir::Straight)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        assert_eq!(
+            mv.second,
+            Some((PlannedAction::Boost(BoostDir::Straight), ActionResult::Performed))
+        );
+        assert_eq!(gs.ships[1].stress, 1);
+        // Boosted one unit further south than the plain straight 4.
+        assert!((gs.ships[1].pose.unwrap().anchor.y - 12.5).abs() < 1e-9);
+        assert!(rec.events.iter().any(|e| e.contains("Push the Limit")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn darth_vader_takes_two_actions_without_stress() {
+        let c = content();
+        let mut gs = duel(&c, "darthvader", "bluesquadronnovice");
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        gs.plan_second_action(&c, P0, ShipId(0), Some(PlannedAction::Evade)).unwrap();
+        // Vader (PS9) fires first: [Eye, Eye] → the focus is spent.
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.second, Some((PlannedAction::Evade, ActionResult::Performed)));
+        assert_eq!(gs.ships[0].stress, 0);
+        assert!(imperial_shot(&rec).attacker_focus_spent);
+    }
+
+    #[test]
+    fn snap_wexley_boosts_for_free_after_a_speed_2_to_4_maneuver() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "snapwexley");
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::Boost(BoostDir::Straight)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(
+            mv.second,
+            Some((PlannedAction::Boost(BoostDir::Straight), ActionResult::Performed))
+        );
+        assert_eq!(mv.action_result, ActionResult::Performed, "the focus action still happens");
+        assert!((gs.ships[1].pose.unwrap().anchor.y - 12.5).abs() < 1e-9);
+        assert_eq!(gs.ships[1].stress, 0);
+    }
+
+    #[test]
+    fn blue_ace_turn_boosts_and_zeta_ace_far_rolls() {
+        let c = content();
+        // Turn-template boosts are Blue Ace only.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::Boost(BoostDir::TurnLeft)),
+            Err(Rejection::TemplateNotAllowed)
+        );
+        let mut gs = duel(&c, "academypilot", "blueace");
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Boost(BoostDir::TurnLeft)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        // Heading south, a left turn ends facing east.
+        assert!((gs.ships[1].pose.unwrap().heading.rem_euclid(std::f64::consts::TAU)).abs() < 1e-6);
+
+        // Straight-2 barrel rolls are Zeta Ace only: 2 + base width sideways.
+        let mut gs = duel(&c, "zetaace", "bluesquadronnovice");
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRollFar(Side::Left)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        assert!((gs.ships[0].pose.unwrap().anchor.x - 7.0).abs() < 1e-9, "{:?}", gs.ships[0].pose);
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        assert_eq!(
+            gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRollFar(Side::Left)),
+            Err(Rejection::TemplateNotAllowed)
+        );
+    }
+
+    #[test]
+    fn bb8_rolls_before_a_green_maneuver_and_jake_farrell_after_a_focus() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(40));
+        let green = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.difficulty == Difficulty::Easy
+        });
+        gs.plan_maneuver(&c, P1, ShipId(1), green).unwrap();
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::BarrelRoll(Side::Left)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.pre, Some((PlannedAction::BarrelRoll(Side::Left), ActionResult::Performed)));
+        // Heading south, "left" is +x: two units over, and the flown path
+        // starts from the rolled position.
+        assert!((mv.path[0].anchor.x - 12.0).abs() < 1e-9, "{:?}", mv.path[0]);
+
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("jakefarrell", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::BarrelRoll(Side::Right)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(
+            mv.second,
+            Some((PlannedAction::BarrelRoll(Side::Right), ActionResult::Performed))
+        );
+        // Not after an evade action.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("jakefarrell", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Evade).unwrap();
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::BarrelRoll(Side::Right)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.second, None);
+    }
+
+    #[test]
+    fn card_actions_marksmanship_rage_expose_and_r2f2_last_the_round() {
+        let c = content();
+        // Marksmanship: [Eye, Eye, Blank] → one crit, one hit, no token.
+        let mut gs = talent_duel(&c, UpgradeId(108));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(108))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = rebel_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (1, 1));
+        assert!(!shot.attacker_focus_spent);
+        assert!(gs.ships[1].card_actions.is_empty(), "cleared in the End phase");
+
+        // Rage: focus + 2 stress, then up to 3 rerolls: blanks become hits.
+        let mut gs = talent_duel(&c, UpgradeId(128));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(128))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 3);
+        assert_eq!(gs.ships[1].stress, 2);
+
+        // Expose: 4 attack dice at Range 3, and only 2 defense dice.
+        let mut gs = talent_duel(&c, UpgradeId(112));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(112))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rebel_shot(&rec).attack_faces.len(), 4);
+        assert_eq!(imperial_shot(&rec).defense_faces.len(), 2);
+
+        // R2-F2: agility 3 → 4 defense dice at Range 3.
+        let mut gs = talent_duel(&c, UpgradeId(44));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(44))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(imperial_shot(&rec).defense_faces.len(), 4);
+        // A card the ship does not carry is refused.
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(108))),
+            Err(Rejection::NoSuchUpgrade)
+        );
     }
 }

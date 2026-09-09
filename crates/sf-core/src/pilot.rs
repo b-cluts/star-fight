@@ -435,6 +435,11 @@ impl PilotAbility {
                 | PilotAbility::AgilityPlus1IfEnemyAtRange1
                 | PilotAbility::FlipCritFacedownImmediately
                 | PilotAbility::FocusOnStress
+                | PilotAbility::FreeBoostAfterSpeed2To4
+                | PilotAbility::BoostWithTurnTemplate
+                | PilotAbility::BarrelRollWithStraight2
+                | PilotAbility::FreeRepositionAfterFocus
+                | PilotAbility::TwoActions
         )
     }
 }

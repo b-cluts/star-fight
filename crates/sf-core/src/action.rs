@@ -19,12 +19,46 @@ pub enum ActionKind {
     Boost,
 }
 
-/// Boost template choice: straight-1 or bank-1 left/right.
+/// Boost template choice: straight-1 or bank-1 left/right; "Blue Ace"
+/// may also use the turn-1 templates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BoostDir {
     Straight,
     BankLeft,
     BankRight,
+    TurnLeft,
+    TurnRight,
+}
+
+/// Why a ship may plan a second action, and what it may be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecondActionKind {
+    /// Push the Limit: a free action from the bar after the first one,
+    /// then a stress token.
+    FreeBarAction,
+    /// Darth Vader: two actions in the Perform Action step.
+    TwoActions,
+    /// "Snap" Wexley: a free boost after a 2-, 3- or 4-speed maneuver
+    /// when not touching a ship — before the Perform Action step.
+    BoostAfterMove,
+    /// Jake Farrell: a free boost or barrel roll after a focus action.
+    RepositionAfterFocus,
+    /// BB-8: a free barrel roll when a green maneuver is revealed,
+    /// before the ship moves.
+    RollOnGreenReveal,
+}
+
+/// What a ship may plan beyond the basic action bar (own ships only).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionExtras {
+    pub second: Option<SecondActionKind>,
+    /// "Blue Ace": boosts may use the turn-1 templates.
+    pub turn_boost: bool,
+    /// "Zeta Ace": barrel rolls may use the straight-2 template.
+    pub far_roll: bool,
+    /// Cards whose "Action:" can be taken (Marksmanship, Rage, Expose,
+    /// R2-F2) via `PlannedAction::CardAction`.
+    pub card_actions: Vec<UpgradeId>,
 }
 
 /// The 1-speed maneuver a boost flies. Boosting does NOT count as
@@ -35,6 +69,8 @@ pub fn boost_maneuver(dir: BoostDir) -> crate::maneuver::Maneuver {
         BoostDir::Straight => Steer::Straight,
         BoostDir::BankLeft => Steer::BankLeft,
         BoostDir::BankRight => Steer::BankRight,
+        BoostDir::TurnLeft => Steer::TurnLeft,
+        BoostDir::TurnRight => Steer::TurnRight,
     };
     Maneuver { steer, distance: 1, difficulty: Difficulty::Normal }
 }
@@ -64,6 +100,11 @@ pub enum PlannedAction {
     /// Card action: discard this mine card to drop its token(s) behind
     /// the ship (Proximity Mines, Cluster Mines, Conner Net).
     DropMine(UpgradeId),
+    /// "Zeta Ace": a barrel roll with the straight-2 template.
+    BarrelRollFar(Side),
+    /// A card's "Action:" (Marksmanship, Rage, Expose, R2-F2): its effect
+    /// lasts for the round.
+    CardAction(UpgradeId),
 }
 
 impl PlannedAction {
@@ -77,6 +118,8 @@ impl PlannedAction {
             PlannedAction::Boost(_) => Some(ActionKind::Boost),
             PlannedAction::TargetLock(_) => Some(ActionKind::TargetLock),
             PlannedAction::DropMine(_) => None,
+            PlannedAction::BarrelRollFar(_) => Some(ActionKind::BarrelRoll),
+            PlannedAction::CardAction(_) => None,
         }
     }
 }
@@ -102,7 +145,12 @@ pub enum ActionResult {
 /// laterally by (template length + base width), facing unchanged.
 /// (Simplification vs the tabletop: no fore/aft slide along the template.)
 pub fn barrel_roll_pose(pose: Pose, fp: Footprint, side: Side) -> Pose {
-    let shift = 1.0 + fp.width;
+    barrel_roll_pose_with(pose, fp, side, 1.0)
+}
+
+/// Barrel roll with a template of `template` units ("Zeta Ace": 2).
+pub fn barrel_roll_pose_with(pose: Pose, fp: Footprint, side: Side, template: f64) -> Pose {
+    let shift = template + fp.width;
     let sign = match side {
         Side::Left => 1.0,
         Side::Right => -1.0,
