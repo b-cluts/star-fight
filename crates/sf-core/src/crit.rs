@@ -60,6 +60,25 @@ pub fn draw(raw: u8) -> CritEffect {
 }
 
 impl CritEffect {
+    /// How much a card hurts, for Maarek Stele's pick of three (higher
+    /// is worse for the ship that receives it).
+    pub fn severity(&self) -> u8 {
+        match self {
+            CritEffect::DirectHit => 10,
+            CritEffect::StructuralDamage => 8,
+            CritEffect::DamagedEngine | CritEffect::ConsoleFire => 7,
+            CritEffect::WeaponMalfunction
+            | CritEffect::WeaponsFailure { .. }
+            | CritEffect::DamagedSensorArray => 6,
+            CritEffect::ThrustControlFire | CritEffect::BlindedPilot | CritEffect::InjuredPilot => {
+                5
+            }
+            CritEffect::DamagedCockpit | CritEffect::MinorExplosion => 4,
+            CritEffect::MinorHullBreach => 3,
+            CritEffect::StunnedPilot => 2,
+        }
+    }
+
     /// Cards with the Pilot trait (Determination discards them unresolved).
     pub fn is_pilot_trait(&self) -> bool {
         matches!(

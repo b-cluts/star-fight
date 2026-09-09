@@ -438,6 +438,17 @@ impl PilotAbility {
                 | PilotAbility::FreeBoostAfterSpeed2To4
                 | PilotAbility::FreeRepositionAfterAttack
                 | PilotAbility::BarrelRollWithBank1ForStress
+                | PilotAbility::RerollBlanksAtRange2To3
+                | PilotAbility::RerollTwoBlanksIfEnemyInArc
+                | PilotAbility::FriendlySecondaryReroll2AtRange1
+                | PilotAbility::RerollAllDice
+                | PilotAbility::CancelAllForFacedownDamage
+                | PilotAbility::SpendEvadeForHitAtRange2To3
+                | PilotAbility::DenyFocusEvadeAtRange1
+                | PilotAbility::DenyEnemyRange1Bonus
+                | PilotAbility::SecondaryRangePlusMinus1
+                | PilotAbility::TargetTouchingShipInArc
+                | PilotAbility::ChooseCritFromThree
                 | PilotAbility::BoostWithTurnTemplate
                 | PilotAbility::BarrelRollWithStraight2
                 | PilotAbility::FreeRepositionAfterFocus

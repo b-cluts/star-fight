@@ -853,6 +853,47 @@ impl GameState {
         friends.len() as u8
     }
 
+    /// Is a living enemy of ship `i` with `ability` at Range 1 of it?
+    fn enemy_ability_at_range1(&self, content: &Content, i: usize, ability: PilotAbility) -> bool {
+        (0..self.ships.len()).any(|e| {
+            self.ships[e].owner != self.ships[i].owner
+                && !self.ships[e].destroyed
+                && self.ability(content, &self.ships[e]) == Some(ability)
+                && self.range_between(content, i, e) == Some(1)
+        })
+    }
+
+    /// Carnor Jax at Range 1: no focus or evade actions, no spending
+    /// focus or evade tokens.
+    fn carnor_near(&self, content: &Content, i: usize) -> bool {
+        self.enemy_ability_at_range1(content, i, PilotAbility::DenyFocusEvadeAtRange1)
+    }
+
+    /// The faceup card an attack deals: Maarek Stele draws three and
+    /// keeps the worst for the defender.
+    fn draw_crit_for(
+        &self,
+        content: &Content,
+        a_idx: usize,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) -> CritEffect {
+        if self.ability(content, &self.ships[a_idx]) != Some(PilotAbility::ChooseCritFromThree) {
+            return crit::draw(roll());
+        }
+        let three = [crit::draw(roll()), crit::draw(roll()), crit::draw(roll())];
+        let pick = three.iter().max_by_key(|e| e.severity()).copied().expect("three cards");
+        events.push(format!(
+            "{}: Maarek Stele — draws {}, {} and {}; chooses {}",
+            self.label(content, a_idx),
+            three[0].name(),
+            three[1].name(),
+            three[2].name(),
+            pick.name()
+        ));
+        pick
+    }
+
     /// Extra Munitions: spend an ordnance token on `card` instead of
     /// discarding it. True when a token was spent (the card stays).
     fn spend_ordnance(
@@ -1133,18 +1174,66 @@ impl GameState {
                 ));
             }
         }
+        // Horton Salm: every blank rerolled at Range 2-3. Rey: up to two
+        // blanks rerolled with the enemy in arc.
+        let range = self.range_between(content, a_idx, d_idx).unwrap_or(0);
+        let ability = self.ability(content, &self.ships[a_idx]);
+        if ability == Some(PilotAbility::RerollBlanksAtRange2To3) && (2..=3).contains(&range) {
+            let n = reroll_matching(faces, &[AttackFace::Blank], u8::MAX, &mut || {
+                AttackFace::from_d8(roll())
+            });
+            if n > 0 {
+                events.push(format!(
+                    "{}: ability — rerolls {n} blanks at Range {range}",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
+        if ability == Some(PilotAbility::RerollTwoBlanksIfEnemyInArc)
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+        {
+            let n =
+                reroll_matching(
+                    faces,
+                    &[AttackFace::Blank],
+                    2,
+                    &mut || AttackFace::from_d8(roll()),
+                );
+            if n > 0 {
+                events.push(format!(
+                    "{}: ability — rerolls {n} blanks (enemy in arc)",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
     }
 
-    /// The same talents on defense (Lone Wolf, Wired); only called when
-    /// damage would otherwise still land.
+    /// The same talents on defense (Lone Wolf, Wired, Rey); only called
+    /// when damage would otherwise still land.
     fn talent_defense_rerolls(
         &self,
         content: &Content,
+        a_idx: usize,
         d_idx: usize,
         faces: &mut [DefenseFace],
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) {
+        // Rey: up to two blanks rerolled with the attacker in her arc.
+        if self.ability(content, &self.ships[d_idx])
+            == Some(PilotAbility::RerollTwoBlanksIfEnemyInArc)
+            && self.ship_in_front_arc(content, d_idx, a_idx)
+        {
+            let n = reroll_matching(faces, &[DefenseFace::Blank], 2, &mut || {
+                DefenseFace::from_d8(roll())
+            });
+            if n > 0 {
+                events.push(format!(
+                    "{}: ability — rerolls {n} blanks (enemy in arc)",
+                    self.label(content, d_idx)
+                ));
+            }
+        }
         if self.has_effect(content, d_idx, UpgradeEffect::RerollBlankIfAlone)
             && self.friends_within(content, d_idx, 2).is_empty()
         {
@@ -2211,6 +2300,14 @@ impl GameState {
         };
         let result = match planned {
             PlannedAction::Pass => ActionResult::Performed,
+            // Carnor Jax at Range 1: no focus or evade actions.
+            PlannedAction::Focus | PlannedAction::Evade if self.carnor_near(content, i) => {
+                events.push(format!(
+                    "{}: action FAILED — Carnor Jax at Range 1 forbids focus and evade",
+                    self.label(content, i)
+                ));
+                ActionResult::Failed
+            }
             PlannedAction::Focus => {
                 self.ships[i].focus += 1;
                 // Recon Specialist: a second focus token.
@@ -4120,13 +4217,16 @@ impl GameState {
                 && let Some(sw) = card.attack
                 && matches!(card.slot, Slot::Torpedo | Slot::Missile | Slot::Cannon | Slot::Turret)
             {
-                weapons.push((
-                    Some(u),
-                    sw.range_min,
-                    sw.range_max,
-                    card.slot != Slot::Turret || arc_only,
-                    sw.requires,
-                ));
+                // Major Rhymer: secondary weapon ranges stretch by one
+                // band each way (within Range 1-3).
+                let rhymer = self.ability(content, &self.ships[a_idx])
+                    == Some(PilotAbility::SecondaryRangePlusMinus1);
+                let (lo, hi) = if rhymer {
+                    ((sw.range_min - 1).max(1), (sw.range_max + 1).min(3))
+                } else {
+                    (sw.range_min, sw.range_max)
+                };
+                weapons.push((Some(u), lo, hi, card.slot != Slot::Turret || arc_only, sw.requires));
             }
         }
         let mut options = Vec::new();
@@ -4138,13 +4238,17 @@ impl GameState {
             let fp = self.class_of(content, s).footprint;
             let corners = rules::footprint_corners(pose, fp);
             let dist = combat::base_distance(&a_corners, &corners);
-            if dist <= 0.0 {
-                continue; // touching bases cannot be targeted
+            let in_arc = Self::base_in_front_arc(a_pose, a_fp, &corners);
+            // Touching bases cannot be targeted — except by Arvel Crynyd,
+            // who may shoot a touching ship inside his arc.
+            let arvel = self.ability(content, &self.ships[a_idx])
+                == Some(PilotAbility::TargetTouchingShipInArc);
+            if dist <= 0.0 && !(arvel && in_arc) {
+                continue;
             }
             let Some(band) = combat::range_band_between(&a_corners, &corners) else {
                 continue;
             };
-            let in_arc = Self::base_in_front_arc(a_pose, a_fp, &corners);
             for &(weapon, lo, hi, needs_arc, req) in &weapons {
                 if band < lo || band > hi || (needs_arc && !in_arc) {
                     continue;
@@ -4278,7 +4382,16 @@ impl GameState {
                     ))
             }
         };
-        let range_bonus = u8::from(range == 1 && secondary.is_none());
+        // Zertik Strom: enemies at Range 1 of him get no Range-1 bonus.
+        let zertik =
+            self.enemy_ability_at_range1(content, a_idx, PilotAbility::DenyEnemyRange1Bonus);
+        if zertik && range == 1 && secondary.is_none() {
+            events.push(format!(
+                "{}: Zertik Strom denies the Range 1 bonus die",
+                self.label(content, a_idx)
+            ));
+        }
+        let range_bonus = u8::from(range == 1 && secondary.is_none() && !zertik);
         let weapon_effect = weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect);
         let twice = matches!(
             weapon_effect,
@@ -4383,6 +4496,8 @@ impl GameState {
         let dark_curse = self.ability(content, &self.ships[d_idx])
             == Some(PilotAbility::DefenderDeniesFocusAndRerolls);
         let attacker_may_spend = attacker_may_modify && !dark_curse;
+        // Carnor Jax at Range 1: focus and evade tokens cannot be spent.
+        let attacker_may_focus = attacker_may_spend && !self.carnor_near(content, a_idx);
         if !attacker_may_modify {
             events.push(format!(
                 "{}: ability — locked attacker cannot modify dice",
@@ -4406,6 +4521,29 @@ impl GameState {
         // Modify attack: spend the lock to reroll blanks (and eyes too if
         // no focus token is held), then free ability conversions, then
         // focus converts the remaining eyes to hits.
+        // Han Solo (pilot): a poor roll — fewer than half the dice landing,
+        // focus results counted with a token to spend — is rerolled whole.
+        if attacker_may_modify
+            && self.ability(content, &self.ships[a_idx]) == Some(PilotAbility::RerollAllDice)
+            && !attack_faces.is_empty()
+        {
+            let good = attack_faces
+                .iter()
+                .filter(|f| {
+                    matches!(f, AttackFace::Hit | AttackFace::Crit)
+                        || (**f == AttackFace::Focus && self.ships[a_idx].focus > 0)
+                })
+                .count();
+            if good * 2 < attack_faces.len() {
+                for f in attack_faces.iter_mut() {
+                    *f = AttackFace::from_d8(roll());
+                }
+                events.push(format!(
+                    "{}: Han Solo — rerolls every attack die",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
         // Adv. Targeting Computer: a free critical hit with a lock on the
         // defender, which then cannot be spent.
         let mut lock_frozen = false;
@@ -4476,6 +4614,22 @@ impl GameState {
                 ));
             }
             self.talent_attack_rerolls(content, a_idx, d_idx, &mut attack_faces, roll, events);
+            // Captain Jonus: a friend at Range 1 firing a secondary weapon
+            // rerolls up to two dice.
+            if secondary.is_some()
+                && self.friends_at_range1(content, a_idx).into_iter().any(|f| {
+                    self.ability(content, &self.ships[f])
+                        == Some(PilotAbility::FriendlySecondaryReroll2AtRange1)
+                })
+            {
+                let done = self.reroll_attack_dice(a_idx, &mut attack_faces, 2, roll);
+                if done > 0 {
+                    events.push(format!(
+                        "{}: Captain Jonus — rerolls {done} attack dice",
+                        self.label(content, a_idx)
+                    ));
+                }
+            }
         }
         if jammed {
             attack_faces.push(AttackFace::Focus);
@@ -4483,6 +4637,19 @@ impl GameState {
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
             self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
+            // Kir Kanos: an evade token buys a hit result at Range 2-3.
+            if (2..=3).contains(&range)
+                && self.ships[a_idx].evade > 0
+                && self.ability(content, &self.ships[a_idx])
+                    == Some(PilotAbility::SpendEvadeForHitAtRange2To3)
+            {
+                self.ships[a_idx].evade -= 1;
+                attack_faces.push(AttackFace::Hit);
+                events.push(format!(
+                    "{}: Kir Kanos — evade token spent for a hit result",
+                    self.label(content, a_idx)
+                ));
+            }
             // Luke Skywalker (crew): the second attack turns a focus result
             // into a hit for free.
             if focus_hit && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus)
@@ -4585,7 +4752,7 @@ impl GameState {
         attacker_focus_spent |= all_crits;
         // Calculation: with exactly one focus result, the focus token buys
         // a critical hit instead of a plain hit.
-        if attacker_may_spend
+        if attacker_may_focus
             && self.ships[a_idx].focus > 0
             && self.has_effect(content, a_idx, UpgradeEffect::FocusToCritSpendFocus)
             && attack_faces.iter().filter(|f| **f == AttackFace::Focus).count() == 1
@@ -4600,7 +4767,7 @@ impl GameState {
                 self.label(content, a_idx)
             ));
         }
-        if attacker_may_spend
+        if attacker_may_focus
             && self.ships[a_idx].focus > 0
             && attack_faces.contains(&AttackFace::Focus)
         {
@@ -4614,7 +4781,7 @@ impl GameState {
         }
         // Weapons Guidance: a focus token with no focus result left to
         // convert turns a blank into a hit instead.
-        if attacker_may_spend
+        if attacker_may_focus
             && self.ships[a_idx].focus > 0
             && self.has_effect(content, a_idx, UpgradeEffect::BlankToHitSpendFocus)
             && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Blank)
@@ -4660,6 +4827,23 @@ impl GameState {
             attack_faces = vec![AttackFace::Hit, AttackFace::Hit];
             events.push(format!(
                 "{}: Accuracy Corrector — all dice cancelled, two hits added",
+                self.label(content, a_idx)
+            ));
+        }
+        // Wampa: a lone critical (at most one result landing) is cashed in
+        // for a facedown Damage card straight to the hull, no defense.
+        let wampa = self.ability(content, &self.ships[a_idx])
+            == Some(PilotAbility::CancelAllForFacedownDamage)
+            && attack_faces.contains(&AttackFace::Crit)
+            && attack_faces
+                .iter()
+                .filter(|f| matches!(f, AttackFace::Hit | AttackFace::Crit))
+                .count()
+                <= 1;
+        if wampa {
+            attack_faces.clear();
+            events.push(format!(
+                "{}: Wampa — cancels all dice for a facedown Damage card",
                 self.label(content, a_idx)
             ));
         }
@@ -4744,7 +4928,14 @@ impl GameState {
                         self.label(content, d_idx)
                     ));
                 }
-                self.talent_defense_rerolls(content, d_idx, &mut defense_faces, roll, events);
+                self.talent_defense_rerolls(
+                    content,
+                    a_idx,
+                    d_idx,
+                    &mut defense_faces,
+                    roll,
+                    events,
+                );
                 // Flight Instructor: reroll one focus result — or a blank
                 // against a pilot of skill 2 or less.
                 if self.has_effect(content, d_idx, UpgradeEffect::CrewRerollDefenseDie) {
@@ -4784,7 +4975,8 @@ impl GameState {
         let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let mut defender_focus_spent = false;
         let eyes = defense_faces.iter().filter(|f| **f == DefenseFace::Focus).count() as u8;
-        let defender_may_spend = defender_may_modify && !defender_in_bullseye;
+        let defender_may_spend =
+            defender_may_modify && !defender_in_bullseye && !self.carnor_near(content, d_idx);
         if defender_may_spend && self.ships[d_idx].focus > 0 && eyes > 0 && evades < incoming {
             self.ships[d_idx].focus -= 1;
             defender_focus_spent = true;
@@ -4988,7 +5180,7 @@ impl GameState {
                     hull_lost += 1;
                     crits_to_hull += 1;
                     if !self.ships[d_idx].destroyed {
-                        let effect = crit::draw(roll());
+                        let effect = self.draw_crit_for(content, a_idx, roll, events);
                         events.push(format!(
                             "{}: critical — {}",
                             self.label(content, d_idx),
@@ -5003,6 +5195,14 @@ impl GameState {
             }
         }
 
+        if wampa && !self.ships[d_idx].destroyed && self.hull_point(d_idx) == DamagePoint::Hull {
+            hull_lost += 1;
+            let died = if self.ships[d_idx].destroyed { " — DESTROYED" } else { "" };
+            events.push(format!(
+                "{}: facedown Damage card from Wampa{died}",
+                self.label(content, d_idx)
+            ));
+        }
         if shields_lost > 0 && !self.ships[d_idx].destroyed {
             self.after_shield_loss(content, d_idx, events);
         }
@@ -7449,6 +7649,138 @@ mod tests {
         let rec = resolve(&c, &mut gs, vec![7; 16]);
         assert_eq!(gs.ships[1].stored_focus, 1, "{:?}", rec.events);
         assert_eq!(gs.ships[1].focus, 0);
+    }
+
+    #[test]
+    fn horton_salm_rerolls_blanks_at_range_3() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("hortonsalm", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        // Horton (PS8) fires first: [Blank, Blank] rerolled into two hits.
+        let rec = resolve(&c, &mut gs, vec![7, 7, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).range, 3);
+        assert_eq!(rebel_shot(&rec).hits, 2, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn rey_and_han_solo_reroll_their_dice() {
+        let c = content();
+        let stage = |c: &Content, pilot: &str| {
+            skirmish(
+                c,
+                &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+                &[(pilot, Pose::new(10.0, 17.5, -FRAC_PI_2), 3)],
+            )
+        };
+        // Rey: two of three blanks rerolled (the TIE is in her arc).
+        let mut gs = stage(&c, "rey");
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2, "{:?}", rec.events);
+        // Han Solo: a whiff is rerolled whole.
+        let mut gs = stage(&c, "hansolo");
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 3, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn kir_kanos_spends_an_evade_for_a_hit_at_range_3() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("kirkanos", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        // X-Wing staged so its straight 4 ends exactly at Range 3 of Kir's nose (y=5).
+        gs.ships[1].pose = Some(Pose::new(10.0, 16.5, -FRAC_PI_2));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Evade).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        assert_eq!(imperial_shot(&rec).range, 3);
+        assert_eq!(imperial_shot(&rec).hits, 1, "{:?}", rec.events);
+        assert_eq!(gs.ships[0].evade, 0);
+    }
+
+    #[test]
+    fn carnor_jax_and_zertik_strom_punish_ships_at_range_1() {
+        let c = content();
+        // Carnor Jax: the X-Wing (PS4) acts before Carnor (PS8) moves, so
+        // it must end at Range 1 of his starting base (nose y=3).
+        let mut gs = skirmish(
+            &c,
+            &[("carnorjax", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.5, -FRAC_PI_2));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(rebel_shot(&rec).range, 1);
+        assert_eq!(mv.action_result, ActionResult::Failed, "{:?}", rec.events);
+        // Zertik Strom: the X-Wing's Range 1 shot rolls 3 dice, not 4.
+        let mut gs = skirmish(
+            &c,
+            &[("zertikstrom", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].pose = Some(Pose::new(10.0, 11.0, -FRAC_PI_2));
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        assert_eq!(rebel_shot(&rec).range, 1);
+        assert_eq!(rebel_shot(&rec).attack_faces.len(), 3, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn major_rhymer_fires_torpedoes_at_range_1() {
+        let c = content();
+        let torps = UpgradeId(1);
+        let mut gs = skirmish(
+            &c,
+            &[("majorrhymer", Pose::new(10.0, 3.0, FRAC_PI_2), 1)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].pose = Some(Pose::new(10.0, 10.0, -FRAC_PI_2));
+        gs.ships[0].upgrades.push(torps);
+        gs.ships[0].lock = Some(ShipId(1));
+        let mut rolls = scripted(vec![7; 24]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let CombatStep::NeedTarget(p) = gs.combat_step(&c, &mut rolls).unwrap() else {
+            panic!("expected a weapon choice")
+        };
+        assert_eq!(p.attacker, ShipId(0));
+        let torp = p.options.iter().find(|o| o.weapon == Some(torps)).expect("torpedo offered");
+        assert_eq!(torp.range, 1);
+    }
+
+    #[test]
+    fn wampa_trades_a_lone_crit_for_a_facedown_card() {
+        let c = content();
+        let mut gs = duel(&c, "wampa", "bluesquadronnovice");
+        // Wampa (PS4) fires first: [Crit, Blank] → cancelled, one hull straight away.
+        let rec = resolve(&c, &mut gs, vec![3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!((imperial_shot(&rec).hits, imperial_shot(&rec).crits), (0, 0));
+        assert_eq!(imperial_shot(&rec).hull_lost, 1);
+        assert_eq!((gs.ships[1].hull, gs.ships[1].shields), (2, 3), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn maarek_stele_picks_the_worst_of_three_damage_cards() {
+        let c = content();
+        let mut gs = duel(&c, "maarekstele", "bluesquadronnovice");
+        gs.ships[1].shields = 0;
+        // Maarek (PS7) fires first: [Crit, Blank], no evades; three cards
+        // drawn from raws 9, 1 and 2 — the most severe is chosen.
+        let rec = resolve(&c, &mut gs, vec![3, 7, 7, 7, 7, 9, 1, 2, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let expected = [crit::draw(9), crit::draw(1), crit::draw(2)]
+            .into_iter()
+            .max_by_key(|e| e.severity())
+            .unwrap();
+        assert!(
+            rec.events.iter().any(|e| e.contains(&format!("chooses {}", expected.name()))),
+            "{:?}",
+            rec.events
+        );
     }
 
     #[test]
