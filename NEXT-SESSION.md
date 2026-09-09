@@ -205,11 +205,14 @@ and Server `ws://127.0.0.1:7777`.
       whenever a released client would misread the new messages.
    d. ~~Talent cards (4.b)~~ DONE 2026-09-09; ~~first batch of 4.d
       token/stress/movement abilities~~ DONE 2026-09-09 (see 4.b / 4.d
-      for what is live and what was skipped). NEXT: the in-game
-      glossary (backlog entry below), then a "second action / template
-      choice" in the planning UI which unlocks Push the Limit, Snap,
-      Blue Ace, Zeta Ace, BB-8 and friends. Also open from a: reasons
-      for unavailable weapons in the prompt.
+      for what is live and what was skipped); ~~in-game glossary~~ DONE
+      2026-09-09 (F1 / "? glossary" button, see the backlog entry —
+      unseen on screen by the user yet). NEXT (needs a word with the
+      user on the UI): a "second action / template choice" in the
+      planning UI which unlocks Push the Limit, Snap, Blue Ace, Zeta
+      Ace, BB-8, Marksmanship, Rage, Expose, Squad Leader; or the
+      remaining defender-side policies (Elusiveness, R7); or reasons
+      for unavailable weapons in the Declare Target prompt (proto 3).
    Done 2026-09-08/09 (all pushed): server refusals now send Error +
    Close and drain (the old drop caused "connection reset by peer" that
    hid the reason) and the client shows "Connection refused: <why>";
