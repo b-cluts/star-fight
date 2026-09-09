@@ -50,6 +50,26 @@ pub fn initiative_seat(totals: [u32; 2], tie_roll: crate::dice::AttackFace) -> u
     }
 }
 
+/// Reroll up to `max` dice showing one of `wants` (earlier entries
+/// first); returns how many were rerolled.
+fn reroll_matching<F: PartialEq + Copy>(
+    faces: &mut [F],
+    wants: &[F],
+    max: u8,
+    fresh: &mut dyn FnMut() -> F,
+) -> u8 {
+    let mut done = 0;
+    for want in wants {
+        for f in faces.iter_mut() {
+            if done < max && *f == *want {
+                *f = fresh();
+                done += 1;
+            }
+        }
+    }
+    done
+}
+
 /// Outcome of one point of normal damage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DamagePoint {
@@ -592,14 +612,138 @@ impl GameState {
 
     /// Other living friendly ships within Range 1 of ship `s`.
     fn friends_at_range1(&self, content: &Content, s: usize) -> Vec<usize> {
+        self.friends_within(content, s, 1)
+    }
+
+    /// Other living friendly ships within Range 1-`band` of ship `s`.
+    fn friends_within(&self, content: &Content, s: usize, band: u8) -> Vec<usize> {
         (0..self.ships.len())
             .filter(|&o| {
                 o != s
                     && self.ships[o].owner == self.ships[s].owner
                     && !self.ships[o].destroyed
-                    && self.range_between(content, s, o) == Some(1)
+                    && self.range_between(content, s, o).is_some_and(|r| r <= band)
             })
             .collect()
+    }
+
+    fn has_effect(&self, content: &Content, i: usize, e: UpgradeEffect) -> bool {
+        self.count_effect(content, &self.ships[i], e) > 0
+    }
+
+    /// Talent rerolls on attack, after the lock and friendly rerolls:
+    /// Predator (1 die, 2 against pilot skill 2 or lower), Lone Wolf (1
+    /// blank when no friend is within Range 2), Wired (every focus
+    /// result while stressed, when no focus token could convert them).
+    fn talent_attack_rerolls(
+        &self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        faces: &mut [AttackFace],
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        if self.has_effect(content, a_idx, UpgradeEffect::RerollOneAttackDie) {
+            let n = if self.effective_skill(content, &self.ships[d_idx]) <= 2 { 2 } else { 1 };
+            let done = self.reroll_attack_dice(a_idx, faces, n, roll);
+            if done > 0 {
+                events.push(format!(
+                    "{}: Predator — rerolls {done} attack dice",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
+        if self.has_effect(content, a_idx, UpgradeEffect::RerollBlankIfAlone)
+            && self.friends_within(content, a_idx, 2).is_empty()
+        {
+            let n =
+                reroll_matching(
+                    faces,
+                    &[AttackFace::Blank],
+                    1,
+                    &mut || AttackFace::from_d8(roll()),
+                );
+            if n > 0 {
+                events.push(format!("{}: Lone Wolf — rerolls a blank", self.label(content, a_idx)));
+            }
+        }
+        if self.has_effect(content, a_idx, UpgradeEffect::RerollFocusWhenStressed)
+            && self.ships[a_idx].stress > 0
+            && self.ships[a_idx].focus == 0
+        {
+            let n = reroll_matching(faces, &[AttackFace::Focus], u8::MAX, &mut || {
+                AttackFace::from_d8(roll())
+            });
+            if n > 0 {
+                events.push(format!(
+                    "{}: Wired — rerolls {n} focus results while stressed",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
+    }
+
+    /// The same talents on defense (Lone Wolf, Wired); only called when
+    /// damage would otherwise still land.
+    fn talent_defense_rerolls(
+        &self,
+        content: &Content,
+        d_idx: usize,
+        faces: &mut [DefenseFace],
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        if self.has_effect(content, d_idx, UpgradeEffect::RerollBlankIfAlone)
+            && self.friends_within(content, d_idx, 2).is_empty()
+        {
+            let n = reroll_matching(faces, &[DefenseFace::Blank], 1, &mut || {
+                DefenseFace::from_d8(roll())
+            });
+            if n > 0 {
+                events.push(format!("{}: Lone Wolf — rerolls a blank", self.label(content, d_idx)));
+            }
+        }
+        if self.has_effect(content, d_idx, UpgradeEffect::RerollFocusWhenStressed)
+            && self.ships[d_idx].stress > 0
+            && self.ships[d_idx].focus == 0
+        {
+            let n = reroll_matching(faces, &[DefenseFace::Focus], u8::MAX, &mut || {
+                DefenseFace::from_d8(roll())
+            });
+            if n > 0 {
+                events.push(format!(
+                    "{}: Wired — rerolls {n} focus results while stressed",
+                    self.label(content, d_idx)
+                ));
+            }
+        }
+    }
+
+    /// Opportunist: +1 attack die for a stress token when the defender
+    /// holds no focus or evade token and the attacker is unstressed.
+    /// Always taken.
+    fn opportunist_die(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        events: &mut Vec<String>,
+    ) -> u8 {
+        if self.has_effect(content, a_idx, UpgradeEffect::ExtraAttackDieForStress)
+            && self.ships[a_idx].stress == 0
+            && self.ships[d_idx].focus == 0
+            && self.ships[d_idx].evade == 0
+        {
+            self.ships[a_idx].stress += 1;
+            events.push(format!(
+                "{}: Opportunist — takes a stress token for +1 attack die",
+                self.label(content, a_idx)
+            ));
+            1
+        } else {
+            0
+        }
     }
 
     /// Rerolls a ship may take thanks to friends at Range 1: Jess Pava
@@ -626,65 +770,33 @@ impl GameState {
     /// focus token could convert them.
     fn reroll_attack_dice(
         &self,
-        content: &Content,
         a_idx: usize,
         faces: &mut [AttackFace],
         n: u8,
         roll: &mut dyn FnMut() -> u8,
-        events: &mut Vec<String>,
-    ) {
-        let eyes_too = self.ships[a_idx].focus == 0;
-        let mut left = n;
-        for want in [AttackFace::Blank, AttackFace::Focus] {
-            if want == AttackFace::Focus && !eyes_too {
-                break;
-            }
-            for f in faces.iter_mut() {
-                if left > 0 && *f == want {
-                    *f = AttackFace::from_d8(roll());
-                    left -= 1;
-                }
-            }
-        }
-        if left < n {
-            events.push(format!(
-                "{}: rerolls {} attack dice (friends at Range 1)",
-                self.label(content, a_idx),
-                n - left
-            ));
-        }
+    ) -> u8 {
+        let wants: &[AttackFace] = if self.ships[a_idx].focus == 0 {
+            &[AttackFace::Blank, AttackFace::Focus]
+        } else {
+            &[AttackFace::Blank]
+        };
+        reroll_matching(faces, wants, n, &mut || AttackFace::from_d8(roll()))
     }
 
     /// Reroll up to `n` defense dice on the same policy.
     fn reroll_defense_dice(
         &self,
-        content: &Content,
         d_idx: usize,
         faces: &mut [DefenseFace],
         n: u8,
         roll: &mut dyn FnMut() -> u8,
-        events: &mut Vec<String>,
-    ) {
-        let eyes_too = self.ships[d_idx].focus == 0;
-        let mut left = n;
-        for want in [DefenseFace::Blank, DefenseFace::Focus] {
-            if want == DefenseFace::Focus && !eyes_too {
-                break;
-            }
-            for f in faces.iter_mut() {
-                if left > 0 && *f == want {
-                    *f = DefenseFace::from_d8(roll());
-                    left -= 1;
-                }
-            }
-        }
-        if left < n {
-            events.push(format!(
-                "{}: rerolls {} defense dice (friends at Range 1)",
-                self.label(content, d_idx),
-                n - left
-            ));
-        }
+    ) -> u8 {
+        let wants: &[DefenseFace] = if self.ships[d_idx].focus == 0 {
+            &[DefenseFace::Blank, DefenseFace::Focus]
+        } else {
+            &[DefenseFace::Blank]
+        };
+        reroll_matching(faces, wants, n, &mut || DefenseFace::from_d8(roll()))
     }
 
     /// Additional attack dice granted by the attacker's pilot ability,
@@ -2121,7 +2233,8 @@ impl GameState {
             ));
             0
         } else {
-            let extra = self.extra_attack_dice(content, a_idx, d_idx, range, events);
+            let extra = self.extra_attack_dice(content, a_idx, d_idx, range, events)
+                + self.opportunist_die(content, a_idx, d_idx, events);
             (a_dice + range_bonus + extra + weapon_extra).saturating_sub(malfunctions)
         };
         let mut attack_faces: Vec<AttackFace> =
@@ -2186,13 +2299,51 @@ impl GameState {
         }
         if attacker_may_spend && !all_crits {
             let n = self.friendly_rerolls(content, a_idx, true);
-            self.reroll_attack_dice(content, a_idx, &mut attack_faces, n, roll, events);
+            let done = self.reroll_attack_dice(a_idx, &mut attack_faces, n, roll);
+            if done > 0 {
+                events.push(format!(
+                    "{}: rerolls {done} attack dice (friends at Range 1)",
+                    self.label(content, a_idx)
+                ));
+            }
+            self.talent_attack_rerolls(content, a_idx, d_idx, &mut attack_faces, roll, events);
         }
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
             self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
+            // Expertise: every focus result becomes a hit for free while
+            // unstressed (so the focus token is kept).
+            if self.has_effect(content, a_idx, UpgradeEffect::AllFocusToHitIfUnstressed)
+                && self.ships[a_idx].stress == 0
+                && attack_faces.contains(&AttackFace::Focus)
+            {
+                for f in attack_faces.iter_mut().filter(|f| **f == AttackFace::Focus) {
+                    *f = AttackFace::Hit;
+                }
+                events.push(format!(
+                    "{}: Expertise — focus results to hits",
+                    self.label(content, a_idx)
+                ));
+            }
         }
         attacker_focus_spent |= all_crits;
+        // Calculation: with exactly one focus result, the focus token buys
+        // a critical hit instead of a plain hit.
+        if attacker_may_spend
+            && self.ships[a_idx].focus > 0
+            && self.has_effect(content, a_idx, UpgradeEffect::FocusToCritSpendFocus)
+            && attack_faces.iter().filter(|f| **f == AttackFace::Focus).count() == 1
+        {
+            self.ships[a_idx].focus -= 1;
+            attacker_focus_spent = true;
+            if let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus) {
+                *f = AttackFace::Crit;
+            }
+            events.push(format!(
+                "{}: Calculation — focus spent, focus result to critical hit",
+                self.label(content, a_idx)
+            ));
+        }
         if attacker_may_spend
             && self.ships[a_idx].focus > 0
             && attack_faces.contains(&AttackFace::Focus)
@@ -2209,8 +2360,19 @@ impl GameState {
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
 
         // Roll defense dice (+1 at range 3 vs primary weapons).
-        let n_def =
-            self.agility(content, &self.ships[d_idx]) + u8::from(range == 3 && secondary.is_none());
+        let mut d_agility = self.agility(content, &self.ships[d_idx]);
+        // Outmaneuver: a defender in the attacker's arc that does not have
+        // the attacker in its own arc loses one agility.
+        if self.has_effect(content, a_idx, UpgradeEffect::ReduceAgilityIfNotInDefenderArc)
+            && d_agility > 0
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+            && !self.ship_in_front_arc(content, d_idx, a_idx)
+        {
+            d_agility -= 1;
+            events
+                .push(format!("{}: Outmaneuver — defender agility -1", self.label(content, a_idx)));
+        }
+        let n_def = d_agility + u8::from(range == 3 && secondary.is_none());
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
 
@@ -2229,7 +2391,14 @@ impl GameState {
             let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
             if evading < incoming {
                 let n = self.friendly_rerolls(content, d_idx, false);
-                self.reroll_defense_dice(content, d_idx, &mut defense_faces, n, roll, events);
+                let done = self.reroll_defense_dice(d_idx, &mut defense_faces, n, roll);
+                if done > 0 {
+                    events.push(format!(
+                        "{}: rerolls {done} defense dice (friends at Range 1)",
+                        self.label(content, d_idx)
+                    ));
+                }
+                self.talent_defense_rerolls(content, d_idx, &mut defense_faces, roll, events);
             }
             self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
         }
@@ -2247,6 +2416,23 @@ impl GameState {
             }
             evades += eyes;
         }
+        // Sensor Cluster: with no focus result to convert, the focus token
+        // turns one blank into an evade instead.
+        if defender_may_spend
+            && self.ships[d_idx].focus > 0
+            && evades < incoming
+            && self.has_effect(content, d_idx, UpgradeEffect::BlankToEvadeSpendFocus)
+            && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Blank)
+        {
+            *f = DefenseFace::Evade;
+            self.ships[d_idx].focus -= 1;
+            defender_focus_spent = true;
+            evades += 1;
+            events.push(format!(
+                "{}: Sensor Cluster — focus spent, blank to evade",
+                self.label(content, d_idx)
+            ));
+        }
         // Homing Missiles: the defender cannot spend evade tokens.
         let evade_allowed = weapon_effect != Some(UpgradeEffect::MissileDenyEvadeTokens);
         let mut evade_spent = false;
@@ -2254,6 +2440,38 @@ impl GameState {
             self.ships[d_idx].evade -= 1;
             evade_spent = true;
             evades += 1;
+        }
+        // Attacker's turn on the defense dice, taken only when one fewer
+        // evade lets another result land. Juke: an evade token turns one
+        // evade result into a focus. Crack Shot: discard the card to
+        // cancel one evade result against a defender in the firing arc.
+        let worth = |evades: u8| evades > 0 && evades <= incoming;
+        if attacker_may_modify
+            && worth(evades)
+            && self.ships[a_idx].evade > 0
+            && self.has_effect(content, a_idx, UpgradeEffect::EvadeToFocusIfEvadeToken)
+            && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Evade)
+        {
+            *f = DefenseFace::Focus;
+            evades -= 1;
+            events.push(format!(
+                "{}: Juke — defender's evade result to focus",
+                self.label(content, a_idx)
+            ));
+        }
+        if worth(evades)
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+            && let Some(card) = self.ships[a_idx].upgrades.iter().copied().find(|u| {
+                content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                    == Some(UpgradeEffect::CancelEvadeDiscard)
+            })
+        {
+            self.ships[a_idx].upgrades.retain(|u| *u != card);
+            evades -= 1;
+            events.push(format!(
+                "{}: Crack Shot — cancels an evade result, card discarded",
+                self.label(content, a_idx)
+            ));
         }
 
         // Compare results: evades cancel hits before crits. Autoblasters:
@@ -4352,5 +4570,190 @@ mod tests {
         assert!(!mv.mines_hit.is_empty());
         assert_eq!(mv.mines_hit[0].hits[0].damage, 2, "two hits from the first token");
         assert_eq!(gs.bombs.len() + mv.mines_hit.len(), 3, "untriggered mines stay armed");
+    }
+
+    // ---------------- Talent cards ----------------
+
+    fn rebel_shot(rec: &TurnRecords) -> &AttackRecord {
+        rec.attacks.iter().find(|a| a.attacker == ShipId(1)).expect("the X-Wing fired")
+    }
+
+    /// A Red Squadron Veteran (PS4, fires first) carrying `card` against
+    /// an Obsidian Squadron Pilot (PS3), nose to nose at Range 3: the
+    /// X-Wing rolls 3 attack dice, the TIE 4 defense dice.
+    fn talent_duel(c: &Content, card: UpgradeId) -> GameState {
+        let mut gs = duel(c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[1].upgrades.push(card);
+        gs
+    }
+
+    fn resolve(c: &Content, gs: &mut GameState, rolls: Vec<u8>) -> TurnRecords {
+        let mut rolls = scripted(rolls);
+        gs.commit_plans(c, P0, &mut rolls).unwrap();
+        gs.commit_plans(c, P1, &mut rolls).unwrap().unwrap()
+    }
+
+    #[test]
+    fn predator_rerolls_one_die_or_two_against_low_skill() {
+        let c = content();
+        let predator = UpgradeId(101);
+        // [Blank, Blank, Hit] → one blank rerolled into a hit.
+        let mut gs = talent_duel(&c, predator);
+        let rec = resolve(&c, &mut gs, vec![7, 7, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert!(rec.events.iter().any(|e| e.contains("Predator")), "{:?}", rec.events);
+        // Against an Academy Pilot (PS1): both blanks rerolled.
+        let mut gs = duel(&c, "academypilot", "redsquadronveteran");
+        gs.ships[1].upgrades.push(predator);
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+    }
+
+    #[test]
+    fn lone_wolf_rerolls_a_blank_only_without_friends_within_range_2() {
+        let c = content();
+        let lone_wolf = UpgradeId(104);
+        let mut gs = talent_duel(&c, lone_wolf);
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Lone Wolf")), "{:?}", rec.events);
+
+        // A wingman at Range 1 silences it.
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[
+                ("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4),
+                ("bluesquadronnovice", Pose::new(12.0, 17.5, -FRAC_PI_2), 4),
+            ],
+        );
+        gs.ships[1].upgrades.push(lone_wolf);
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rebel_shot(&rec).hits, 0);
+        assert!(!rec.events.iter().any(|e| e.contains("Lone Wolf")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn wired_rerolls_focus_results_while_stressed() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(100));
+        gs.ships[1].stress = 1;
+        // [Eye, Eye, Hit] with no focus token: both eyes rerolled to hits.
+        let rec = resolve(&c, &mut gs, vec![4, 4, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 3);
+        assert!(rec.events.iter().any(|e| e.contains("Wired")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn expertise_converts_focus_results_without_spending_the_token() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(123));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = rebel_shot(&rec);
+        assert_eq!(shot.hits, 2);
+        assert!(!shot.attacker_focus_spent);
+        assert!(rec.events.iter().any(|e| e.contains("Expertise")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn calculation_buys_a_crit_when_exactly_one_focus_result_shows() {
+        let c = content();
+        let calc = UpgradeId(116);
+        let mut gs = talent_duel(&c, calc);
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![4, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = rebel_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (1, 1));
+        assert!(shot.attacker_focus_spent);
+        assert!(rec.events.iter().any(|e| e.contains("Calculation")), "{:?}", rec.events);
+        // Two focus results: the plain spend (two hits) is better.
+        let mut gs = talent_duel(&c, calc);
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = rebel_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (2, 0));
+        assert!(!rec.events.iter().any(|e| e.contains("Calculation")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn opportunist_takes_a_stress_for_an_extra_die_against_a_tokenless_defender() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(126));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rebel_shot(&rec).attack_faces.len(), 4);
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Opportunist")), "{:?}", rec.events);
+        // A stressed attacker cannot use it.
+        let mut gs = talent_duel(&c, UpgradeId(126));
+        gs.ships[1].stress = 1;
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rebel_shot(&rec).attack_faces.len(), 3);
+    }
+
+    #[test]
+    fn outmaneuver_strips_an_agility_from_a_defender_that_cannot_see_the_attacker() {
+        let c = content();
+        let outmaneuver = UpgradeId(127);
+        // Nose to nose: the TIE has the X-Wing in arc, full 4 dice at Range 3.
+        let mut gs = talent_duel(&c, outmaneuver);
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rebel_shot(&rec).defense_faces.len(), 4);
+        // From behind (Range 2): agility 3 → 2, no range bonus.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(10.0, -1.0, FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(outmaneuver);
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let shot = rebel_shot(&rec);
+        assert_eq!((shot.range, shot.defense_faces.len()), (2, 2));
+        assert!(rec.events.iter().any(|e| e.contains("Outmaneuver")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn crack_shot_cancels_one_evade_and_is_discarded() {
+        let c = content();
+        let crack_shot = UpgradeId(105);
+        let mut gs = talent_duel(&c, crack_shot);
+        // [Hit, Hit, Blank] against [Evade, Blank, Blank, Blank].
+        let rec = resolve(&c, &mut gs, vec![0, 0, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert!(!gs.ships[1].upgrades.contains(&crack_shot));
+        assert!(rec.events.iter().any(|e| e.contains("Crack Shot")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn juke_turns_an_evade_into_a_focus_while_holding_an_evade_token() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(106));
+        gs.ships[1].evade = 1;
+        let rec = resolve(&c, &mut gs, vec![0, 0, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert!(rec.events.iter().any(|e| e.contains("Juke")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn sensor_cluster_spends_focus_to_turn_a_blank_into_an_evade() {
+        let c = content();
+        // Offset from the TIE's nose: dead ahead would be its bullseye
+        // lane, where the defender may not spend tokens at all.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(11.5, 17.5, -FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(UpgradeId(24));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        // X-Wing attack blanks, TIE defense blanks, TIE attack [Hit, Blank],
+        // X-Wing defense all blank → the focus buys one evade.
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 0, 7, 7, 7, 7, 7]);
+        let shot = imperial_shot(&rec);
+        assert_eq!(shot.hits, 0);
+        assert!(shot.defender_focus_spent);
+        assert!(rec.events.iter().any(|e| e.contains("Sensor Cluster")), "{:?}", rec.events);
     }
 }

@@ -327,6 +327,16 @@ impl UpgradeEffect {
                 | MissileSplashRange1
                 | MissileFriendsLockOnHit
                 | TurretBlasterSpendFocus
+                | RerollFocusWhenStressed
+                | RerollOneAttackDie
+                | RerollBlankIfAlone
+                | CancelEvadeDiscard
+                | EvadeToFocusIfEvadeToken
+                | AllFocusToHitIfUnstressed
+                | FocusToCritSpendFocus
+                | ExtraAttackDieForStress
+                | ReduceAgilityIfNotInDefenderArc
+                | BlankToEvadeSpendFocus
         )
     }
 }
