@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::f64::consts::FRAC_PI_2;
 
-use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, Side};
+use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, SecondActionKind, Side};
 use sf_core::board::Seat;
 use sf_core::bombs::{BombKind, BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
@@ -151,6 +151,8 @@ pub struct Online {
     pub rename: Option<(u32, String)>,
     /// Effects demo: a scripted, looping turn on a fake snapshot.
     pub demo: bool,
+    /// The next action key sets the ship's SECOND action.
+    pub second_pick: bool,
 }
 
 /// Callsign of a ship in the current snapshot ("ship" if unknown).
@@ -255,6 +257,8 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         plan: None,
         planned_action: None,
         bomb: None,
+        planned_action2: None,
+        extras: Default::default(),
     }
 }
 
@@ -1088,16 +1092,28 @@ fn planning_input(
 
     // Action planning: 1 Pass, 2 Focus, 3 Evade, 4/5 barrel roll L/R,
     // 6 target lock (then click an enemy ship).
-    let bar = {
+    let (bar, extras) = {
         let Some(snap) = &online.snap else { return };
         let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
             return;
         };
-        view.actions.clone()
+        (view.actions.clone(), view.extras.clone())
     };
+    // 0 arms the second-action slot (Push the Limit, Darth Vader, Snap,
+    // Jake Farrell, BB-8): the next action key fills it instead.
+    if keys.just_pressed(KeyCode::Digit0) && extras.second.is_some() {
+        online.second_pick = !online.second_pick;
+        online.lock_pick = false;
+    }
     let plan_action = |online: &mut Online, action: PlannedAction| {
         online.lock_pick = false;
-        online.send(ClientMsg::PlanAction { ship_id: ShipId(selected), action });
+        if online.second_pick {
+            online.second_pick = false;
+            let action = (action != PlannedAction::Pass).then_some(action);
+            online.send(ClientMsg::PlanSecondAction { ship_id: ShipId(selected), action });
+        } else {
+            online.send(ClientMsg::PlanAction { ship_id: ShipId(selected), action });
+        }
     };
     if keys.just_pressed(KeyCode::Digit1) {
         plan_action(&mut online, PlannedAction::Pass);
@@ -1108,17 +1124,29 @@ fn planning_input(
     if keys.just_pressed(KeyCode::Digit3) && bar.contains(&ActionKind::Evade) {
         plan_action(&mut online, PlannedAction::Evade);
     }
-    if keys.just_pressed(KeyCode::Digit4) && bar.contains(&ActionKind::BarrelRoll) {
+    // Granted repositions (BB-8's roll, Snap's boost, Jake Farrell's
+    // either) need no icon on the bar while the second slot is armed.
+    let free_repo = online.second_pick
+        && matches!(
+            extras.second,
+            Some(
+                SecondActionKind::RollOnGreenReveal
+                    | SecondActionKind::BoostAfterMove
+                    | SecondActionKind::RepositionAfterFocus
+            )
+        );
+    let can_roll = bar.contains(&ActionKind::BarrelRoll) || free_repo;
+    if keys.just_pressed(KeyCode::Digit4) && can_roll {
         plan_action(&mut online, PlannedAction::BarrelRoll(Side::Left));
     }
-    if keys.just_pressed(KeyCode::Digit5) && bar.contains(&ActionKind::BarrelRoll) {
+    if keys.just_pressed(KeyCode::Digit5) && can_roll {
         plan_action(&mut online, PlannedAction::BarrelRoll(Side::Right));
     }
     if keys.just_pressed(KeyCode::Digit6) && bar.contains(&ActionKind::TargetLock) {
         online.lock_pick = true;
         online.status = "Target lock: click an enemy ship".into();
     }
-    if bar.contains(&ActionKind::Boost) {
+    if bar.contains(&ActionKind::Boost) || free_repo {
         if keys.just_pressed(KeyCode::Digit7) {
             plan_action(&mut online, PlannedAction::Boost(BoostDir::Straight));
         }
@@ -1127,6 +1155,22 @@ fn planning_input(
         }
         if keys.just_pressed(KeyCode::Digit9) {
             plan_action(&mut online, PlannedAction::Boost(BoostDir::BankRight));
+        }
+        // Blue Ace: -/= boost with the turn-1 templates.
+        if extras.turn_boost && keys.just_pressed(KeyCode::Minus) {
+            plan_action(&mut online, PlannedAction::Boost(BoostDir::TurnLeft));
+        }
+        if extras.turn_boost && keys.just_pressed(KeyCode::Equal) {
+            plan_action(&mut online, PlannedAction::Boost(BoostDir::TurnRight));
+        }
+    }
+    // Zeta Ace: [/] barrel roll with the straight-2 template.
+    if extras.far_roll && bar.contains(&ActionKind::BarrelRoll) {
+        if keys.just_pressed(KeyCode::BracketLeft) {
+            plan_action(&mut online, PlannedAction::BarrelRollFar(Side::Left));
+        }
+        if keys.just_pressed(KeyCode::BracketRight) {
+            plan_action(&mut online, PlannedAction::BarrelRollFar(Side::Right));
         }
     }
     // B: cycle the bomb card to drop on dial reveal (then none);
@@ -1145,6 +1189,20 @@ fn planning_input(
             Some(i) => reveal.get(i + 1).copied(),
         };
         online.send(ClientMsg::PlanBomb { ship_id: ShipId(selected), bomb });
+    }
+    // K: cycle the card actions (Marksmanship, Rage, Expose, R2-F2), then Pass.
+    if keys.just_pressed(KeyCode::KeyK) && !extras.card_actions.is_empty() {
+        let cards = &extras.card_actions;
+        let next = match cur_action {
+            Some(PlannedAction::CardAction(c)) => {
+                cards.iter().position(|u| *u == c).and_then(|i| cards.get(i + 1).copied())
+            }
+            _ => Some(cards[0]),
+        };
+        plan_action(
+            &mut online,
+            next.map(PlannedAction::CardAction).unwrap_or(PlannedAction::Pass),
+        );
     }
     if keys.just_pressed(KeyCode::KeyM) && !mines.is_empty() {
         let next = match cur_action {
@@ -1430,8 +1488,24 @@ fn action_name(game: &Game, snap: Option<&Snap>, a: PlannedAction) -> String {
         PlannedAction::Boost(BoostDir::Straight) => "Boost".into(),
         PlannedAction::Boost(BoostDir::BankLeft) => "Boost L".into(),
         PlannedAction::Boost(BoostDir::BankRight) => "Boost R".into(),
+        PlannedAction::Boost(BoostDir::TurnLeft) => "Boost turn L".into(),
+        PlannedAction::Boost(BoostDir::TurnRight) => "Boost turn R".into(),
         PlannedAction::TargetLock(id) => format!("Lock {}", callsign(snap, id.0)),
         PlannedAction::DropMine(card) => format!("Drop {}", card_name(game, card)),
+        PlannedAction::BarrelRollFar(Side::Left) => "Far Roll L".into(),
+        PlannedAction::BarrelRollFar(Side::Right) => "Far Roll R".into(),
+        PlannedAction::CardAction(card) => format!("{} action", card_name(game, card)),
+    }
+}
+
+/// Why a ship gets a second action, for the HUD.
+fn second_action_label(kind: SecondActionKind) -> &'static str {
+    match kind {
+        SecondActionKind::FreeBarAction => "Push the Limit: 2nd bar action, then stress",
+        SecondActionKind::TwoActions => "Darth Vader: 2nd action",
+        SecondActionKind::BoostAfterMove => "Snap: free boost after a speed 2-4 move",
+        SecondActionKind::RepositionAfterFocus => "Jake Farrell: boost/roll after a focus",
+        SecondActionKind::RollOnGreenReveal => "BB-8: barrel roll before a green move",
     }
 }
 
@@ -1820,6 +1894,12 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if let Some(a) = view.planned_action {
             line.push_str(&format!(" | action: {}", action_name(&game, Some(snap), a)));
         }
+        if let Some(a) = view.planned_action2 {
+            line.push_str(&format!(" | 2nd: {}", action_name(&game, Some(snap), a)));
+        }
+        if online.second_pick {
+            line.push_str(" | SECOND ACTION: press an action key (1 clears)");
+        }
         if let Some(b) = view.bomb {
             line.push_str(&format!(" | bomb: {} (drops on reveal)", card_name(&game, b)));
         }
@@ -1902,9 +1982,27 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             if !mines.is_empty() {
                 acts.push("M Drop mine");
             }
+            let extras = online
+                .sel
+                .and_then(|id| snap.ships.iter().find(|v| v.id.0 == id))
+                .map(|v| v.extras.clone())
+                .unwrap_or_default();
+            if extras.turn_boost {
+                acts.push("-/= Turn boost");
+            }
+            if extras.far_roll {
+                acts.push("[/] Far roll");
+            }
+            if !extras.card_actions.is_empty() {
+                acts.push("K Card action");
+            }
+            let second = match extras.second {
+                Some(k) => format!(" • 0 then a key: 2nd action ({})", second_action_label(k)),
+                None => String::new(),
+            };
             let bomb = if reveal.is_empty() { "" } else { " • B: bomb on reveal" };
             format!(
-                "Tab: ship • Left/Right+Enter: maneuver • actions: {}{bomb} • C: commit • X: resign",
+                "Tab: ship • Left/Right+Enter: maneuver • actions: {}{second}{bomb} • C: commit • X: resign",
                 acts.join(" ")
             )
         }
@@ -1927,8 +2025,29 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     ActionResult::Failed => " (failed)".to_string(),
                     ActionResult::SkippedNetted => " (netted: no action)".to_string(),
                 };
+                let outcome = |r: ActionResult| match r {
+                    ActionResult::Performed => "",
+                    ActionResult::Failed => " (failed)",
+                    _ => " (skipped)",
+                };
+                let pre = mv
+                    .pre
+                    .map(|(a, r)| {
+                        format!(
+                            "{}{} before moving, ",
+                            action_name(&game, Some(snap), a),
+                            outcome(r)
+                        )
+                    })
+                    .unwrap_or_default();
+                let second = mv
+                    .second
+                    .map(|(a, r)| {
+                        format!(", then {}{}", action_name(&game, Some(snap), a), outcome(r))
+                    })
+                    .unwrap_or_default();
                 lines.push(format!(
-                    "{} flies {} {} — action: {}{result}",
+                    "{} {pre}flies {} {} — action: {}{result}{second}",
                     name(mv.ship.0),
                     render::steer_name(mv.maneuver.steer),
                     mv.maneuver.distance,
