@@ -629,7 +629,10 @@ pins.txt + last-used menu values), starfield.rs.
   request): `render::draw_obstacle_shadows` hatches the part of the
   arc behind each token (angular extent of its outline seen from the
   arc origin, from its near edge out to Range 3) in the planning
-  preview, the Declare Target prompt and the Effects Demo; the exact rule (range ruler
+  preview, the Declare Target prompt and the Effects Demo; the arc's own
+  range bands and edge lines are drawn per segment and go ~4x fainter
+  inside a wedge (`render::draw_firing_arc_with`; the plain
+  `draw_firing_arc` is the no-obstacle wrapper the sandbox uses); the exact rule (range ruler
   between the closest points) drives `AttackOption.obstructed` →
   `AttackChoice.obstructed` → "(obstructed)" in the prompt options and
   ", obstructed" in the HUD weapons line (`WeaponState::Ready` now

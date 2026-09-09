@@ -1864,8 +1864,7 @@ fn draw(
         && let Some(p) = v.pose
     {
         let fp = game.ships.classes[game.class_index(v.class)].footprint;
-        render::draw_firing_arc(&mut gizmos, &game, p, fp, 0.5);
-        render::draw_obstacle_shadows(&mut gizmos, &game, p, fp, &snap.obstacles, 0.5);
+        render::draw_firing_arc_with(&mut gizmos, &game, p, fp, &snap.obstacles, 0.5);
     }
     for t in tokens {
         draw_bomb_token(&mut gizmos, &game, t, t.owner.0 == u32::from(seat));
@@ -1943,8 +1942,7 @@ fn draw(
             }
             Some(AnimItem::Prompt { attacker, options, .. }) => {
                 if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
-                    render::draw_firing_arc(&mut gizmos, &game, ap, fp, 0.6);
-                    render::draw_obstacle_shadows(&mut gizmos, &game, ap, fp, &snap.obstacles, 0.6);
+                    render::draw_firing_arc_with(&mut gizmos, &game, ap, fp, &snap.obstacles, 0.6);
                     bullseye.0 = Some(ap);
                 }
                 let hi = Color::srgb(1.0, 0.95, 0.2);
@@ -1985,8 +1983,7 @@ fn draw(
     render::draw_base(&mut gizmos, &game, end, class.footprint, color);
     render::draw_heading_arrow(&mut gizmos, &game, end, color);
     if arcs.0 {
-        render::draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
-        render::draw_obstacle_shadows(
+        render::draw_firing_arc_with(
             &mut gizmos,
             &game,
             end,

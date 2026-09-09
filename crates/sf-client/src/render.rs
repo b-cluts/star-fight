@@ -200,57 +200,35 @@ pub fn draw_heading_arrow(gizmos: &mut Gizmos, game: &Game, pose: Pose, color: C
 /// Ghost overlay of the front firing arc: a 90° cone from the base center
 /// with the three range-band boundaries.
 pub fn draw_firing_arc(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footprint, alpha: f32) {
-    let center = sf_core::combat::base_center(pose, fp);
-    let half_len = fp.length / 2.0;
-    let outer =
-        half_len + sf_core::combat::MAX_RANGE_BAND as f64 * sf_core::combat::RANGE_BAND_UNITS;
-    let color = Color::srgba(1.0, 0.75, 0.2, alpha);
-    let faint = Color::srgba(1.0, 0.75, 0.2, alpha * 0.45);
-
-    let point_at = |angle: f64, r: f64| {
-        game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
-    };
-    let (a0, a1) =
-        (pose.heading - std::f64::consts::FRAC_PI_4, pose.heading + std::f64::consts::FRAC_PI_4);
-    for a in [a0, a1] {
-        gizmos.line_2d(point_at(a, half_len), point_at(a, outer), color);
-    }
-    for band in 1..=sf_core::combat::MAX_RANGE_BAND {
-        let r = half_len + band as f64 * sf_core::combat::RANGE_BAND_UNITS;
-        let pts: Vec<Vec2> =
-            (0..=24).map(|i| point_at(a0 + (a1 - a0) * i as f64 / 24.0, r)).collect();
-        gizmos
-            .linestrip_2d(pts, if band == sf_core::combat::MAX_RANGE_BAND { color } else { faint });
-    }
+    draw_firing_arc_with(gizmos, game, pose, fp, &[], alpha);
 }
 
-/// The part of the firing arc that lies behind obstacle tokens, seen from
-/// the arc's origin: hatched wedges out to Range 3. A guide only — the
-/// rules measure obstruction along the range ruler between the two
-/// bases, so the prompt's "(obstructed)" tag is the authority.
-pub fn draw_obstacle_shadows(
-    gizmos: &mut Gizmos,
-    game: &Game,
-    pose: Pose,
-    fp: Footprint,
+/// A shadow wedge behind an obstacle, seen from the arc's origin:
+/// relative angles (radians from the heading) and the radius where the
+/// token starts.
+struct Shadow {
+    lo: f64,
+    hi: f64,
+    near: f64,
+}
+
+/// Wedges of the 90° arc that lie behind obstacle tokens, clipped to the
+/// arc and to Range 3.
+fn shadows(
+    center: GVec2,
+    heading: f64,
+    half_len: f64,
+    outer: f64,
     obstacles: &[sf_core::obstacle::Obstacle],
-    alpha: f32,
-) {
+) -> Vec<Shadow> {
     use std::f64::consts::{FRAC_PI_4, PI, TAU};
-    let center = sf_core::combat::base_center(pose, fp);
-    let half_len = fp.length / 2.0;
-    let outer =
-        half_len + sf_core::combat::MAX_RANGE_BAND as f64 * sf_core::combat::RANGE_BAND_UNITS;
-    let shade = Color::srgba(0.15, 0.15, 0.2, alpha * 0.55);
-    let point_at = |angle: f64, r: f64| {
-        game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
-    };
+    let mut out = Vec::new();
     for o in obstacles {
         let (mut lo, mut hi, mut near) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY);
         for p in o.polygon() {
             let d = p - center;
             let dist = (d.x * d.x + d.y * d.y).sqrt();
-            let rel = (d.y.atan2(d.x) - pose.heading + PI).rem_euclid(TAU) - PI;
+            let rel = (d.y.atan2(d.x) - heading + PI).rem_euclid(TAU) - PI;
             lo = lo.min(rel);
             hi = hi.max(rel);
             near = near.min(dist);
@@ -260,14 +238,79 @@ pub fn draw_obstacle_shadows(
             continue;
         }
         let (lo, hi) = (lo.max(-FRAC_PI_4), hi.min(FRAC_PI_4));
-        if lo >= hi {
-            continue;
+        if lo < hi {
+            out.push(Shadow { lo, hi, near: near.max(half_len) });
         }
-        let steps = ((hi - lo) / (PI / 72.0)).ceil().max(1.0) as usize;
-        let start = near.max(half_len);
+    }
+    out
+}
+
+/// The firing arc with obstacle shadows: hatched wedges behind each token
+/// out to Range 3, and the arc's own lines drawn much fainter inside
+/// them. A guide only — the rules measure obstruction along the range
+/// ruler between the two bases, so the prompt's "(obstructed)" tag is
+/// the authority.
+pub fn draw_firing_arc_with(
+    gizmos: &mut Gizmos,
+    game: &Game,
+    pose: Pose,
+    fp: Footprint,
+    obstacles: &[sf_core::obstacle::Obstacle],
+    alpha: f32,
+) {
+    use std::f64::consts::{FRAC_PI_4, PI};
+    let center = sf_core::combat::base_center(pose, fp);
+    let half_len = fp.length / 2.0;
+    let outer =
+        half_len + sf_core::combat::MAX_RANGE_BAND as f64 * sf_core::combat::RANGE_BAND_UNITS;
+    let wedges = shadows(center, pose.heading, half_len, outer, obstacles);
+    let shaded =
+        |rel: f64, r: f64| wedges.iter().any(|w| rel >= w.lo && rel <= w.hi && r >= w.near);
+    let color = Color::srgba(1.0, 0.75, 0.2, alpha);
+    let faint = Color::srgba(1.0, 0.75, 0.2, alpha * 0.45);
+    let dim = |c: Color| c.with_alpha(c.alpha() * 0.22);
+    let point_at = |angle: f64, r: f64| {
+        game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
+    };
+
+    // Shadow hatching first, so the arc lines sit on top of it.
+    let shade = Color::srgba(0.15, 0.15, 0.2, alpha * 0.55);
+    for w in &wedges {
+        let steps = ((w.hi - w.lo) / (PI / 72.0)).ceil().max(1.0) as usize;
         for k in 0..=steps {
-            let a = pose.heading + lo + (hi - lo) * k as f64 / steps as f64;
-            gizmos.line_2d(point_at(a, start), point_at(a, outer), shade);
+            let a = pose.heading + w.lo + (w.hi - w.lo) * k as f64 / steps as f64;
+            gizmos.line_2d(point_at(a, w.near), point_at(a, outer), shade);
+        }
+    }
+
+    // Edge lines, split where a shadow reaches the edge of the arc.
+    for rel in [-FRAC_PI_4, FRAC_PI_4] {
+        let a = pose.heading + rel;
+        let mut cuts: Vec<f64> = wedges
+            .iter()
+            .filter(|w| rel >= w.lo - 1e-9 && rel <= w.hi + 1e-9)
+            .map(|w| w.near)
+            .collect();
+        cuts.sort_by(|x, y| x.total_cmp(y));
+        let mut r0 = half_len;
+        for r1 in cuts.into_iter().chain(std::iter::once(outer)) {
+            if r1 > r0 {
+                let c = if shaded(rel, (r0 + r1) / 2.0) { dim(color) } else { color };
+                gizmos.line_2d(point_at(a, r0), point_at(a, r1), c);
+                r0 = r1;
+            }
+        }
+    }
+    // Range bands, segment by segment.
+    for band in 1..=sf_core::combat::MAX_RANGE_BAND {
+        let r = half_len + band as f64 * sf_core::combat::RANGE_BAND_UNITS;
+        let base = if band == sf_core::combat::MAX_RANGE_BAND { color } else { faint };
+        let n = 48;
+        for i in 0..n {
+            let rel0 = -FRAC_PI_4 + FRAC_PI_4 * 2.0 * i as f64 / n as f64;
+            let rel1 = -FRAC_PI_4 + FRAC_PI_4 * 2.0 * (i + 1) as f64 / n as f64;
+            let c = if shaded((rel0 + rel1) / 2.0, r) { dim(base) } else { base };
+            gizmos.line_2d(point_at(pose.heading + rel0, r), point_at(pose.heading + rel1, r), c);
         }
     }
 }
