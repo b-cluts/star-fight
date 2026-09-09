@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (150 tests),
+`cargo build` clean, `cargo test --workspace` green (156 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -340,6 +340,23 @@ and Server `ws://127.0.0.1:7777`.
       Strom, Fel's Wrath, Lando/Youngster/Squad Leader/Swarm Tactics/
       Decoy (multi-ship), Comm Relay (keep an evade), Seismic Torpedo and
       Trick Shot (obstacles, p.20 not implemented).
+      SECOND BATCH DONE 2026-09-09 (six tests): defender-forced rerolls
+      in `defender_forces_rerolls` after the attacker's modifications —
+      Elusiveness (unstressed: stress for a reroll of the attacker's
+      best die) and R7 Astromech (spend the lock on the attacker, reroll
+      every hit/crit; the once-per-round limit is implicit since locks
+      are gained once per round); Draw Their Fire (a friend at Range 1
+      with the talent takes one crit that would reach the defender's
+      hull); faceup-card riders in `apply_crit_effect` — Chewbacca crew
+      (card discarded, hull point and a shield back, crew discarded),
+      Moff Jerjerrod (discards himself), Integrated Astromech (discards
+      the astromech, hull point back; cannot save a ship at 0 hull since
+      the crit is never drawn for a destroyed ship); `finish_turn` now
+      takes content + roll + events: R5-P9 (focus → shield at the end
+      of Combat), R5 Astromech (one Ship-trait crit repaired), R2-D2
+      crew (shield back at the end of the End phase, attack die hit →
+      a facedown card turns faceup); R2-D2 astromech (shield back after
+      a green maneuver, in resolve_movement).
    Tuning knobs if ever needed: ANIM_SAMPLES_PER_SEC / ATTACK_DUR in
    online.rs, MINI_PX in render.rs.
 
