@@ -28,6 +28,14 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    together — core rules p.20) or a **free-for-all** (every seat its own
    side with the full points, deploying south, north, east and west; the
    last side flying wins).
+   The three rulebook **missions** (core rules p.21-24) are scenarios too:
+   Political Escort, Asteroid Run and Dark Whispers. The host flies the
+   Rebel side and the joiner the Empire; joining without a squad fields the
+   mission's printed force (31 points with the core-set ships), otherwise
+   both build squads to the chosen points. Each mission's setup zones,
+   special rules (the senator's shuttle and the **P** Protect action, the
+   disabled ship, satellite scanning, reinforcements placed mid-game) and
+   objectives are enforced and explained in the glossary's Rules tab.
 3. Card images for the squad builder are optional; see
    [Card images](#card-images-optional) below. Without them the builder
    shows the card text.

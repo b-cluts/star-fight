@@ -68,7 +68,7 @@ impl MissionKind {
     pub fn rules_text(self) -> &'static str {
         match self {
             MissionKind::PoliticalEscort => {
-                "The senator's shuttle (agility 2, hull 6; shields 6 with 100-point squads) starts at the centre of the Rebel edge and moves first every round with one of: stay, bank 1 left, straight 2, bank 1 right; it cannot act or attack, and critical hits against it count as hits. Rebel ships within Range 1 of the shuttle may take the PROTECT action (key 0) to put an evade token on it; the shuttle spends at most one per attack and loses them all in the End phase. In each End phase the Empire places one Academy Pilot within Range 1 of its edge per Imperial ship destroyed that round."
+                "The senator's shuttle (agility 2, hull 6; shields 6 with 100-point squads) starts at the centre of the Rebel edge and moves first every round with one of: stay, bank 1 left, straight 2, bank 1 right; it cannot act or attack, and critical hits against it count as hits. Rebel ships within Range 1 of the shuttle may take the PROTECT action (key P) to put an evade token on it; the shuttle spends at most one per attack and loses them all in the End phase. In each End phase the Empire places one Academy Pilot within Range 1 of its edge per Imperial ship destroyed that round."
             }
             MissionKind::AsteroidRun => {
                 "The Empire deploys within Range 1 of either edge; the Rebels deploy in the middle of the board (beyond Range 3 of both edges, not within Range 1 of an asteroid). The Rebels' first ship is the DISABLED ship: until Round 5 it may only fly speed 1-2 maneuvers. From Round 5 it may flee off the Rebel or Imperial edge without being destroyed. In each End phase the Empire places one Academy Pilot within Range 1 of either edge per Imperial ship destroyed that round."
@@ -214,6 +214,8 @@ impl MissionState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MissionView {
     pub kind: MissionKind,
+    /// Side index of the Rebel player(s).
+    pub rebel_side: u8,
     /// The viewer's own objective.
     pub objective: String,
     pub satellites: Vec<Satellite>,

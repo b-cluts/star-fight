@@ -5,6 +5,7 @@ use sf_core::board::Board;
 use sf_core::bombs::{BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
+use sf_core::mission::MissionView;
 use sf_core::obstacle::{Obstacle, Pull};
 use sf_core::scenario::GameSetup;
 use sf_core::ship::ShipId;
@@ -139,6 +140,13 @@ pub enum ServerMsg {
         /// Asteroid and debris tokens (fixed for the game).
         #[serde(default)]
         obstacles: Vec<Obstacle>,
+        /// Where the viewer may place ships right now (x0, y0, x1, y1
+        /// rectangles): the mission's bands, or the standard zone.
+        #[serde(default)]
+        zones: Vec<(f64, f64, f64, f64)>,
+        /// The rulebook mission in play, if any.
+        #[serde(default)]
+        mission: Option<MissionView>,
     },
     /// A command of yours was refused.
     Rejected {

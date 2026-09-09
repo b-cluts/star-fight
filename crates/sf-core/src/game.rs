@@ -6034,6 +6034,7 @@ impl GameState {
     pub fn mission_view(&self, viewer: PlayerId) -> Option<MissionView> {
         self.mission.as_ref().map(|m| MissionView {
             kind: m.kind,
+            rebel_side: m.rebel_side,
             objective: m.kind.objective(m.faction_of_side(self.team(viewer))).to_string(),
             satellites: m.satellites.clone(),
             shuttle: m.shuttle,

@@ -293,13 +293,29 @@ fn entries(game: &Game, cat: usize, filter: &str) -> Vec<(String, String)> {
                 4 => &[GlossaryCategory::Damage],
                 _ => &[GlossaryCategory::Rules],
             };
-            content
+            let mut list: Vec<(String, String)> = content
                 .glossary
                 .entries
                 .iter()
                 .filter(|e| wanted.contains(&e.category))
                 .map(|e| (e.name.clone(), e.text.clone()))
-                .collect()
+                .collect();
+            if wanted.contains(&GlossaryCategory::Rules) {
+                use sf_core::mission::MissionKind;
+                use sf_core::ship::Faction;
+                for kind in MissionKind::ALL {
+                    list.push((
+                        format!("Mission {}: {}", kind.number(), kind.name()),
+                        format!(
+                            "{} REBEL VICTORY: {} IMPERIAL VICTORY: {}",
+                            kind.rules_text(),
+                            kind.objective(Faction::RebelAlliance),
+                            kind.objective(Faction::Empire)
+                        ),
+                    ));
+                }
+            }
+            list
         }
     };
     let f = filter.trim().to_lowercase();

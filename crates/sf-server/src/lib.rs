@@ -457,6 +457,8 @@ async fn session(
                         teams: gs.teams.clone(),
                         bombs: gs.bombs.clone(),
                         obstacles: gs.obstacles.clone(),
+                        zones: gs.deploy_zones(PlayerId(s as u32)),
+                        mission: gs.mission_view(PlayerId(s as u32)),
                     }
                 );
             }
@@ -520,10 +522,7 @@ async fn session(
                             for s in 0..players.len() as u8 {
                                 send_to!(
                                     s,
-                                    ServerMsg::GameOver {
-                                        winner,
-                                        reason: "fleet destroyed".into()
-                                    }
+                                    ServerMsg::GameOver { winner, reason: $gs.winner_reason() }
                                 );
                             }
                             game_over = true;
@@ -550,10 +549,33 @@ async fn session(
                     continue;
                 }
                 let seat = players.iter().position(|p| p.is_none()).unwrap_or(players.len()) as u8;
-                let squad = squad.unwrap_or_else(|| {
-                    let classes = if seat.is_multiple_of(2) { &FLEET_SOUTH } else { &FLEET_NORTH };
-                    Squad::basic(&content, "basic", &basic_fleet(&content, classes))
-                });
+                // Missions fix each side's faction; a player joining without
+                // a squad flies the mission's printed force.
+                let required = setup.faction_for_seat(seat);
+                let squad = match (squad, setup.mission, required) {
+                    (Some(sq), _, _) => sq,
+                    (None, Some(kind), Some(faction)) => {
+                        sf_core::mission::fixed_squad(&content, kind, faction)
+                            .expect("mission forces are in the data")
+                    }
+                    (None, _, _) => {
+                        let classes =
+                            if seat.is_multiple_of(2) { &FLEET_SOUTH } else { &FLEET_NORTH };
+                        Squad::basic(&content, "basic", &basic_fleet(&content, classes))
+                    }
+                };
+                if let Some(f) = required
+                    && squad.faction != f
+                {
+                    let side = match f {
+                        sf_core::ship::Faction::RebelAlliance => "Rebel",
+                        sf_core::ship::Faction::Empire => "Imperial",
+                    };
+                    let _ = resp.send(Err(format!(
+                        "squad rejected: this seat flies the {side} side of the mission"
+                    )));
+                    continue;
+                }
                 // Each side gets the scenario's points, shared out among
                 // its players (team play, core rules p.20).
                 let rules =
@@ -608,6 +630,9 @@ async fn session(
                 )
                 .expect("validated squads");
                 gs.place_obstacles(&setup.obstacle_kinds(), rand::random::<u64>());
+                if let Some(kind) = setup.mission {
+                    gs.start_mission(&content, kind, setup.points).expect("two-sided mission");
+                }
                 let names: Vec<String> = players.iter().flatten().map(|p| p.0.clone()).collect();
                 for s in 0..players.len() as u8 {
                     send_to!(
@@ -658,6 +683,8 @@ async fn session(
                                     teams: gs.teams.clone(),
                                     bombs: gs.bombs.clone(),
                                     obstacles: gs.obstacles.clone(),
+                                    zones: gs.deploy_zones(player),
+                                    mission: gs.mission_view(player),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -678,6 +705,8 @@ async fn session(
                                     teams: gs.teams.clone(),
                                     bombs: gs.bombs.clone(),
                                     obstacles: gs.obstacles.clone(),
+                                    zones: gs.deploy_zones(player),
+                                    mission: gs.mission_view(player),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -698,6 +727,8 @@ async fn session(
                                     teams: gs.teams.clone(),
                                     bombs: gs.bombs.clone(),
                                     obstacles: gs.obstacles.clone(),
+                                    zones: gs.deploy_zones(player),
+                                    mission: gs.mission_view(player),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -718,6 +749,8 @@ async fn session(
                                     teams: gs.teams.clone(),
                                     bombs: gs.bombs.clone(),
                                     obstacles: gs.obstacles.clone(),
+                                    zones: gs.deploy_zones(player),
+                                    mission: gs.mission_view(player),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),

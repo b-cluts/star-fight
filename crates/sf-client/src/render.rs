@@ -173,8 +173,7 @@ pub fn draw_base(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footprint, co
 
 /// Board frame and translucent deployment-zone bands (gizmo lines).
 pub fn draw_board(gizmos: &mut Gizmos, game: &Game) {
-    let bsize = Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX);
-    gizmos.rect_2d(Isometry2d::IDENTITY, bsize, Color::srgb(0.45, 0.45, 0.6));
+    draw_board_frame(gizmos, game);
     let w = game.board.width;
     let h = game.board.height;
     let d = game.board.deploy_depth;
@@ -183,6 +182,25 @@ pub fn draw_board(gizmos: &mut Gizmos, game: &Game) {
     {
         gizmos.line_2d(game.to_world(GVec2::new(0.0, y)), game.to_world(GVec2::new(w, y)), color);
     }
+}
+
+/// The board outline alone.
+pub fn draw_board_frame(gizmos: &mut Gizmos, game: &Game) {
+    let bsize = Vec2::new(game.board.width as f32 * PX, game.board.height as f32 * PX);
+    gizmos.rect_2d(Isometry2d::IDENTITY, bsize, Color::srgb(0.45, 0.45, 0.6));
+}
+
+/// One placement rectangle (x0, y0, x1, y1 in board units).
+pub fn draw_zone(gizmos: &mut Gizmos, game: &Game, zone: (f64, f64, f64, f64), color: Color) {
+    let (x0, y0, x1, y1) = zone;
+    let corners = [
+        game.to_world(GVec2::new(x0, y0)),
+        game.to_world(GVec2::new(x1, y0)),
+        game.to_world(GVec2::new(x1, y1)),
+        game.to_world(GVec2::new(x0, y1)),
+        game.to_world(GVec2::new(x0, y0)),
+    ];
+    gizmos.linestrip_2d(corners, color);
 }
 
 pub fn draw_path(gizmos: &mut Gizmos, game: &Game, path: &[Pose], color: Color) {

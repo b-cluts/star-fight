@@ -36,5 +36,17 @@
         (id: "fourway", name: "Four-way free-for-all",
          description: "Four sides, 60 points each, one on every edge of a 24x24 board. Last side flying wins. Six asteroids.",
          players: 4, points: 60, asteroids: 6, board_width: 24, board_height: 24),
+        // Rulebook missions (core rules p.21-24). The host (seat 0) flies the
+        // Rebel side; the joiner flies the Empire. Joining without a squad
+        // fields the mission's printed force (31 points with the core set).
+        (id: "mission1", name: "Mission 1: Political Escort",
+         description: "The senator's shuttle (hull 6, agility 2; shields 6 with 100-point squads) starts at the centre of the Rebel edge and creeps forward each round. Rebels win by flying it off the Imperial edge; the Empire wins by destroying it, and gets an Academy Pilot back for every TIE lost. Rebel ships within Range 1 of the shuttle can Protect it (key P). No asteroids. See the glossary's Rules tab.",
+         asteroids: 0, mission: Some(PoliticalEscort)),
+        (id: "mission2", name: "Mission 2: Asteroid Run",
+         description: "One Rebel ship is disabled (speed 1-2 only) until Round 5, deployed in the middle of the field with the Empire closing from either edge. From Round 5 the Rebels win by flying it off the Rebel or Imperial edge alive; the Empire wins by destroying it, with an Academy Pilot back for every TIE lost. Six asteroids.",
+         asteroids: 6, mission: Some(AsteroidRun)),
+        (id: "mission3", name: "Mission 3: Dark Whispers",
+         description: "Satellite tokens (two, four with 100-point squads) sit in the Rebel half. Imperial ships scan them by ending a move on one (instead of attacking), then must carry the data off the Imperial edge once every satellite is scanned. Rebels win by destroying every Imperial ship or seeing every token returned to the supply, and get a Rookie Pilot back for every ship lost. No asteroids.",
+         asteroids: 0, mission: Some(DarkWhispers)),
     ],
 )

@@ -21,7 +21,7 @@ pub enum NetEvent {
     /// TLS handshake done; the server's full certificate fingerprint
     /// (matched the pin), so the client can remember it.
     Secured(String),
-    Msg(ServerMsg),
+    Msg(Box<ServerMsg>),
     Closed(String),
 }
 
@@ -146,7 +146,7 @@ async fn pump<S>(
                 frame = rx.next() => match frame {
                     Some(Ok(Message::Text(t))) => match decode::<ServerMsg>(&t) {
                         Ok(m) => {
-                            if in_tx.send(NetEvent::Msg(m)).is_err() {
+                            if in_tx.send(NetEvent::Msg(Box::new(m))).is_err() {
                                 return;
                             }
                         }

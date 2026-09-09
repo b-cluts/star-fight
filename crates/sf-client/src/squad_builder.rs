@@ -256,7 +256,13 @@ fn rebuild_slots(r: &mut Row, game: &Game) {
 }
 
 fn classes_of(game: &Game, faction: Faction) -> Vec<&ShipClass> {
-    game.ships.classes.iter().filter(|c| c.faction == faction).collect()
+    // Classes with a fieldable pilot only (mission tokens have none).
+    game.ships
+        .classes
+        .iter()
+        .filter(|c| c.faction == faction)
+        .filter(|c| game.content.pilots.pilots.iter().any(|p| p.class == c.id && p.cost > 0))
+        .collect()
 }
 
 /// Upgrade choices for a column: None plus every card of that slot the

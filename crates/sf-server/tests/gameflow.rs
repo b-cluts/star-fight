@@ -434,3 +434,89 @@ async fn unique_pilots_are_refused_when_another_seat_fields_them() {
     .await;
     assert!(why.contains("Howlrunner"), "{why}");
 }
+
+#[tokio::test]
+async fn mission_games_fix_factions_and_field_the_printed_forces() {
+    use sf_core::mission::MissionKind;
+    use sf_core::scenario::GameSetup;
+    use sf_core::ship::Faction;
+    use sf_core::squad::{Squad, SquadShip};
+    let c = content();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut d, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    for (ws, name) in [(&mut a, "ann"), (&mut b, "ben"), (&mut d, "dan")] {
+        send(
+            ws,
+            &ClientMsg::Hello {
+                proto_version: sf_proto::PROTOCOL_VERSION,
+                name: name.into(),
+                password: String::new(),
+            },
+        )
+        .await;
+        assert!(matches!(recv(ws).await, ServerMsg::Welcome { .. }));
+    }
+    let setup = GameSetup {
+        points: 31,
+        asteroids: 0,
+        mission: Some(MissionKind::PoliticalEscort),
+        ..GameSetup::default()
+    };
+    // The host flies the Rebel side with the printed force.
+    send(&mut a, &ClientMsg::CreateGame { squad: None, setup: Some(setup) }).await;
+    let code = recv_until(&mut a, |m| match m {
+        ServerMsg::GameCreated { code } => Some(code),
+        _ => None,
+    })
+    .await;
+    // A Rebel squad is refused on the Imperial seat.
+    let rookie = c.pilots.pilots.iter().find(|p| p.xws == "rookiepilot").unwrap().id;
+    let rebels = Squad {
+        name: "rebels".into(),
+        faction: Faction::RebelAlliance,
+        ships: vec![SquadShip { pilot: rookie, upgrades: vec![], callsign: String::new() }],
+    };
+    send(&mut b, &ClientMsg::JoinGame { code: code.clone(), squad: Some(rebels) }).await;
+    let why = recv_until(&mut b, |m| match m {
+        ServerMsg::Error { message } => Some(message),
+        _ => None,
+    })
+    .await;
+    assert!(why.contains("Imperial side"), "{why}");
+    // Joining without a squad fields the two Academy Pilots.
+    send(&mut d, &ClientMsg::JoinGame { code, squad: None }).await;
+    for ws in [&mut a, &mut d] {
+        let (seat, setup) = recv_until(ws, |m| match m {
+            ServerMsg::GameStart { seat, setup, .. } => Some((seat, setup)),
+            _ => None,
+        })
+        .await;
+        assert_eq!(setup.unwrap().mission, Some(MissionKind::PoliticalEscort));
+        let (ships, zones, mission) = recv_until(ws, |m| match m {
+            ServerMsg::Snapshot { ships, zones, mission, .. } => Some((ships, zones, mission)),
+            _ => None,
+        })
+        .await;
+        let mission = mission.expect("mission view");
+        assert_eq!(mission.kind, MissionKind::PoliticalEscort);
+        assert_eq!(mission.rebel_side, 0);
+        // Red Squadron Pilot + the shuttle vs two Academy Pilots; both
+        // sides deploy within Range 2 (5 units) of their edge.
+        assert_eq!(ships.len(), 4);
+        assert_eq!(ships.iter().filter(|s| s.pilot == "Academy Pilot").count(), 2);
+        let shuttle = ships.iter().find(|s| s.callsign == "Senator").unwrap();
+        assert_eq!((shuttle.owner.0, shuttle.shields), (0, 0));
+        if seat == 0 {
+            assert_eq!(zones, vec![(0.0, 0.0, 20.0, 5.0)]);
+            assert!(shuttle.pose.is_some());
+        } else {
+            assert_eq!(zones, vec![(0.0, 15.0, 20.0, 20.0)]);
+            assert!(shuttle.pose.is_none(), "setup placement is hidden");
+        }
+    }
+}

@@ -9,9 +9,11 @@ use std::f64::consts::FRAC_PI_2;
 use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, SecondActionKind, Side};
 use sf_core::board::Seat;
 use sf_core::bombs::{BombKind, BombToken, Detonation};
+use sf_core::combat;
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
+use sf_core::mission::{MissionKind, MissionView};
 use sf_core::obstacle::{self, Obstacle, ObstacleKind, Pull};
 use sf_core::rules;
 use sf_core::ship::ShipId;
@@ -51,6 +53,10 @@ pub struct Snap {
     pub bombs: Vec<BombToken>,
     /// Asteroid and debris tokens.
     pub obstacles: Vec<Obstacle>,
+    /// Where we may place ships right now.
+    pub zones: Vec<(f64, f64, f64, f64)>,
+    /// The rulebook mission in play.
+    pub mission: Option<MissionView>,
 }
 
 /// One step of the turn playback queue, fed by server messages as the
@@ -378,6 +384,8 @@ fn demo_snap(game: &Game) -> Snap {
         teams: vec![0, 1],
         bombs,
         obstacles,
+        zones: Vec::new(),
+        mission: None,
     }
 }
 
@@ -515,7 +523,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
     };
     for ev in events {
         match ev {
-            NetEvent::Msg(msg) => match msg {
+            NetEvent::Msg(msg) => match *msg {
                 ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
                 ServerMsg::GameCreated { code } => {
                     let what = online
@@ -575,6 +583,8 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     teams,
                     bombs,
                     obstacles,
+                    zones,
+                    mission,
                 } => {
                     if phase != Phase::Placement {
                         online.overrides.clear();
@@ -595,6 +605,8 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         teams,
                         bombs,
                         obstacles,
+                        zones,
+                        mission,
                     };
                     if online.anim.is_some() {
                         online.pending_snap = Some(snap);
@@ -709,7 +721,8 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
     let heading = edge.facing();
     // Along the edge, 1.5 units in; teammates start further along so
     // their rows do not overlap.
-    let (x0, y0, x1, y1) = game.board.deploy_zone(edge);
+    let (x0, y0, x1, y1) =
+        snap.zones.first().copied().unwrap_or_else(|| game.board.deploy_zone(edge));
     let mut seeds = Vec::new();
     let mut t = 3.0 + f64::from(seat) * 1.5;
     for view in snap.ships.iter().filter(|s| s.owner.0 == seat as u32) {
@@ -1258,6 +1271,12 @@ fn planning_input(
                 .collect()
         })
         .unwrap_or_default();
+    // Mission 1: Rebel ships may protect the senator's shuttle.
+    let protect_ok = online
+        .snap
+        .as_ref()
+        .and_then(|s| s.mission.as_ref())
+        .is_some_and(|m| m.kind == MissionKind::PoliticalEscort && m.rebel_side == online.team);
     if own_ids.is_empty() {
         return;
     }
@@ -1323,6 +1342,9 @@ fn planning_input(
     };
     if keys.just_pressed(KeyCode::Digit1) {
         plan_action(&mut online, PlannedAction::Pass);
+    }
+    if keys.just_pressed(KeyCode::KeyP) && protect_ok {
+        plan_action(&mut online, PlannedAction::Protect);
     }
     if keys.just_pressed(KeyCode::Digit2) && bar.contains(&ActionKind::Focus) {
         plan_action(&mut online, PlannedAction::Focus);
@@ -1820,6 +1842,22 @@ fn detonation_line(snap: &Snap, d: &Detonation) -> String {
 
 /// An obstacle token: asteroids as a craggy outline with a few inner
 /// fracture lines, debris as a dotted cloud.
+/// A satellite token (mission 3): a slowly turning cyan diamond with a
+/// dish ring.
+fn draw_satellite(gizmos: &mut Gizmos, game: &Game, pos: GVec2, t: f32) {
+    let c = game.to_world(pos);
+    let half = (sf_core::mission::SATELLITE_SIZE / 2.0) as f32 * render::PX;
+    let a = t * 0.6;
+    let pts: Vec<Vec2> = (0..5)
+        .map(|k| {
+            let ang = a + k as f32 * std::f32::consts::FRAC_PI_2;
+            c + Vec2::new(ang.cos(), ang.sin()) * half
+        })
+        .collect();
+    gizmos.linestrip_2d(pts, Color::srgb(0.4, 0.95, 1.0));
+    gizmos.circle_2d(c, half * 0.45, Color::srgba(0.4, 0.95, 1.0, 0.7));
+}
+
 fn draw_obstacle(gizmos: &mut Gizmos, game: &Game, o: &Obstacle, t: f32) {
     let poly: Vec<Vec2> = o.polygon().into_iter().map(|p| game.to_world(p)).collect();
     let center = game.to_world(o.center);
@@ -2050,13 +2088,29 @@ fn draw(
 ) {
     bullseye.0 = None;
     hover.0 = None;
-    render::draw_board(&mut gizmos, &game);
+    render::draw_board_frame(&mut gizmos, &game);
     let Ok((mut gsprite, mut gtf, mut gvis)) = ghost.single_mut() else {
         return;
     };
     *gvis = Visibility::Hidden;
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
+    // Our placement zone(s) while placing; the standard bands otherwise.
+    if snap.phase == Phase::Placement && !snap.zones.is_empty() {
+        for z in &snap.zones {
+            render::draw_zone(&mut gizmos, &game, *z, Color::srgba(0.3, 0.9, 0.4, 0.6));
+        }
+    } else if snap.mission.is_none() {
+        let d = game.board.deploy_depth;
+        let (w, h) = (game.board.width, game.board.height);
+        render::draw_zone(&mut gizmos, &game, (0.0, 0.0, w, d), Color::srgba(0.3, 0.9, 0.4, 0.4));
+        render::draw_zone(&mut gizmos, &game, (0.0, h - d, w, h), Color::srgba(0.9, 0.4, 0.3, 0.4));
+    }
+    if let Some(m) = &snap.mission {
+        for s in m.satellites.iter().filter(|s| s.on_board()) {
+            draw_satellite(&mut gizmos, &game, s.pos, time.elapsed_secs());
+        }
+    }
     let tokens: &[BombToken] = match &online.anim {
         Some(a) => &a.tokens,
         None => &snap.bombs,
@@ -2113,14 +2167,21 @@ fn draw(
             let corners = rules::footprint_corners(pose, class.footprint);
             let on_rock =
                 snap.obstacles.iter().any(|o| obstacle::convex_overlap(&corners, &o.polygon()));
-            if on_rock
-                || rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[])
-                    .is_err()
-            {
+            let legal = if snap.zones.is_empty() {
+                rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[])
+            } else {
+                rules::placement_legal_in(&snap.zones, pose, class.footprint, &[])
+            };
+            if on_rock || legal.is_err() {
                 color = Color::srgb(1.0, 0.35, 0.35);
             }
         }
         render::draw_base(&mut gizmos, &game, pose, class.footprint, color);
+        if view.satellites > 0 {
+            // Carrying scanned satellite data (mission 3).
+            let c = combat::base_center(pose, class.footprint);
+            gizmos.circle_2d(game.to_world(c), 5.0, Color::srgb(0.4, 0.95, 1.0));
+        }
         if own && view.plan.is_some() && snap.phase == Phase::Planning {
             gizmos.circle_2d(game.to_world(pose.anchor), 4.0, Color::srgb(0.4, 1.0, 0.9));
         }
@@ -2252,6 +2313,35 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         "TURN {} | {:?} | initiative: {init} ({mine} vs {theirs} pts) | {committed}{scenario}",
         snap.turn, snap.phase,
     )];
+    if let Some(m) = &snap.mission {
+        let mut line = format!(
+            "MISSION {}: {} — your objective: {}",
+            m.kind.number(),
+            m.kind.name(),
+            m.objective
+        );
+        match m.kind {
+            MissionKind::AsteroidRun if snap.turn < sf_core::mission::REPAIR_ROUND => {
+                line.push_str(&format!(
+                    " | disabled ship repaired in round {}",
+                    sf_core::mission::REPAIR_ROUND
+                ));
+            }
+            MissionKind::DarkWhispers => {
+                let on_board = m.satellites.iter().filter(|s| s.on_board()).count();
+                let supply = m.satellites.iter().filter(|s| s.supply).count();
+                line.push_str(&format!(
+                    " | satellites: {on_board} on the board, {} scanned, {supply} in the supply",
+                    m.satellites.len() - on_board - supply
+                ));
+            }
+            _ => {}
+        }
+        if snap.phase == Phase::Placement && snap.turn > 1 {
+            line.push_str(" | REINFORCEMENT: place the new ship within Range 1 of the edge");
+        }
+        lines.push(line);
+    }
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];
         let mut line = format!(
@@ -2276,6 +2366,20 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         }
         if view.on_asteroid {
             line.push_str(" | ON ASTEROID: no attack this round");
+        }
+        if let Some(m) = &snap.mission {
+            if m.shuttle == Some(view.id) {
+                line.push_str(" | SENATOR'S SHUTTLE: no actions, no attack, crits are hits");
+            }
+            if m.disabled == Some(view.id) && snap.turn < sf_core::mission::REPAIR_ROUND {
+                line.push_str(" | DISABLED: speed 1-2 only until round 5");
+            }
+        }
+        if view.satellites > 0 {
+            line.push_str(&format!(" | carrying {} satellite(s)", view.satellites));
+        }
+        if view.escaped {
+            line.push_str(" | ESCAPED the battlefield");
         }
         if !view.crits.is_empty() {
             let names: Vec<&str> = view.crits.iter().map(|c| c.name()).collect();
@@ -2374,6 +2478,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                 .unwrap_or_default();
             if !mines.is_empty() {
                 acts.push("M Drop mine");
+            }
+            if snap.mission.as_ref().is_some_and(|m| {
+                m.kind == MissionKind::PoliticalEscort && m.rebel_side == online.team
+            }) {
+                acts.push("P Protect shuttle");
             }
             let extras = online
                 .sel

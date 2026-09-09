@@ -176,6 +176,11 @@ pub fn validate_squad(
             errors.push(SquadError::UnknownPilot(ship.pilot));
             continue;
         };
+        // Cost 0 = a mission token (the senator's shuttle), not a pilot card.
+        if pilot.cost == 0 {
+            errors.push(SquadError::UnknownPilot(ship.pilot));
+            continue;
+        }
         if class.faction != squad.faction {
             errors.push(SquadError::WrongFaction { ship: i });
         }
@@ -452,6 +457,19 @@ mod tests {
         // 33+1+2+4+2+2+1 = 45, 24+1+0 = 25
         let ok = validate_squad(&s, &c, &SquadRules::default()).unwrap();
         assert_eq!(ok.points, 70);
+    }
+
+    #[test]
+    fn mission_tokens_cannot_be_fielded() {
+        let c = content();
+        let senator = c.pilots.pilots.iter().find(|p| p.xws == "senatorsshuttle").unwrap().id;
+        let squad = Squad {
+            name: "cheat".into(),
+            faction: Faction::RebelAlliance,
+            ships: vec![SquadShip { pilot: senator, upgrades: vec![], callsign: String::new() }],
+        };
+        let errors = validate_squad(&squad, &c, &SquadRules::default()).unwrap_err();
+        assert!(errors.contains(&SquadError::UnknownPilot(senator)));
     }
 
     #[test]
