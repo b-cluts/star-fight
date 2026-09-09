@@ -12,14 +12,16 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
 1. Host: run `sf-server` on a Linux box (or anywhere). It prints a
    certificate fingerprint, a password and a join string like
    `starfight://host:7777/#<fingerprint>` — send both to the players and open
-   port 7777 (TCP). Six asteroids are scattered on every board; pass
-   `--asteroids 0` for open space (or another count).
+   port 7777 (TCP). `--asteroids N` sets the default obstacle count for
+   clients that do not send a setup.
 2. Players: run `sf-client` from the folder that contains `assets/`. In the
    menu, paste the join string into **Server** (Ctrl+V), type the password
    (generated ones look like `abcd-efgh-jkmn`, avoid look-alike characters,
    and are accepted in any letter case),
-   optionally build a squad (**Squad Builder**), then **Create Game** (share
-   the 4-letter code) or **Join Game** with the code.
+   optionally build a squad (**Squad Builder**), then **Create Game** — pick a
+   scenario on the setup screen (asteroids, debris, squad points, board size;
+   Up/Down, Tab, Left/Right, Enter) and share the 4-letter code — or **Join
+   Game** with the code (the joiner plays the host's scenario).
 3. Card images for the squad builder are optional; see
    [Card images](#card-images-optional) below. Without them the builder
    shows the card text.

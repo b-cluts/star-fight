@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (171 tests),
+`cargo build` clean, `cargo test --workspace` green (172 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -253,7 +253,25 @@ and Server `ws://127.0.0.1:7777`.
       NOT done: player-placed obstacles (FE alternates placement; a
       lobby/setup UI), debris in the default scatter (kinds are
       supported), bombs dropped onto obstacles, Seismic Torpedo (removes
-      an obstacle — easy now: `GameState.obstacles.retain`). Then
+      an obstacle — easy now: `GameState.obstacles.retain`).
+      ~~Game setup screen~~ DONE 2026-09-09 (user request: the host
+      answers questions / picks a scenario): `sf-core/src/scenario.rs`
+      (`Scenario` presets from `assets/data/scenarios.ron` via
+      `Content.scenarios`; `GameSetup { scenario, players, points,
+      asteroids, debris, board_width, board_height }` with `validate()`
+      — 2 players only for now, ≤12 tokens, 20-400 pts, 12-40 unit
+      sides — `board()`, `obstacle_kinds()`, `summary()`); proto
+      `CreateGame.setup: Option<GameSetup>` and `GameStart.setup`; the
+      server validates, sizes the board, scatters asteroids + debris
+      and uses `points` for SquadRules (both squads); `--asteroids` is
+      now only the default for clients that send no setup. Client:
+      `Screen::Setup` (`setup.rs`) between Create Game and the
+      connection (menu stores `PendingCreate`): Up/Down preset, Tab
+      field, Left/Right adjust (edited presets become "… (custom)"),
+      Enter connects, Esc back; the HUD header and the "Game code"
+      status show `summary()`. Players > 2 is reserved (the session
+      code assumes 2 seats; multi-player needs seats, deployment edges
+      and turn order generalised). Six presets. Then
       Lorrir's bank-template roll,
       Turr Phennir (reposition after attack), Expert Handling, Squad
       Leader / Lando (friendly free actions) remain.
