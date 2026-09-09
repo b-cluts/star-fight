@@ -57,6 +57,8 @@ pub struct Choice {
     pub weapon: Option<u16>,
     pub target: u32,
     pub range: u8,
+    /// The shot is obstructed by an obstacle (+1 defense die).
+    pub obstructed: bool,
 }
 
 #[derive(Clone)]
@@ -539,6 +541,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                             weapon: o.weapon.map(|u| u.0),
                             target: o.target.0,
                             range: o.range,
+                            obstructed: o.obstructed,
                         })
                         .collect();
                     online
@@ -1868,6 +1871,7 @@ fn draw(
             Some(AnimItem::Prompt { attacker, options, .. }) => {
                 if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
                     render::draw_firing_arc(&mut gizmos, &game, ap, fp, 0.6);
+                    render::draw_obstacle_shadows(&mut gizmos, &game, ap, fp, &snap.obstacles, 0.6);
                     bullseye.0 = Some(ap);
                 }
                 let hi = Color::srgb(1.0, 0.95, 0.2);
@@ -1909,6 +1913,14 @@ fn draw(
     render::draw_heading_arrow(&mut gizmos, &game, end, color);
     if arcs.0 {
         render::draw_firing_arc(&mut gizmos, &game, end, class.footprint, 0.7);
+        render::draw_obstacle_shadows(
+            &mut gizmos,
+            &game,
+            end,
+            class.footprint,
+            &snap.obstacles,
+            0.7,
+        );
         bullseye.0 = Some(end);
     }
     let (size, tf) = render::ship_visual(class, end, &game, 2.0);
@@ -2008,26 +2020,28 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         // during Planning this is before anyone moves).
         if view.owner.0 == u32::from(seat) && view.pose.is_some() && !view.destroyed {
             let name = |id: ShipId| callsign(Some(snap), id.0);
-            let parts: Vec<String> = weapon_status(&game.content, &snap.ships, view)
-                .iter()
-                .map(|w| {
-                    let state = match &w.state {
-                        WeaponState::Ready { target, range } => {
-                            format!("ready vs {} R{range}", name(*target))
-                        }
-                        WeaponState::NeedsLock { target } => {
-                            format!("needs target lock on {}", name(*target))
-                        }
-                        WeaponState::NeedsFocus { target } => {
-                            format!("needs focus token (vs {})", name(*target))
-                        }
-                        WeaponState::NoTarget => "no target in range/arc".to_string(),
-                        WeaponState::Offline => "OFFLINE (weapons failure)".to_string(),
-                        WeaponState::Grounded => "no attack (on an asteroid)".to_string(),
-                    };
-                    format!("{}: {state}", w.name)
-                })
-                .collect();
+            let parts: Vec<String> =
+                weapon_status(&game.content, &snap.ships, &snap.obstacles, view)
+                    .iter()
+                    .map(|w| {
+                        let state = match &w.state {
+                            WeaponState::Ready { target, range, obstructed } => {
+                                let o = if *obstructed { ", obstructed" } else { "" };
+                                format!("ready vs {} R{range}{o}", name(*target))
+                            }
+                            WeaponState::NeedsLock { target } => {
+                                format!("needs target lock on {}", name(*target))
+                            }
+                            WeaponState::NeedsFocus { target } => {
+                                format!("needs focus token (vs {})", name(*target))
+                            }
+                            WeaponState::NoTarget => "no target in range/arc".to_string(),
+                            WeaponState::Offline => "OFFLINE (weapons failure)".to_string(),
+                            WeaponState::Grounded => "no attack (on an asteroid)".to_string(),
+                        };
+                        format!("{}: {state}", w.name)
+                    })
+                    .collect();
             let when = if snap.phase == Phase::Planning { " (before moving)" } else { "" };
             lines.push(format!("weapons{when}: {}", parts.join(" • ")));
         }
@@ -2149,11 +2163,12 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     .enumerate()
                     .map(|(n, o)| {
                         format!(
-                            "{}) {} -> {} R{}",
+                            "{}) {} -> {} R{}{}",
                             n + 1,
                             weapon_name(&game, o.weapon),
                             name(o.target),
-                            o.range
+                            o.range,
+                            if o.obstructed { " (obstructed)" } else { "" }
                         )
                     })
                     .collect();

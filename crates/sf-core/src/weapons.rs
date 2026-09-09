@@ -6,6 +6,7 @@ use crate::combat;
 use crate::crit::CritEffect;
 use crate::data::Content;
 use crate::game::ShipView;
+use crate::obstacle::{self, Obstacle};
 use crate::rules;
 use crate::ship::ShipId;
 use crate::upgrade::{AttackRequirement, Slot, UpgradeId};
@@ -13,8 +14,9 @@ use crate::upgrade::{AttackRequirement, Slot, UpgradeId};
 /// What one weapon could do from the current positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeaponState {
-    /// A legal shot exists; the nearest target and its range band.
-    Ready { target: ShipId, range: u8 },
+    /// A legal shot exists; the nearest target, its range band, and
+    /// whether the range line crosses an obstacle.
+    Ready { target: ShipId, range: u8, obstructed: bool },
     /// A ship is in range and arc but the weapon needs a lock on it.
     NeedsLock { target: ShipId },
     /// A ship is in range and arc but the weapon needs a focus token.
@@ -37,7 +39,12 @@ pub struct WeaponStatus {
 
 /// Readiness of the primary weapon and every equipped secondary weapon
 /// of `me`, against the living enemy ships in `ships`.
-pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Vec<WeaponStatus> {
+pub fn weapon_status(
+    content: &Content,
+    ships: &[ShipView],
+    obstacles: &[Obstacle],
+    me: &ShipView,
+) -> Vec<WeaponStatus> {
     let Some(class) = content.ships.class(me.class) else { return Vec::new() };
     // (weapon, name, min range, max range, needs arc, requirement)
     let mut weapons: Vec<(Option<UpgradeId>, String, u8, u8, bool, AttackRequirement)> =
@@ -66,8 +73,8 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
             .collect();
     };
     let a_corners = rules::footprint_corners(a_pose, class.footprint);
-    // (target, band, in arc, distance) for every targetable enemy
-    let enemies: Vec<(ShipId, u8, bool, f64)> = ships
+    // (target, band, in arc, distance, obstructed) for every targetable enemy
+    let enemies: Vec<(ShipId, u8, bool, f64, bool)> = ships
         .iter()
         .filter(|s| s.owner != me.owner && !s.destroyed)
         .filter_map(|s| {
@@ -87,7 +94,10 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
                     );
                     combat::in_front_arc(a_pose, class.footprint, m)
                 });
-            Some((s.id, band, in_arc, dist))
+            let (p, q) = combat::closest_points(&a_corners, &corners);
+            let obstructed =
+                obstacles.iter().any(|o| obstacle::segment_hits_polygon(p, q, &o.polygon()));
+            Some((s.id, band, in_arc, dist, obstructed))
         })
         .collect();
 
@@ -99,29 +109,29 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
             } else if offline {
                 WeaponState::Offline
             } else {
-                let mut candidates: Vec<&(ShipId, u8, bool, f64)> = enemies
+                let mut candidates: Vec<&(ShipId, u8, bool, f64, bool)> = enemies
                     .iter()
-                    .filter(|(_, band, in_arc, _)| {
+                    .filter(|(_, band, in_arc, _, _)| {
                         *band >= lo && *band <= hi && (!needs_arc || *in_arc)
                     })
                     .collect();
                 candidates.sort_by(|a, b| a.3.total_cmp(&b.3));
                 match (candidates.first(), req) {
                     (None, _) => WeaponState::NoTarget,
-                    (Some(&&(t, band, ..)), AttackRequirement::Free) => {
-                        WeaponState::Ready { target: t, range: band }
+                    (Some(&&(t, band, _, _, obstructed)), AttackRequirement::Free) => {
+                        WeaponState::Ready { target: t, range: band, obstructed }
                     }
                     (Some(&&(t, ..)), AttackRequirement::TargetLock) => {
                         match candidates.iter().find(|c| Some(c.0) == me.lock) {
-                            Some(&&(locked, band, ..)) => {
-                                WeaponState::Ready { target: locked, range: band }
+                            Some(&&(locked, band, _, _, obstructed)) => {
+                                WeaponState::Ready { target: locked, range: band, obstructed }
                             }
                             None => WeaponState::NeedsLock { target: t },
                         }
                     }
-                    (Some(&&(t, band, ..)), AttackRequirement::Focus) => {
+                    (Some(&&(t, band, _, _, obstructed)), AttackRequirement::Focus) => {
                         if me.focus > 0 {
-                            WeaponState::Ready { target: t, range: band }
+                            WeaponState::Ready { target: t, range: band, obstructed }
                         } else {
                             WeaponState::NeedsFocus { target: t }
                         }
@@ -138,12 +148,13 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
 pub fn unavailable_reasons(
     content: &Content,
     ships: &[ShipView],
+    obstacles: &[Obstacle],
     me: &ShipView,
 ) -> Vec<(String, String)> {
     let callsign = |id: ShipId| {
         ships.iter().find(|v| v.id == id).map(|v| v.callsign.clone()).unwrap_or_default()
     };
-    weapon_status(content, ships, me)
+    weapon_status(content, ships, obstacles, me)
         .into_iter()
         .filter_map(|w| {
             let why = match w.state {
@@ -189,7 +200,7 @@ mod tests {
         // X-Wing 2.5 units north of the TIE, nose-to-nose: Range 2.
         gs.ships[1].pose = Some(Pose::new(10.0, 6.0, -FRAC_PI_2));
         let ships = gs.snapshot_for(c, PlayerId(1));
-        weapon_status(c, &ships, &ships[1])
+        weapon_status(c, &ships, &[], &ships[1])
     }
 
     #[test]
@@ -198,7 +209,10 @@ mod tests {
         let st = state_for(&c);
         assert_eq!(st.len(), 2);
         assert_eq!(st[0].name, "Primary");
-        assert_eq!(st[0].state, WeaponState::Ready { target: ShipId(0), range: 2 });
+        assert_eq!(
+            st[0].state,
+            WeaponState::Ready { target: ShipId(0), range: 2, obstructed: false }
+        );
         assert_eq!(st[1].name, "Proton Torpedoes");
         assert_eq!(st[1].state, WeaponState::NeedsLock { target: ShipId(0) });
     }
@@ -217,7 +231,7 @@ mod tests {
         gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
         gs.ships[1].pose = Some(Pose::new(10.0, 6.0, -FRAC_PI_2));
         let ships = gs.snapshot_for(&c, PlayerId(1));
-        let why = unavailable_reasons(&c, &ships, &ships[1]);
+        let why = unavailable_reasons(&c, &ships, &[], &ships[1]);
         assert_eq!(why.len(), 1, "{why:?}");
         assert_eq!(why[0].0, "Proton Torpedoes");
         assert!(why[0].1.contains("target lock on"), "{}", why[0].1);
@@ -239,19 +253,22 @@ mod tests {
         gs.ships[1].pose = Some(Pose::new(10.0, 6.0, -FRAC_PI_2));
         gs.ships[1].lock = Some(ShipId(0));
         let ships = gs.snapshot_for(&c, PlayerId(1));
-        let st = weapon_status(&c, &ships, &ships[1]);
-        assert_eq!(st[1].state, WeaponState::Ready { target: ShipId(0), range: 2 });
+        let st = weapon_status(&c, &ships, &[], &ships[1]);
+        assert_eq!(
+            st[1].state,
+            WeaponState::Ready { target: ShipId(0), range: 2, obstructed: false }
+        );
 
         // Facing away: nothing in arc, so no target for either weapon.
         gs.ships[1].pose = Some(Pose::new(10.0, 6.0, FRAC_PI_2));
         let ships = gs.snapshot_for(&c, PlayerId(1));
-        let st = weapon_status(&c, &ships, &ships[1]);
+        let st = weapon_status(&c, &ships, &[], &ships[1]);
         assert_eq!(st[0].state, WeaponState::NoTarget);
         assert_eq!(st[1].state, WeaponState::NoTarget);
 
         gs.ships[1].crits.push(CritEffect::WeaponsFailure { rounds: 2 });
         let ships = gs.snapshot_for(&c, PlayerId(1));
-        let st = weapon_status(&c, &ships, &ships[1]);
+        let st = weapon_status(&c, &ships, &[], &ships[1]);
         assert!(st.iter().all(|w| w.state == WeaponState::Offline));
     }
 }

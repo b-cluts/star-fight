@@ -82,6 +82,9 @@ pub struct AttackChoice {
     pub weapon: Option<UpgradeId>,
     pub target: ShipId,
     pub range: u8,
+    /// The range line crosses an obstacle (+1 defense die).
+    #[serde(default)]
+    pub obstructed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

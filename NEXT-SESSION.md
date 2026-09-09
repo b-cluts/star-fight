@@ -625,6 +625,37 @@ pins.txt + last-used menu values), starfield.rs.
   ("not yet automated") via `implemented()`. Reachable mid-game
   without disturbing the game state (pure overlay; the online
   connection keeps pumping).
+- ~~**Obstacle shadow in the firing arc**~~ DONE 2026-09-09 (user
+  request): `render::draw_obstacle_shadows` hatches the part of the
+  arc behind each token (angular extent of its outline seen from the
+  arc origin, from its near edge out to Range 3) in the planning
+  preview and the Declare Target prompt; the exact rule (range ruler
+  between the closest points) drives `AttackOption.obstructed` →
+  `AttackChoice.obstructed` → "(obstructed)" in the prompt options and
+  ", obstructed" in the HUD weapons line (`WeaponState::Ready` now
+  carries it; `weapon_status` takes the obstacles).
+- **Black hole obstacle** (requested 2026-09-09, user's design): a new
+  `ObstacleKind::BlackHole` drawn as a black disc (core diameter 1 unit)
+  with swirling gas clouds spiralling in (animated gizmo spiral, maybe a
+  sprite later). Rules as specified: after ALL ships have moved (end of
+  the Activation phase, before or after bombs — decide; suggest before
+  bombs so the pull can drag a ship into a blast), every ship within
+  Range 5 (12.5 units) of the core is pulled 1 unit straight toward the
+  center (translate the pose along the line to the core, heading
+  unchanged); a ship whose base overlaps the core after the pull is
+  swallowed — destroyed, no wreck, narrated. Open questions for the
+  user: does a pulled ship stop when it would overlap another ship
+  (suggest: yes, bump-style back-off, no damage); are huge/large ships
+  pulled the same distance; do bomb tokens get pulled (suggest no); is
+  the pull cumulative with a ship's own move toward the hole (yes).
+  Implementation: `Obstacle` gets a `radius` / kind-specific shape (the
+  hole is a circle, not a polygon — add `ObstacleShape::Circle(r)` or
+  treat the core as a small polygon), `resolve_movement` gets a
+  `gravity_pull()` pass producing `MoveRecord`-like `Pull { ship, from,
+  to, swallowed }` records for the client animation (MovementResult
+  gains `pulls`), the obstruction test should ignore the gas (only the
+  core obstructs?), scenario preset "Event horizon" (one black hole
+  centred, few asteroids), glossary entry.
 - **Ship size examples** (requested 2026-09-04): add one or two real
   ships per base size so Medium/Large/Huge footprints get exercised
   (movement, bumping, arcs, range all already work per footprint; huge

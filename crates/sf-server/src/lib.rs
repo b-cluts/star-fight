@@ -493,6 +493,7 @@ async fn session(
                                 weapon: o.weapon,
                                 target: o.target,
                                 range: o.range,
+                                obstructed: o.obstructed,
                             })
                             .collect();
                         send_to!(

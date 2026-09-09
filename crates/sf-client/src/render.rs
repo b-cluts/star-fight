@@ -224,6 +224,54 @@ pub fn draw_firing_arc(gizmos: &mut Gizmos, game: &Game, pose: Pose, fp: Footpri
     }
 }
 
+/// The part of the firing arc that lies behind obstacle tokens, seen from
+/// the arc's origin: hatched wedges out to Range 3. A guide only — the
+/// rules measure obstruction along the range ruler between the two
+/// bases, so the prompt's "(obstructed)" tag is the authority.
+pub fn draw_obstacle_shadows(
+    gizmos: &mut Gizmos,
+    game: &Game,
+    pose: Pose,
+    fp: Footprint,
+    obstacles: &[sf_core::obstacle::Obstacle],
+    alpha: f32,
+) {
+    use std::f64::consts::{FRAC_PI_4, PI, TAU};
+    let center = sf_core::combat::base_center(pose, fp);
+    let half_len = fp.length / 2.0;
+    let outer =
+        half_len + sf_core::combat::MAX_RANGE_BAND as f64 * sf_core::combat::RANGE_BAND_UNITS;
+    let shade = Color::srgba(0.15, 0.15, 0.2, alpha * 0.55);
+    let point_at = |angle: f64, r: f64| {
+        game.to_world(GVec2::new(center.x + r * angle.cos(), center.y + r * angle.sin()))
+    };
+    for o in obstacles {
+        let (mut lo, mut hi, mut near) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY);
+        for p in o.polygon() {
+            let d = p - center;
+            let dist = (d.x * d.x + d.y * d.y).sqrt();
+            let rel = (d.y.atan2(d.x) - pose.heading + PI).rem_euclid(TAU) - PI;
+            lo = lo.min(rel);
+            hi = hi.max(rel);
+            near = near.min(dist);
+        }
+        // Tokens straddling the rear direction wrap around; ignore them.
+        if hi - lo > PI || near >= outer {
+            continue;
+        }
+        let (lo, hi) = (lo.max(-FRAC_PI_4), hi.min(FRAC_PI_4));
+        if lo >= hi {
+            continue;
+        }
+        let steps = ((hi - lo) / (PI / 72.0)).ceil().max(1.0) as usize;
+        let start = near.max(half_len);
+        for k in 0..=steps {
+            let a = pose.heading + lo + (hi - lo) * k as f64 / steps as f64;
+            gizmos.line_2d(point_at(a, start), point_at(a, outer), shade);
+        }
+    }
+}
+
 pub fn track_cursor(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<MainCam>>,

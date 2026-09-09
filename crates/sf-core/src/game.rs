@@ -274,6 +274,9 @@ pub struct AttackOption {
     pub range: u8,
     /// Base-to-base distance (nearest-target policy).
     pub dist: f64,
+    /// The range line crosses an obstacle (+1 defense die).
+    #[serde(default)]
+    pub obstructed: bool,
 }
 
 /// A declared shot: defender index, range band and weapon. `second` marks
@@ -2254,7 +2257,14 @@ impl GameState {
                     let unavailable = views
                         .iter()
                         .find(|v| v.id == attacker)
-                        .map(|me| crate::weapons::unavailable_reasons(content, &views, me))
+                        .map(|me| {
+                            crate::weapons::unavailable_reasons(
+                                content,
+                                &views,
+                                &self.obstacles,
+                                me,
+                            )
+                        })
                         .unwrap_or_default();
                     let p = PendingAttack { attacker, owner, options, unavailable };
                     self.combat.as_mut().expect("in combat").pending = Some(p.clone());
@@ -2928,7 +2938,14 @@ impl GameState {
                     AttackRequirement::Focus => self.ships[a_idx].focus > 0,
                 };
                 if armed {
-                    options.push(AttackOption { weapon, target: s.id, range: band, dist });
+                    let obstructed = self.obstructed_between(&a_corners, &corners);
+                    options.push(AttackOption {
+                        weapon,
+                        target: s.id,
+                        range: band,
+                        dist,
+                        obstructed,
+                    });
                 }
             }
         }
@@ -2957,11 +2974,10 @@ impl GameState {
             let d_pose = self.ships[d_idx].pose.expect("targets are on the board");
             let a_fp = self.class_of(content, &self.ships[a_idx]).footprint;
             let d_fp = self.class_of(content, &self.ships[d_idx]).footprint;
-            let (p, q) = combat::closest_points(
+            self.obstructed_between(
                 &rules::footprint_corners(a_pose, a_fp),
                 &rules::footprint_corners(d_pose, d_fp),
-            );
-            self.obstacles.iter().any(|o| obstacle::segment_hits_polygon(p, q, &o.polygon()))
+            )
         };
         if obstructed {
             events.push(format!(
@@ -3503,6 +3519,13 @@ impl GameState {
     /// Does a base at `pose` overlap any obstacle token?
     fn on_obstacle(&self, corners: &[Vec2; 4]) -> Option<&Obstacle> {
         self.obstacles.iter().find(|o| obstacle::convex_overlap(corners, &o.polygon()))
+    }
+
+    /// Is the range line between two bases (closest points) crossing an
+    /// obstacle token?
+    pub fn obstructed_between(&self, a: &[Vec2; 4], b: &[Vec2; 4]) -> bool {
+        let (p, q) = combat::closest_points(a, b);
+        self.obstacles.iter().any(|o| obstacle::segment_hits_polygon(p, q, &o.polygon()))
     }
 
     /// What `viewer` is allowed to see right now.
