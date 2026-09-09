@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (220 tests),
+`cargo build` clean, `cargo test --workspace` green (222 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -273,10 +273,15 @@ and Server `ws://127.0.0.1:7777`.
       Presets: Team battle 2v2, Outnumbered 1v2, Three-way and Four-way
       free-for-all; glossary "Team play and free-for-all". Tests:
       sf-core team/FFA tests, rules East/West zones, server 3-player
-      flow (220 total). NOT done: unique-pilot limit per team (rules
-      p.19) is still per squad; free-for-all is our extension (rules
-      only know two sides); >2 seats unplaytested on screen — needs 3
-      clients. Unplaytested on screen: everything since v0.4.0 plus the
+      flow (222 total). Unique cards are ONE PER GAME across every seat
+      (`squad::unique_conflicts`, checked at join; user's decision, goes
+      beyond p.19's per-team wording). Lobby: `ServerMsg::Lobby { code,
+      players, capacity }` on every join/drop, shown as "2 of 3 in
+      (ann, ben) — waiting for 1 more"; a drop before the start frees
+      the seat for the next joiner (server `players` is
+      Vec<Option<..>>, seats never shift). Free-for-all is our extension
+      (rules only know two sides); >2 seats unplaytested on screen —
+      needs 3 clients. Unplaytested on screen: everything since v0.4.0 plus the
       setup screen, second-action keys, black hole pull, torpedo pick,
       Lorrir keys. NEXT: playtest feedback → v0.5.0 (protocol 4 means
       new zips for everyone); the data-only cards above as planning
@@ -838,6 +843,6 @@ pins.txt + last-used menu values), starfield.rs.
   considering an alternative approach.
 - Real squad costs, pilot roster (abilities would activate Injured
   Pilot), ordnance content, faction rosters for the squad builder.
-- 3+ players: DONE 2026-09-09 (teams / free-for-all, 2-4 seats); unique-per-team limit not enforced.
+- 3+ players: DONE 2026-09-09 (teams / free-for-all, 2-4 seats; unique cards one per game).
 - Boost exists as an action (T-70 bar) — sandbox/online action keys
   cover it; no dedicated preview arrows yet.

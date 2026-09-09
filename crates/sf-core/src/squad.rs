@@ -306,6 +306,43 @@ fn unique_key(name: &str) -> String {
     name.chars().filter(|c| *c != '"').collect::<String>().to_ascii_lowercase()
 }
 
+/// Unique pilots and unique upgrades in `new` that another squad in the
+/// game already fields (core rules p.19: one copy per game, whoever
+/// flies the faction). Returns the offending card names.
+pub fn unique_conflicts(content: &Content, existing: &[&Squad], new: &Squad) -> Vec<String> {
+    let mut taken: Vec<String> = Vec::new();
+    for squad in existing {
+        for ship in &squad.ships {
+            if let Some(p) = content.pilots.pilot(ship.pilot)
+                && p.unique
+            {
+                taken.push(unique_key(&p.name));
+            }
+            for u in ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)) {
+                if u.unique {
+                    taken.push(unique_key(&u.name));
+                }
+            }
+        }
+    }
+    let mut clashes = Vec::new();
+    for ship in &new.ships {
+        if let Some(p) = content.pilots.pilot(ship.pilot)
+            && p.unique
+            && taken.contains(&unique_key(&p.name))
+            && !clashes.contains(&p.name)
+        {
+            clashes.push(p.name.clone());
+        }
+        for u in ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)) {
+            if u.unique && taken.contains(&unique_key(&u.name)) && !clashes.contains(&u.name) {
+                clashes.push(u.name.clone());
+            }
+        }
+    }
+    clashes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +403,18 @@ mod tests {
         assert_eq!(ship_cost(&c, &x1), vader_cost);
         let squad = Squad { name: "i".into(), faction: Faction::Empire, ships: vec![x1] };
         assert!(validate_squad(&squad, &c, &rules).is_ok());
+    }
+
+    #[test]
+    fn unique_pilots_are_one_per_game_across_squads() {
+        let c = content();
+        let howl = ship(&c, "howlrunner", &[]);
+        let academy = ship(&c, "academypilot", &[]);
+        let a = Squad { name: "a".into(), faction: Faction::Empire, ships: vec![howl.clone()] };
+        let b = Squad { name: "b".into(), faction: Faction::Empire, ships: vec![academy] };
+        let c2 = Squad { name: "c".into(), faction: Faction::Empire, ships: vec![howl] };
+        assert!(unique_conflicts(&c, &[&a], &b).is_empty());
+        assert_eq!(unique_conflicts(&c, &[&a, &b], &c2), vec!["Howlrunner".to_string()]);
     }
 
     #[test]

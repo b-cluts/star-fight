@@ -93,9 +93,16 @@ pub enum ServerMsg {
     Welcome {
         reconnect_token: String,
     },
-    /// Your game exists; share the code with your opponent.
+    /// Your game exists; share the code with the other players.
     GameCreated {
         code: String,
+    },
+    /// Who is in so far (seat order, names) and how many seats the game
+    /// has; sent to everyone in the lobby whenever it changes.
+    Lobby {
+        code: String,
+        players: Vec<String>,
+        capacity: u8,
     },
     /// Every seat is taken — the match begins. You are `seat` on side
     /// `team`; `players` lists every seat's name in seat order. Sides

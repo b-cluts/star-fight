@@ -528,6 +528,24 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     );
                     online.code = Some(code);
                 }
+                ServerMsg::Lobby { code, players, capacity } => {
+                    let missing = usize::from(capacity).saturating_sub(players.len());
+                    let what = online
+                        .setup
+                        .as_ref()
+                        .map(|s| format!(" — {}", s.summary()))
+                        .unwrap_or_default();
+                    online.status = if missing == 0 {
+                        format!("Game {code}: all {capacity} players in — starting")
+                    } else {
+                        format!(
+                            "Game code: {code}{what}  —  {} of {capacity} in ({})  —  waiting for {missing} more…",
+                            players.len(),
+                            players.join(", ")
+                        )
+                    };
+                    online.code = Some(code);
+                }
                 ServerMsg::GameStart { seat, team, players, board, setup } => {
                     if setup.is_some() {
                         online.setup = setup;

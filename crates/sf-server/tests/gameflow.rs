@@ -297,7 +297,10 @@ async fn three_player_free_for_all_starts_when_the_third_seat_joins() {
     let (mut b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     let (mut c, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     let (mut d, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-    for (ws, name) in [(&mut a, "ann"), (&mut b, "ben"), (&mut c, "cat"), (&mut d, "dan")] {
+    let (mut e, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    for (ws, name) in
+        [(&mut a, "ann"), (&mut b, "ben"), (&mut c, "cat"), (&mut d, "dan"), (&mut e, "eve")]
+    {
         send(
             ws,
             &ClientMsg::Hello {
@@ -317,33 +320,44 @@ async fn three_player_free_for_all_starts_when_the_third_seat_joins() {
     })
     .await;
     send(&mut b, &ClientMsg::JoinGame { code: code.clone(), squad: None }).await;
-    // Two of three: still waiting, no GameStart yet for anyone.
-    recv_until(&mut b, |m| match m {
-        ServerMsg::Error { message } if message.contains("2 of 3") => Some(()),
+    // Two of three: everyone in the lobby sees the roster.
+    let roster = recv_until(&mut a, |m| match m {
+        ServerMsg::Lobby { players, capacity: 3, .. } if players.len() == 2 => Some(players),
+        _ => None,
+    })
+    .await;
+    assert_eq!(roster, vec!["ann", "ben"]);
+    // Ben leaves before the start: his seat is freed, the lobby stays open.
+    b.close(None).await.unwrap();
+    recv_until(&mut a, |m| match m {
+        ServerMsg::Lobby { players, .. } if players == vec!["ann".to_string()] => Some(()),
         _ => None,
     })
     .await;
     send(&mut c, &ClientMsg::JoinGame { code: code.clone(), squad: None }).await;
+    recv_until(&mut c, |m| matches!(m, ServerMsg::Lobby { .. }).then_some(())).await;
+    send(&mut d, &ClientMsg::JoinGame { code: code.clone(), squad: None }).await;
     let mut teams = Vec::new();
-    for ws in [&mut a, &mut b, &mut c] {
+    for ws in [&mut a, &mut c, &mut d] {
         let (seat, team, players) = recv_until(ws, |m| match m {
             ServerMsg::GameStart { seat, team, players, .. } => Some((seat, team, players)),
             _ => None,
         })
         .await;
-        assert_eq!(players, vec!["ann", "ben", "cat"]);
+        assert_eq!(players, vec!["ann", "cat", "dan"]);
         assert_eq!(team, seat, "free-for-all: every seat its own side");
         teams.push(team);
     }
     assert_eq!(teams, vec![0, 1, 2]);
     // The game is full: the code is gone.
-    send(&mut d, &ClientMsg::JoinGame { code, squad: None }).await;
-    recv_until(&mut d, |m| match m {
+    send(&mut e, &ClientMsg::JoinGame { code, squad: None }).await;
+    recv_until(&mut e, |m| match m {
         ServerMsg::Error { message } if message.contains("no open game") => Some(()),
         _ => None,
     })
     .await;
-    // Seat 2 deploys on the East edge (facing west), not the North one.
+    // Seat 2 (dan) deploys on the East edge (facing west), not the North one.
+    let mut c = d;
     let ships = recv_until(&mut c, |m| match m {
         ServerMsg::Snapshot { phase: Phase::Placement, ships, teams, .. } => {
             assert_eq!(teams, vec![0, 1, 2]);
@@ -374,4 +388,49 @@ async fn three_player_free_for_all_starts_when_the_third_seat_joins() {
     })
     .await;
     assert!(placed.iter().any(|s| s.id == mine[0] && s.pose.is_some()));
+}
+
+/// A unique pilot may appear once per game, whoever fields it.
+#[tokio::test]
+async fn unique_pilots_are_refused_when_another_seat_fields_them() {
+    use sf_core::ship::Faction;
+    use sf_core::squad::{Squad, SquadShip};
+    let c = content();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    for (ws, name) in [(&mut a, "ann"), (&mut b, "ben")] {
+        send(
+            ws,
+            &ClientMsg::Hello {
+                proto_version: sf_proto::PROTOCOL_VERSION,
+                name: name.into(),
+                password: String::new(),
+            },
+        )
+        .await;
+        assert!(matches!(recv(ws).await, ServerMsg::Welcome { .. }));
+    }
+    let howl = c.pilots.pilots.iter().find(|p| p.name == "Howlrunner").unwrap().id;
+    let squad = Squad {
+        name: "aces".into(),
+        faction: Faction::Empire,
+        ships: vec![SquadShip { pilot: howl, upgrades: vec![], callsign: String::new() }],
+    };
+    send(&mut a, &ClientMsg::CreateGame { squad: Some(squad.clone()), setup: None }).await;
+    let code = recv_until(&mut a, |m| match m {
+        ServerMsg::GameCreated { code } => Some(code),
+        _ => None,
+    })
+    .await;
+    send(&mut b, &ClientMsg::JoinGame { code, squad: Some(squad) }).await;
+    let why = recv_until(&mut b, |m| match m {
+        ServerMsg::Error { message } => Some(message),
+        _ => None,
+    })
+    .await;
+    assert!(why.contains("Howlrunner"), "{why}");
 }

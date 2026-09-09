@@ -28,7 +28,7 @@ use sf_core::game::{CombatStep, GameState, Phase};
 use sf_core::pilot::PilotId;
 use sf_core::scenario::GameSetup;
 use sf_core::ship::{PlayerId, ShipClassId};
-use sf_core::squad::{Squad, SquadRules, validate_squad};
+use sf_core::squad::{Squad, SquadRules, unique_conflicts, validate_squad};
 use sf_proto::PROTOCOL_VERSION;
 use sf_proto::codec::{decode, encode};
 use sf_proto::messages::{ClientMsg, ServerMsg};
@@ -424,7 +424,9 @@ async fn session(
     setup: GameSetup,
 ) {
     let _ = &opts;
-    let mut players: Vec<(String, mpsc::Sender<ServerMsg>, Squad)> = Vec::new();
+    // One slot per seat; a seat freed by a drop before the start is
+    // taken by the next joiner (seats never shift under a client).
+    let mut players: Vec<Option<(String, mpsc::Sender<ServerMsg>, Squad)>> = Vec::new();
     let capacity = setup.players.max(2) as usize;
     let mut game: Option<GameState> = None;
 
@@ -434,7 +436,7 @@ async fn session(
     let mut game_over = false;
     macro_rules! send_to {
         ($seat:expr, $msg:expr) => {
-            if let Some((_, tx, _)) = players.get($seat as usize) {
+            if let Some(Some((_, tx, _))) = players.get($seat as usize) {
                 let _ = tx.send($msg).await;
             }
         };
@@ -542,11 +544,12 @@ async fn session(
     while let Some(cmd) = cmds.recv().await {
         match cmd {
             SessionCmd::Join { name, squad, resp } => {
-                if players.len() >= capacity {
+                let seated = players.iter().flatten().count();
+                if seated >= capacity || game.is_some() {
                     let _ = resp.send(Err("game is full".into()));
                     continue;
                 }
-                let seat = players.len() as u8;
+                let seat = players.iter().position(|p| p.is_none()).unwrap_or(players.len()) as u8;
                 let squad = squad.unwrap_or_else(|| {
                     let classes = if seat.is_multiple_of(2) { &FLEET_SOUTH } else { &FLEET_NORTH };
                     Squad::basic(&content, "basic", &basic_fleet(&content, classes))
@@ -560,27 +563,42 @@ async fn session(
                     let _ = resp.send(Err(format!("squad rejected: {}", msg.join("; "))));
                     continue;
                 }
+                // Unique cards: one copy per game, across every seat.
+                let others: Vec<&Squad> = players.iter().flatten().map(|p| &p.2).collect();
+                let clashes = unique_conflicts(&content, &others, &squad);
+                if !clashes.is_empty() {
+                    let _ = resp.send(Err(format!(
+                        "squad rejected: already in the game (unique): {}",
+                        clashes.join(", ")
+                    )));
+                    continue;
+                }
                 let (tx, rx) = mpsc::channel(64);
-                players.push((name, tx, squad));
-                let full = players.len() == capacity;
+                if (seat as usize) < players.len() {
+                    players[seat as usize] = Some((name, tx, squad));
+                } else {
+                    players.push(Some((name, tx, squad)));
+                }
+                let seated = players.iter().flatten().count();
+                let full = seated == capacity;
                 let _ = resp.send(Ok((seat, rx, full)));
+                let roster: Vec<String> = players.iter().flatten().map(|p| p.0.clone()).collect();
+                for s in 0..players.len() as u8 {
+                    send_to!(
+                        s,
+                        ServerMsg::Lobby {
+                            code: code.clone(),
+                            players: roster.clone(),
+                            capacity: capacity as u8,
+                        }
+                    );
+                }
                 if !full {
-                    for s in 0..players.len() as u8 {
-                        send_to!(
-                            s,
-                            ServerMsg::Error {
-                                message: format!(
-                                    "{} of {capacity} players in — waiting for the rest",
-                                    players.len()
-                                ),
-                            }
-                        );
-                    }
                     continue;
                 }
                 // One red die, drawn now — only used if squad totals tie.
                 let tie_roll = sf_core::dice::AttackFace::from_d8(rand::random::<u8>());
-                let squads: Vec<&Squad> = players.iter().map(|p| &p.2).collect();
+                let squads: Vec<&Squad> = players.iter().flatten().map(|p| &p.2).collect();
                 let mut gs = GameState::from_squads(
                     setup.board(),
                     &content,
@@ -590,7 +608,7 @@ async fn session(
                 )
                 .expect("validated squads");
                 gs.place_obstacles(&setup.obstacle_kinds(), rand::random::<u64>());
-                let names: Vec<String> = players.iter().map(|p| p.0.clone()).collect();
+                let names: Vec<String> = players.iter().flatten().map(|p| p.0.clone()).collect();
                 for s in 0..players.len() as u8 {
                     send_to!(
                         s,
@@ -776,7 +794,11 @@ async fn session(
                                 seat,
                                 ServerMsg::GameOver { winner: None, reason: "you resigned".into() }
                             );
-                            let who = players[seat as usize].0.clone();
+                            let who = players
+                                .get(seat as usize)
+                                .and_then(|p| p.as_ref())
+                                .map(|p| p.0.clone())
+                                .unwrap_or_default();
                             for s in (0..players.len() as u8).filter(|s| *s != seat) {
                                 send_to!(
                                     s,
@@ -791,18 +813,35 @@ async fn session(
             }
             SessionCmd::Disconnect { seat } => {
                 let Some(gs) = game.as_mut() else {
-                    // Before the start a lost player cancels the lobby.
-                    for s in (0..players.len() as u8).filter(|s| *s != seat) {
+                    // Before the start the seat is simply freed for the
+                    // next joiner; an empty lobby closes.
+                    if let Some(slot) = players.get_mut(seat as usize) {
+                        *slot = None;
+                    }
+                    if players.iter().all(|p| p.is_none()) {
+                        break;
+                    }
+                    let roster: Vec<String> =
+                        players.iter().flatten().map(|p| p.0.clone()).collect();
+                    for s in 0..players.len() as u8 {
                         send_to!(
                             s,
-                            ServerMsg::Error { message: "a player left; game cancelled".into() }
+                            ServerMsg::Lobby {
+                                code: code.clone(),
+                                players: roster.clone(),
+                                capacity: capacity as u8,
+                            }
                         );
                     }
-                    break;
+                    continue;
                 };
                 // A dropped player resigns; with more than two sides the
                 // others fight on.
-                let who = players.get(seat as usize).map(|p| p.0.clone()).unwrap_or_default();
+                let who = players
+                    .get(seat as usize)
+                    .and_then(|p| p.as_ref())
+                    .map(|p| p.0.clone())
+                    .unwrap_or_default();
                 match gs.resign(PlayerId(u32::from(seat))) {
                     Some(winner) => {
                         for s in (0..players.len() as u8).filter(|s| *s != seat) {
