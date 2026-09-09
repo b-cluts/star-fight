@@ -361,6 +361,7 @@ impl UpgradeEffect {
                 | RerollUpTo3ForFocusAnd2Stress
                 | ExposeAction
                 | AgilityPlus1Action
+                | ExtraAttackDieIfObstructed
         )
     }
 }

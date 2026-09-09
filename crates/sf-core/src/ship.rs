@@ -160,6 +160,9 @@ pub struct ShipState {
     /// A shield was lost this round ("Red Ace" triggers once per round).
     #[serde(default)]
     pub shield_lost_round: bool,
+    /// Ended its maneuver on an asteroid: cannot attack this round.
+    #[serde(default)]
+    pub on_asteroid: bool,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

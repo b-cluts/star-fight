@@ -138,6 +138,8 @@ pub enum ActionResult {
     Failed,
     /// Caught in a Conner Net: the Perform Action step is skipped.
     SkippedNetted,
+    /// Overlapped an asteroid while moving: no action this round.
+    SkippedObstacle,
 }
 
 /// Barrel-roll destination: one end of a straight-1 template against the

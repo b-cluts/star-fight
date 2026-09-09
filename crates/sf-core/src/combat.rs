@@ -63,6 +63,35 @@ fn point_seg_distance(p: Vec2, a: Vec2, b: Vec2) -> f64 {
     (d.x * d.x + d.y * d.y).sqrt()
 }
 
+fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    let t = if len2 == 0.0 { 0.0 } else { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) };
+    Vec2::new(a.x + ab.x * t, a.y + ab.y * t)
+}
+
+/// The pair of closest points between two base rectangles (the range
+/// ruler's end points). Any pair when they overlap.
+pub fn closest_points(a: &[Vec2; 4], b: &[Vec2; 4]) -> (Vec2, Vec2) {
+    let mut best = (f64::INFINITY, a[0], b[0]);
+    let mut consider = |p: Vec2, q: Vec2| {
+        let d = p - q;
+        let dist = (d.x * d.x + d.y * d.y).sqrt();
+        if dist < best.0 {
+            best = (dist, p, q);
+        }
+    };
+    for i in 0..4 {
+        for j in 0..4 {
+            let (a1, a2) = (a[i], a[(i + 1) % 4]);
+            let (b1, b2) = (b[j], b[(j + 1) % 4]);
+            consider(a[i], closest_on_segment(a[i], b1, b2));
+            consider(closest_on_segment(b[j], a1, a2), b[j]);
+        }
+    }
+    (best.1, best.2)
+}
+
 /// Closest distance between two base rectangles (0 if they overlap).
 /// This is the "any point to any point" measurement of the range ruler.
 pub fn base_distance(a: &[Vec2; 4], b: &[Vec2; 4]) -> f64 {

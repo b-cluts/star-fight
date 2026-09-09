@@ -23,6 +23,8 @@ pub enum WeaponState {
     NoTarget,
     /// Weapons Failure critical: nothing can fire.
     Offline,
+    /// Sitting on an asteroid: no attack this round.
+    Grounded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +58,7 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
         }
     }
     let offline = me.crits.iter().any(|c| matches!(c, CritEffect::WeaponsFailure { .. }));
+    let grounded = me.on_asteroid;
     let Some(a_pose) = me.pose else {
         return weapons
             .into_iter()
@@ -91,7 +94,9 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
     weapons
         .into_iter()
         .map(|(weapon, name, lo, hi, needs_arc, req)| {
-            let state = if offline {
+            let state = if grounded {
+                WeaponState::Grounded
+            } else if offline {
                 WeaponState::Offline
             } else {
                 let mut candidates: Vec<&(ShipId, u8, bool, f64)> = enemies
@@ -149,6 +154,7 @@ pub fn unavailable_reasons(
                 WeaponState::NeedsFocus { .. } => "needs a focus token".to_string(),
                 WeaponState::NoTarget => "no target in range or arc".to_string(),
                 WeaponState::Offline => "weapons failure".to_string(),
+                WeaponState::Grounded => "sitting on an asteroid".to_string(),
             };
             Some((w.name, why))
         })

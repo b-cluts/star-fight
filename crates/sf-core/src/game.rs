@@ -19,6 +19,7 @@ use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose, Vec2};
 use crate::maneuver::{self, Difficulty, Maneuver};
+use crate::obstacle::{self, Obstacle, ObstacleKind};
 use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
@@ -139,6 +140,8 @@ pub enum Rejection {
     TemplateNotAllowed,
     /// Nothing grants this ship a second action, or not that one.
     SecondActionNotAllowed,
+    /// The base would sit on an asteroid or debris token.
+    OverlapsObstacle,
 }
 
 impl std::fmt::Display for Rejection {
@@ -162,6 +165,7 @@ impl std::fmt::Display for Rejection {
             Rejection::NoSuchUpgrade => "that ship does not carry that card",
             Rejection::TemplateNotAllowed => "that template is not available to this pilot",
             Rejection::SecondActionNotAllowed => "this ship cannot take that second action",
+            Rejection::OverlapsObstacle => "the ship would sit on an obstacle",
         };
         f.write_str(s)
     }
@@ -201,6 +205,9 @@ pub struct MoveRecord {
     /// boost, Jake Farrell's reposition).
     #[serde(default)]
     pub second: Option<(PlannedAction, ActionResult)>,
+    /// Obstacles the base or template overlapped during the move.
+    #[serde(default)]
+    pub obstacles_hit: Vec<u32>,
 }
 
 /// One resolved attack in the Combat phase.
@@ -211,6 +218,9 @@ pub struct AttackRecord {
     pub range: u8,
     /// The secondary weapon card fired, or None for the primary weapon.
     pub weapon: Option<UpgradeId>,
+    /// The line of sight crossed an obstacle (+1 defense die).
+    #[serde(default)]
+    pub obstructed: bool,
     /// Final attack faces after rerolls/conversions.
     pub attack_faces: Vec<AttackFace>,
     /// Final defense faces after conversions.
@@ -355,6 +365,9 @@ pub struct ShipView {
     /// Active critical effects — public, like faceup cards.
     pub crits: Vec<CritEffect>,
     pub destroyed: bool,
+    /// Ended its move on an asteroid: no attack this round.
+    #[serde(default)]
+    pub on_asteroid: bool,
     pub plan: Option<u8>,
     /// Own ships only; None on opponent ships.
     pub planned_action: Option<PlannedAction>,
@@ -388,6 +401,9 @@ pub struct GameState {
     pub bombs: Vec<BombToken>,
     #[serde(default)]
     next_bomb_id: u32,
+    /// Asteroid and debris tokens (placed before setup, never move).
+    #[serde(default)]
+    pub obstacles: Vec<Obstacle>,
 }
 
 impl GameState {
@@ -453,6 +469,7 @@ impl GameState {
                     planned_action2: None,
                     card_actions: Vec::new(),
                     shield_lost_round: false,
+                    on_asteroid: false,
                     focus: 0,
                     evade: 0,
                     ion: 0,
@@ -475,6 +492,7 @@ impl GameState {
             combat: None,
             bombs: Vec::new(),
             next_bomb_id: 0,
+            obstacles: Vec::new(),
         };
         for i in 0..gs_probe.ships.len() {
             let (h, sh) = (
@@ -499,6 +517,7 @@ impl GameState {
             combat: None,
             bombs: Vec::new(),
             next_bomb_id: 0,
+            obstacles: Vec::new(),
         })
     }
 
@@ -1504,6 +1523,9 @@ impl GameState {
                 rules::PlacementError::OverlapsShip(_) => Rejection::OverlapsShip,
             },
         )?;
+        if self.on_obstacle(&rules::footprint_corners(pose, fp)).is_some() {
+            return Err(Rejection::OverlapsObstacle);
+        }
         self.ships[i].pose = Some(pose);
         if self.ships.iter().all(|s| s.pose.is_some()) {
             self.phase = Phase::Planning;
@@ -1744,10 +1766,12 @@ impl GameState {
         events: &mut Vec<String>,
     ) -> (ActionResult, Vec<BombToken>) {
         let pose = self.ships[i].pose.expect("acting ships are on the board");
+        let tokens: Vec<Vec<Vec2>> = self.obstacles.iter().map(|o| o.polygon()).collect();
         let clear = |board: &Board, candidate: Pose| {
             let corners = rules::footprint_corners(candidate, fp);
             rules::within_board(board, &corners)
                 && obstacles.iter().all(|oc| !rules::obbs_overlap(&corners, oc))
+                && tokens.iter().all(|t| !obstacle::convex_overlap(&corners, t))
         };
         let result = match planned {
             PlannedAction::Pass => ActionResult::Performed,
@@ -2458,6 +2482,73 @@ impl GameState {
                     ship.destroyed = true;
                 }
             }
+            // Obstacles (p.20): a base or template crossing an asteroid
+            // costs the action and rolls a die (hit: 1 damage, crit: a
+            // faceup card); ending on one forbids attacking this round.
+            // Debris: a stress token, and only a crit hurts.
+            let mut obstacles_hit = Vec::new();
+            let mut on_rock = false;
+            if !self.ships[i].destroyed {
+                let crossed: Vec<Obstacle> = self
+                    .obstacles
+                    .iter()
+                    .filter(|o| {
+                        let poly = o.polygon();
+                        used_path[..=stop].iter().any(|p| {
+                            obstacle::convex_overlap(&rules::footprint_corners(*p, fp), &poly)
+                        })
+                    })
+                    .copied()
+                    .collect();
+                for o in crossed {
+                    obstacles_hit.push(o.id);
+                    let who = self.label(content, i);
+                    let die = AttackFace::from_d8(roll());
+                    match o.kind {
+                        ObstacleKind::Asteroid => {
+                            on_rock = true;
+                            match die {
+                                AttackFace::Hit => {
+                                    self.damage_point(i);
+                                    events.push(format!(
+                                        "{who}: hits an asteroid — 1 damage, no action"
+                                    ));
+                                }
+                                AttackFace::Crit => {
+                                    events.push(format!(
+                                        "{who}: hits an asteroid — faceup damage card, no action"
+                                    ));
+                                    self.faceup_card(content, i, roll, &mut events);
+                                }
+                                _ => events.push(format!(
+                                    "{who}: hits an asteroid — no damage, no action"
+                                )),
+                            }
+                            if obstacle::convex_overlap(
+                                &rules::footprint_corners(end, fp),
+                                &o.polygon(),
+                            ) {
+                                self.ships[i].on_asteroid = true;
+                                events.push(format!(
+                                    "{who}: stuck on the asteroid — cannot attack this round"
+                                ));
+                            }
+                        }
+                        ObstacleKind::Debris => {
+                            events.push(format!("{who}: flies through debris — stressed"));
+                            self.gain_stress(content, i, &mut events);
+                            if die == AttackFace::Crit {
+                                events.push(format!("{who}: debris strike — faceup damage card"));
+                                self.faceup_card(content, i, roll, &mut events);
+                            }
+                        }
+                    }
+                    if self.ships[i].destroyed {
+                        break;
+                    }
+                }
+            }
+
             // Stress by the EFFECTIVE color (see maneuver_difficulty).
             if let Some(card) = rush {
                 let e = self.discard_card(content, i, card, "red maneuver flown as white");
@@ -2561,6 +2652,8 @@ impl GameState {
                 ActionResult::SkippedStressed
             } else if bumped {
                 ActionResult::SkippedBumped
+            } else if on_rock {
+                ActionResult::SkippedObstacle
             } else if netted {
                 ActionResult::SkippedNetted
             } else if planned != PlannedAction::Pass
@@ -2619,6 +2712,7 @@ impl GameState {
                 mines_hit,
                 pre,
                 second,
+                obstacles_hit,
             });
         }
 
@@ -2707,6 +2801,7 @@ impl GameState {
             ship.focus = 0;
             ship.evade = 0;
             ship.shield_lost_round = false;
+            ship.on_asteroid = false;
             ship.card_actions.clear();
             ship.planned_action2 = None;
             if let Some(l) = ship.lock
@@ -2778,7 +2873,12 @@ impl GameState {
     /// need it — whose token requirement is met (a lock on that target,
     /// or a focus token). Touching ships cannot be targeted.
     fn attack_options(&self, content: &Content, a_idx: usize) -> Vec<AttackOption> {
-        if self.ships[a_idx].crits.iter().any(|c| matches!(c, CritEffect::WeaponsFailure { .. })) {
+        if self.ships[a_idx].on_asteroid
+            || self.ships[a_idx]
+                .crits
+                .iter()
+                .any(|c| matches!(c, CritEffect::WeaponsFailure { .. }))
+        {
             return Vec::new();
         }
         let Some(a_pose) = self.ships[a_idx].pose else { return Vec::new() };
@@ -2850,6 +2950,25 @@ impl GameState {
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
+        // Obstruction: the range ruler between the closest points crosses
+        // an obstacle → the defender rolls one extra die (Trick Shot: the
+        // attacker too).
+        let obstructed = {
+            let d_pose = self.ships[d_idx].pose.expect("targets are on the board");
+            let a_fp = self.class_of(content, &self.ships[a_idx]).footprint;
+            let d_fp = self.class_of(content, &self.ships[d_idx]).footprint;
+            let (p, q) = combat::closest_points(
+                &rules::footprint_corners(a_pose, a_fp),
+                &rules::footprint_corners(d_pose, d_fp),
+            );
+            self.obstacles.iter().any(|o| obstacle::segment_hits_polygon(p, q, &o.polygon()))
+        };
+        if obstructed {
+            events.push(format!(
+                "{}: attack obstructed — defender +1 die",
+                self.label(content, a_idx)
+            ));
+        }
 
         // Secondary weapon: its own dice, no range bonuses either way,
         // and the required token is spent up front when the card says so.
@@ -2906,6 +3025,12 @@ impl GameState {
                 self.label(content, a_idx)
             ));
         }
+        let trick_shot = obstructed
+            && self.has_effect(content, a_idx, UpgradeEffect::ExtraAttackDieIfObstructed);
+        if trick_shot {
+            events.push(format!("{}: Trick Shot — +1 attack die", self.label(content, a_idx)));
+        }
+        let weapon_extra = weapon_extra + u8::from(trick_shot);
 
         // Roll attack dice (+1 at range 1). Weapon Malfunction drops one
         // die per copy; a Blinded Pilot fires 0 dice once, then recovers.
@@ -3091,7 +3216,7 @@ impl GameState {
             events
                 .push(format!("{}: Outmaneuver — defender agility -1", self.label(content, a_idx)));
         }
-        let n_def = d_agility + u8::from(range == 3 && secondary.is_none());
+        let n_def = d_agility + u8::from(range == 3 && secondary.is_none()) + u8::from(obstructed);
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
 
@@ -3344,6 +3469,7 @@ impl GameState {
             defender,
             range,
             weapon,
+            obstructed,
             attack_faces,
             defense_faces,
             lock_spent,
@@ -3366,6 +3492,17 @@ impl GameState {
         self.phase = Phase::GameOver;
         self.winner = Some(other);
         other
+    }
+
+    /// Scatter obstacle tokens on the board before setup (core rules
+    /// p.20 spacing; drawn at random instead of placed by the players).
+    pub fn place_obstacles(&mut self, kinds: &[ObstacleKind], seed: u64) {
+        self.obstacles = obstacle::scatter(&self.board, kinds, seed);
+    }
+
+    /// Does a base at `pose` overlap any obstacle token?
+    fn on_obstacle(&self, corners: &[Vec2; 4]) -> Option<&Obstacle> {
+        self.obstacles.iter().find(|o| obstacle::convex_overlap(corners, &o.polygon()))
     }
 
     /// What `viewer` is allowed to see right now.
@@ -3403,6 +3540,7 @@ impl GameState {
                     lock: s.lock,
                     crits: s.crits.clone(),
                     destroyed: s.destroyed,
+                    on_asteroid: s.on_asteroid,
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
                     bomb: if own { s.bomb } else { None },
@@ -6024,5 +6162,90 @@ mod tests {
             gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(108))),
             Err(Rejection::NoSuchUpgrade)
         );
+    }
+
+    // ---------------- Obstacles ----------------
+
+    fn rock(id: u32, kind: ObstacleKind, x: f64, y: f64) -> Obstacle {
+        Obstacle { id, kind, center: Vec2::new(x, y), heading: 0.0, shape: 2 }
+    }
+
+    #[test]
+    fn crossing_an_asteroid_costs_the_action_and_rolls_for_damage() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(rock(0, ObstacleKind::Asteroid, 10.0, 5.0));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        // The X-Wing (PS2) moves first without dice; the TIE's obstacle
+        // die is the first roll: a hit.
+        let rec = resolve(&c, &mut gs, vec![0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.obstacles_hit, vec![0]);
+        assert_eq!(mv.action_result, ActionResult::SkippedObstacle);
+        assert_eq!(gs.ships[0].hull, 2);
+        assert!(rec.attacks.iter().any(|a| a.attacker == ShipId(0)), "flew past: may still attack");
+    }
+
+    #[test]
+    fn ending_on_an_asteroid_forbids_attacking_this_round_only() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(rock(0, ObstacleKind::Asteroid, 10.0, 7.0));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(0)), "{:?}", rec.attacks);
+        assert!(rec.events.iter().any(|e| e.contains("stuck on the asteroid")), "{:?}", rec.events);
+        assert!(!gs.ships[0].on_asteroid, "cleared in the End phase");
+    }
+
+    #[test]
+    fn debris_stresses_and_only_a_crit_hurts() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(rock(0, ObstacleKind::Debris, 10.0, 5.0));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        // Crit on the debris die, then crit::draw(9) = Stunned Pilot.
+        let rec = resolve(&c, &mut gs, vec![3, 9, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::SkippedStressed);
+        assert_eq!(gs.ships[0].stress, 1);
+        assert_eq!(gs.ships[0].hull, 2);
+        assert!(gs.ships[0].crits.contains(&CritEffect::StunnedPilot));
+    }
+
+    #[test]
+    fn obstructed_attacks_give_the_defender_a_die_and_trick_shot_the_attacker() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(133));
+        // Between the two after they move (TIE nose at y=7.5, X-Wing at 13.5).
+        gs.obstacles.push(rock(0, ObstacleKind::Asteroid, 10.0, 10.5));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let xwing = rebel_shot(&rec);
+        assert!(xwing.obstructed);
+        assert_eq!(xwing.attack_faces.len(), 4, "3 + Trick Shot");
+        assert_eq!(xwing.defense_faces.len(), 5, "3 + Range 3 + obstruction");
+        let tie = imperial_shot(&rec);
+        assert_eq!(tie.attack_faces.len(), 2);
+        assert_eq!(tie.defense_faces.len(), 4, "2 + Range 3 + obstruction");
+    }
+
+    #[test]
+    fn ships_neither_deploy_nor_roll_onto_obstacles() {
+        let c = content();
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(rock(0, ObstacleKind::Asteroid, 12.0, 2.0));
+        gs.phase = Phase::Placement;
+        assert_eq!(
+            gs.place_ship(&c, P0, ShipId(0), Pose::new(12.0, 2.5, FRAC_PI_2)),
+            Err(Rejection::OverlapsObstacle)
+        );
+        gs.phase = Phase::Planning;
+        // A barrel roll to the right (toward +x from a north-facing ship
+        // is "right" = -x… so roll left, onto the rock at x=12) fails.
+        gs.obstacles[0] = rock(0, ObstacleKind::Asteroid, 8.0, 7.0);
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(Side::Left)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Failed);
+        assert!((gs.ships[0].pose.unwrap().anchor.x - 10.0).abs() < 1e-9);
     }
 }
