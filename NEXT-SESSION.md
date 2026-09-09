@@ -182,11 +182,10 @@ and Server `ws://127.0.0.1:7777`.
       `detonations`. Client: tokens drawn as squares with a per-kind
       symbol, blast = expanding ring to the Range-1 reach with fireball
       / ion-spark / fragment flavour and a flash on each ship caught;
-      HUD narrates "<kind> detonates — Red-2: 1 damage". TO VERIFY
-      against the user's token reference cards: the Thermal Detonator
-      effect (encoded from memory as 1 damage + 1 stress) and whether
-      Range 1 should be measured from the token's edge (as now) or its
-      center. Not modelled: bombs vs obstacles, Bomblet Generator /
+      HUD narrates "<kind> detonates — Red-2: 1 damage". Thermal
+      Detonator text CONFIRMED by the user 2026-09-09 (1 damage and 1
+      stress, then discard). Range 1 is measured from the token's edge
+      (its square footprint). Not modelled: bombs vs obstacles, Bomblet Generator /
       Extra Munitions / Cad Bane / Sabine crew riders, Cluster Mine
       placement when the three tokens would overlap ships.
    c. CUT v0.3.0 once the user has seen bombs + weapon HUD on screen
