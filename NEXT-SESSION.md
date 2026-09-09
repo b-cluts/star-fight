@@ -229,8 +229,11 @@ and Server `ws://127.0.0.1:7777`.
       boosts, [/] far rolls, K cycles card actions; HUD shows "2nd:" and
       the move narration says "then …". Six tests. NEXT: cut v0.4.0
       after the user has tried the keys (proto 3 means new zips for all
-      players); then reasons for unavailable weapons in the Declare
-      Target prompt; then obstacles (needs art or drawn shapes) which
+      players); ~~reasons for unavailable weapons in the Declare Target
+      prompt~~ DONE 2026-09-09 (`weapons::unavailable_reasons`,
+      `PendingAttack.unavailable`, `ChooseTarget.unavailable`, shown as
+      "not available now: Proton Torpedoes (needs a target lock on
+      Red-2)" under the prompt); then obstacles (needs art or drawn shapes) which
       unlock Trick Shot / Seismic Torpedo; Lorrir's bank-template roll,
       Turr Phennir (reposition after attack), Expert Handling, Squad
       Leader / Lando (friendly free actions) remain.

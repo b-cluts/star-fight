@@ -128,6 +128,33 @@ pub fn weapon_status(content: &Content, ships: &[ShipView], me: &ShipView) -> Ve
         .collect()
 }
 
+/// The weapons that cannot fire right now, as (weapon name, reason)
+/// pairs for the Declare Target prompt.
+pub fn unavailable_reasons(
+    content: &Content,
+    ships: &[ShipView],
+    me: &ShipView,
+) -> Vec<(String, String)> {
+    let callsign = |id: ShipId| {
+        ships.iter().find(|v| v.id == id).map(|v| v.callsign.clone()).unwrap_or_default()
+    };
+    weapon_status(content, ships, me)
+        .into_iter()
+        .filter_map(|w| {
+            let why = match w.state {
+                WeaponState::Ready { .. } => return None,
+                WeaponState::NeedsLock { target } => {
+                    format!("needs a target lock on {}", callsign(target))
+                }
+                WeaponState::NeedsFocus { .. } => "needs a focus token".to_string(),
+                WeaponState::NoTarget => "no target in range or arc".to_string(),
+                WeaponState::Offline => "weapons failure".to_string(),
+            };
+            Some((w.name, why))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +195,27 @@ mod tests {
         assert_eq!(st[0].state, WeaponState::Ready { target: ShipId(0), range: 2 });
         assert_eq!(st[1].name, "Proton Torpedoes");
         assert_eq!(st[1].state, WeaponState::NeedsLock { target: ShipId(0) });
+    }
+
+    #[test]
+    fn unavailable_reasons_name_the_weapon_and_the_missing_piece() {
+        let c = content();
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let a = Squad::basic(&c, "i", &[pilot("academypilot")]);
+        let b = Squad::basic(&c, "r", &[pilot("bluesquadronnovice")]);
+        let board = Board { width: 20.0, height: 20.0, deploy_depth: 3.0 };
+        let mut gs =
+            GameState::from_squads(board, &c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+        gs.ships[1].upgrades.push(UpgradeId(1));
+        gs.place_ship(&c, PlayerId(0), ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
+        gs.ships[1].pose = Some(Pose::new(10.0, 6.0, -FRAC_PI_2));
+        let ships = gs.snapshot_for(&c, PlayerId(1));
+        let why = unavailable_reasons(&c, &ships, &ships[1]);
+        assert_eq!(why.len(), 1, "{why:?}");
+        assert_eq!(why[0].0, "Proton Torpedoes");
+        assert!(why[0].1.contains("target lock on"), "{}", why[0].1);
+        assert!(why[0].1.contains(&ships[0].callsign), "{}", why[0].1);
     }
 
     #[test]

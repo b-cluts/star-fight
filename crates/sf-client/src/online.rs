@@ -67,6 +67,8 @@ pub enum AnimItem {
     Prompt {
         attacker: u32,
         options: Vec<Choice>,
+        /// Weapons that cannot fire this time, with the reason.
+        unavailable: Vec<(String, String)>,
     },
     /// The opponent is declaring a target for their `attacker`.
     Waiting {
@@ -512,7 +514,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         .get_or_insert_with(|| Anim::new(Vec::new()))
                         .push(AnimItem::Attack { rec: attack, line });
                 }
-                ServerMsg::ChooseTarget { attacker, options } => {
+                ServerMsg::ChooseTarget { attacker, options, unavailable } => {
                     let options = options
                         .into_iter()
                         .map(|o| Choice {
@@ -524,7 +526,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online
                         .anim
                         .get_or_insert_with(|| Anim::new(Vec::new()))
-                        .push(AnimItem::Prompt { attacker: attacker.0, options });
+                        .push(AnimItem::Prompt { attacker: attacker.0, options, unavailable });
                 }
                 ServerMsg::OpponentChoosing { attacker } => {
                     online
@@ -849,7 +851,7 @@ fn animate(
                 }
                 return;
             }
-            AnimItem::Prompt { attacker, options } => {
+            AnimItem::Prompt { attacker, options, .. } => {
                 // Holds here until target_input answers and clears `current`.
                 if prompt.is_none() {
                     *prompt = Some((attacker, options));
@@ -1785,7 +1787,7 @@ fn draw(
             Some(AnimItem::Detonation(d)) => {
                 draw_detonation(&mut gizmos, &game, snap, a, d);
             }
-            Some(AnimItem::Prompt { attacker, options }) => {
+            Some(AnimItem::Prompt { attacker, options, .. }) => {
                 if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
                     render::draw_firing_arc(&mut gizmos, &game, ap, fp, 0.6);
                     bullseye.0 = Some(ap);
@@ -2056,7 +2058,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             }
             Some(AnimItem::Attack { line, .. }) => lines.push(line.clone()),
             Some(AnimItem::Detonation(d)) => lines.push(detonation_line(snap, d)),
-            Some(AnimItem::Prompt { attacker, options }) => {
+            Some(AnimItem::Prompt { attacker, options, unavailable }) => {
                 let opts: Vec<String> = options
                     .iter()
                     .enumerate()
@@ -2075,6 +2077,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     name(*attacker),
                     opts.join("   ")
                 ));
+                if !unavailable.is_empty() {
+                    let why: Vec<String> =
+                        unavailable.iter().map(|(w, r)| format!("{w} ({r})")).collect();
+                    lines.push(format!("   not available now: {}", why.join(", ")));
+                }
             }
             _ => {}
         }

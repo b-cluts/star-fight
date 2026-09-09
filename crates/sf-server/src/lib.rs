@@ -471,7 +471,14 @@ async fn session(
                                 range: o.range,
                             })
                             .collect();
-                        send_to!(owner, ServerMsg::ChooseTarget { attacker: p.attacker, options });
+                        send_to!(
+                            owner,
+                            ServerMsg::ChooseTarget {
+                                attacker: p.attacker,
+                                options,
+                                unavailable: p.unavailable.clone(),
+                            }
+                        );
                         send_to!(1 - owner, ServerMsg::OpponentChoosing { attacker: p.attacker });
                         break;
                     }

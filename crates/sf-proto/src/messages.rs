@@ -134,6 +134,9 @@ pub enum ServerMsg {
     ChooseTarget {
         attacker: ShipId,
         options: Vec<AttackChoice>,
+        /// Equipped weapons that cannot fire, as (name, reason).
+        #[serde(default)]
+        unavailable: Vec<(String, String)>,
     },
     /// The opponent is declaring a target for one of their ships.
     OpponentChoosing {

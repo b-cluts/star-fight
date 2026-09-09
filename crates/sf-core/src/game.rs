@@ -284,6 +284,10 @@ pub struct PendingAttack {
     pub attacker: ShipId,
     pub owner: PlayerId,
     pub options: Vec<AttackOption>,
+    /// Equipped weapons that cannot fire, as (name, reason) — shown
+    /// greyed out in the prompt.
+    #[serde(default)]
+    pub unavailable: Vec<(String, String)>,
 }
 
 /// Step-by-step Combat phase bookkeeping (lives in `GameState.combat`).
@@ -2222,7 +2226,13 @@ impl GameState {
                     return Ok(CombatStep::Attack(self.fire(content, a_idx, shot, roll)));
                 }
                 _ => {
-                    let p = PendingAttack { attacker, owner, options };
+                    let views = self.snapshot_for(content, owner);
+                    let unavailable = views
+                        .iter()
+                        .find(|v| v.id == attacker)
+                        .map(|me| crate::weapons::unavailable_reasons(content, &views, me))
+                        .unwrap_or_default();
+                    let p = PendingAttack { attacker, owner, options, unavailable };
                     self.combat.as_mut().expect("in combat").pending = Some(p.clone());
                     return Ok(CombatStep::NeedTarget(p));
                 }
