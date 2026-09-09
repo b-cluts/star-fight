@@ -632,7 +632,9 @@ pins.txt + last-used menu values), starfield.rs.
   preview, the Declare Target prompt and the Effects Demo; the arc's own
   range bands and edge lines are drawn per segment and go ~4x fainter
   inside a wedge (`render::draw_firing_arc_with`; the plain
-  `draw_firing_arc` is the no-obstacle wrapper the sandbox uses); the exact rule (range ruler
+  `draw_firing_arc` is the no-obstacle wrapper the sandbox uses); the
+  user saw the obstacle graphics, the black hole and the dimmed arc in
+  the Effects Demo on 2026-09-09: "looks good"; the exact rule (range ruler
   between the closest points) drives `AttackOption.obstructed` →
   `AttackChoice.obstructed` → "(obstructed)" in the prompt options and
   ", obstructed" in the HUD weapons line (`WeaponState::Ready` now
