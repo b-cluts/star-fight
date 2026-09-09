@@ -40,9 +40,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                toggle_mode,
-                placement_input,
-                flight_input,
+                toggle_mode.run_if(crate::glossary::closed),
+                placement_input.run_if(crate::glossary::closed),
+                flight_input.run_if(crate::glossary::closed),
                 sync_ship_transforms,
                 draw_overlays,
                 update_hud,

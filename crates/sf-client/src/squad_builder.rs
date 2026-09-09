@@ -296,7 +296,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, restore_current)
         .add_systems(OnEnter(Screen::Squad), enter)
         .add_systems(OnExit(Screen::Squad), exit)
-        .add_systems(Update, (typing, input, show).chain().run_if(in_state(Screen::Squad)));
+        .add_systems(
+            Update,
+            (typing.run_if(crate::glossary::closed), input.run_if(crate::glossary::closed), show)
+                .chain()
+                .run_if(in_state(Screen::Squad)),
+        );
 }
 
 fn enter(mut commands: Commands, mut b: ResMut<Builder>) {

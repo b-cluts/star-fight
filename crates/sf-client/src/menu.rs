@@ -85,7 +85,16 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(MenuForm::load(std::env::args().nth(1)))
         .add_systems(OnEnter(Screen::Menu), spawn_menu)
         .add_systems(OnExit(Screen::Menu), despawn_menu)
-        .add_systems(Update, (typing, buttons, refresh).chain().run_if(in_state(Screen::Menu)));
+        .add_systems(
+            Update,
+            (
+                typing.run_if(crate::glossary::closed),
+                buttons.run_if(crate::glossary::closed),
+                refresh,
+            )
+                .chain()
+                .run_if(in_state(Screen::Menu)),
+        );
 }
 
 const IDLE: Color = Color::srgba(0.12, 0.14, 0.22, 0.92);

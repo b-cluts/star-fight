@@ -5,6 +5,7 @@
 // held to zero clippy warnings (warnings are treated as errors).
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
+mod glossary;
 mod menu;
 mod net;
 mod online;
@@ -94,6 +95,7 @@ fn main() {
             ),
         )
         .add_plugins((menu::plugin, sandbox::plugin, online::plugin, squad_builder::plugin))
+        .add_plugins(glossary::plugin)
         .run();
 }
 
