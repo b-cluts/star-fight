@@ -32,6 +32,8 @@
          text: "Shift sideways by one straight-1 template plus your base width, keeping your heading (keys 4 / 5 for left / right). Fails if it would overlap a ship or leave the board."),
         (category: Actions, name: "Boost (action)",
          text: "Fly a straight-1 or bank-1 template forward without it counting as a maneuver (keys 7 / 8 / 9 for straight / bank left / bank right). Fails if it would overlap a ship or leave the board."),
+        (category: Actions, name: "Seismic Torpedo (card action)",
+         text: "Key K until the torpedo is offered, then click an obstacle. After your ship moves, the obstacle must be at Range 1-2 inside your primary firing arc: the card is discarded, every ship at Range 1 of the obstacle (yours included) rolls one attack die and suffers any damage or critical rolled, and the obstacle is removed from the board. A black hole can be blasted too."),
         (category: Actions, name: "Drop mine (card action)",
          text: "Discard a mine card (Proximity Mines, Cluster Mines, Conner Net) to place its token(s) behind your ship (key M cycles the mine to drop). Bombs that drop on dial reveal are chosen with key B instead and do not use the action."),
 

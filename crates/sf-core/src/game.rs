@@ -142,6 +142,8 @@ pub enum Rejection {
     SecondActionNotAllowed,
     /// The base would sit on an asteroid or debris token.
     OverlapsObstacle,
+    /// No obstacle with that id is on the board.
+    NoSuchObstacle,
 }
 
 impl std::fmt::Display for Rejection {
@@ -166,6 +168,7 @@ impl std::fmt::Display for Rejection {
             Rejection::TemplateNotAllowed => "that template is not available to this pilot",
             Rejection::SecondActionNotAllowed => "this ship cannot take that second action",
             Rejection::OverlapsObstacle => "the ship would sit on an obstacle",
+            Rejection::NoSuchObstacle => "there is no such obstacle on the board",
         };
         f.write_str(s)
     }
@@ -208,6 +211,18 @@ pub struct MoveRecord {
     /// Obstacles the base or template overlapped during the move.
     #[serde(default)]
     pub obstacles_hit: Vec<u32>,
+    /// A Seismic Torpedo fired as the action: the obstacle it removed and
+    /// the blast on every ship at Range 1 of it.
+    #[serde(default)]
+    pub seismic: Option<SeismicBlast>,
+}
+
+/// A Seismic Torpedo blast: the obstacle (removed afterwards) and the
+/// detonation resolved on the ships around it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeismicBlast {
+    pub obstacle: u32,
+    pub detonation: Detonation,
 }
 
 /// One resolved attack in the Combat phase.
@@ -1634,6 +1649,15 @@ impl GameState {
             PlannedAction::CardAction(card) if !extras.card_actions.contains(&card) => {
                 Err(Rejection::NoSuchUpgrade)
             }
+            PlannedAction::CardActionAt(card, obstacle) => {
+                if !extras.card_actions.contains(&card) {
+                    Err(Rejection::NoSuchUpgrade)
+                } else if !self.obstacles.iter().any(|o| o.id == obstacle) {
+                    Err(Rejection::NoSuchObstacle)
+                } else {
+                    Ok(())
+                }
+            }
             PlannedAction::Boost(action::BoostDir::TurnLeft | action::BoostDir::TurnRight)
                 if !extras.turn_boost =>
             {
@@ -1746,6 +1770,7 @@ impl GameState {
                             | UpgradeEffect::RerollUpTo3ForFocusAnd2Stress
                             | UpgradeEffect::ExposeAction
                             | UpgradeEffect::AgilityPlus1Action
+                            | UpgradeEffect::SeismicTorpedoAction
                     )
                 )
             })
@@ -1871,8 +1896,77 @@ impl GameState {
                 }
                 ActionResult::Performed
             }
+            // Resolved by `fire_seismic_torpedo` from the main action step
+            // (it needs dice); as a second action it simply fails.
+            PlannedAction::CardActionAt(..) => ActionResult::Failed,
         };
         (result, Vec::new())
+    }
+
+    /// Seismic Torpedo: discard the card to blast obstacle `obstacle`,
+    /// which must be at Range 1-2 and inside the primary firing arc after
+    /// moving. Each ship at Range 1 of it (this one included) rolls one
+    /// attack die and suffers the damage; then the obstacle is removed.
+    fn fire_seismic_torpedo(
+        &mut self,
+        content: &Content,
+        i: usize,
+        card: UpgradeId,
+        obstacle: u32,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) -> (ActionResult, Option<SeismicBlast>) {
+        let label = self.label(content, i);
+        if !self.action_extras(content, &self.ships[i]).card_actions.contains(&card) {
+            return (ActionResult::Failed, None);
+        }
+        let Some(target) = self.obstacles.iter().find(|o| o.id == obstacle).cloned() else {
+            events.push(format!("{label}: Seismic Torpedo FAILED — the obstacle is gone"));
+            return (ActionResult::Failed, None);
+        };
+        let pose = self.ships[i].pose.expect("acting ships are on the board");
+        let fp = self.class_of(content, &self.ships[i]).footprint;
+        let poly = target.polygon();
+        let base = rules::footprint_corners(pose, fp);
+        let in_range = obstacle::polygon_distance(&base, &poly) <= 2.0 * combat::RANGE_BAND_UNITS;
+        let in_arc = poly
+            .iter()
+            .chain(std::iter::once(&target.center))
+            .any(|p| combat::in_front_arc(pose, fp, *p));
+        if !in_range || !in_arc {
+            events.push(format!(
+                "{label}: Seismic Torpedo FAILED — the {} is not at Range 1-2 inside the firing arc",
+                target.kind.name()
+            ));
+            return (ActionResult::Failed, None);
+        }
+        let why = format!("fired at the {}", target.kind.name());
+        let line = self.discard_card(content, i, card, &why);
+        events.push(line);
+        let victims: Vec<usize> = (0..self.ships.len())
+            .filter(|&v| {
+                let s = &self.ships[v];
+                !s.destroyed
+                    && s.pose.is_some_and(|p| {
+                        let corners =
+                            rules::footprint_corners(p, self.class_of(content, s).footprint);
+                        obstacle::polygon_distance(&corners, &poly) <= combat::RANGE_BAND_UNITS
+                    })
+            })
+            .collect();
+        // The blast is recorded as a detonation centred on the obstacle;
+        // the token id doubles as the obstacle id for the client.
+        let token = BombToken {
+            id: obstacle,
+            kind: BombKind::SeismicTorpedo,
+            card,
+            pose: Pose { anchor: target.center + Vec2::new(0.5, 0.0), heading: 0.0 },
+            owner: self.ships[i].owner,
+        };
+        let detonation = self.detonate(content, token, &victims, roll, events);
+        self.obstacles.retain(|o| o.id != obstacle);
+        events.push(format!("The {} breaks up and is removed", target.kind.name()));
+        (ActionResult::Performed, Some(SeismicBlast { obstacle, detonation }))
     }
 
     /// May ship `i` perform a free action right now (not stressed, no
@@ -2013,6 +2107,7 @@ impl GameState {
                 }
                 BombKind::ProximityMine => dice = 3,
                 BombKind::ClusterMine => dice = 2,
+                BombKind::SeismicTorpedo => dice = 1,
                 BombKind::ConnerNet => {
                     self.damage_point(i);
                     self.ships[i].ion += 2;
@@ -2668,6 +2763,7 @@ impl GameState {
             // bumping, destruction, or damaged sensors all forfeit it.
             let planned = self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
             let mut dropped_after = Vec::new();
+            let mut seismic = None;
             let action_result = if destroyed {
                 ActionResult::Failed
             } else if self.ships[i].stress > 0
@@ -2685,8 +2781,14 @@ impl GameState {
             {
                 ActionResult::SkippedDamaged
             } else {
-                let (r, tokens) =
-                    self.perform_action(content, i, planned, fp, &obstacles, &mut events);
+                let (r, tokens) = if let PlannedAction::CardActionAt(card, ob) = planned {
+                    let (r, blast) =
+                        self.fire_seismic_torpedo(content, i, card, ob, roll, &mut events);
+                    seismic = blast;
+                    (r, Vec::new())
+                } else {
+                    self.perform_action(content, i, planned, fp, &obstacles, &mut events)
+                };
                 dropped_after = tokens;
                 // Second action: Darth Vader (always), Push the Limit
                 // (after a performed action, then stress), Jake Farrell
@@ -2737,6 +2839,7 @@ impl GameState {
                 pre,
                 second,
                 obstacles_hit,
+                seismic,
             });
         }
 
@@ -6366,6 +6469,70 @@ mod tests {
         let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
         assert_eq!(mv.action_result, ActionResult::Failed);
         assert!((gs.ships[0].pose.unwrap().anchor.x - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn seismic_torpedo_blasts_ships_around_an_obstacle_and_removes_it() {
+        let c = content();
+        let torpedo = UpgradeId(7);
+        let mut gs = skirmish(
+            &c,
+            &[("gammasquadronpilot", Pose::new(10.0, 3.0, FRAC_PI_2), 1)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].upgrades.push(torpedo);
+        // Stage the X-Wing mid-board by hand (outside its deployment zone).
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.0, -FRAC_PI_2));
+        // Rock between them: ~2 units ahead of the bomber's base after its
+        // straight 1, ~1 unit from the X-Wing's after its own.
+        gs.obstacles.push(rock(3, ObstacleKind::Asteroid, 10.0, 6.5));
+        assert_eq!(
+            gs.plan_action(&c, P0, ShipId(0), PlannedAction::CardActionAt(torpedo, 9)),
+            Err(Rejection::NoSuchObstacle)
+        );
+        assert_eq!(
+            gs.plan_action(&c, P0, ShipId(0), PlannedAction::CardActionAt(UpgradeId(181), 3)),
+            Err(Rejection::NoSuchUpgrade)
+        );
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::CardActionAt(torpedo, 3)).unwrap();
+        // The X-Wing (PS2) moves first without dice. The bomber's torpedo
+        // rolls one die per ship in index order: a hit on the bomber
+        // itself, a critical on the T-70 (absorbed by its 3 shields).
+        let rec = resolve(&c, &mut gs, vec![0, 3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        let blast = mv.seismic.as_ref().expect("blast recorded");
+        assert_eq!(blast.obstacle, 3);
+        assert_eq!(blast.detonation.token.kind, BombKind::SeismicTorpedo);
+        assert_eq!(blast.detonation.hits.len(), 2, "{:?}", blast.detonation.hits);
+        assert_eq!(gs.ships[0].hull, 5, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].shields, 2, "{:?} {:?}", blast.detonation.hits, rec.events);
+        assert_eq!(gs.ships[1].hull, 3);
+        assert!(gs.obstacles.is_empty(), "the asteroid is removed");
+        assert!(!gs.ships[0].upgrades.contains(&torpedo), "card discarded");
+        assert!(rec.events.iter().any(|e| e.contains("breaks up")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn seismic_torpedo_needs_the_obstacle_in_arc_at_range_1_to_2() {
+        let c = content();
+        let torpedo = UpgradeId(7);
+        let mut gs = skirmish(
+            &c,
+            &[("gammasquadronpilot", Pose::new(10.0, 3.0, FRAC_PI_2), 1)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].upgrades.push(torpedo);
+        // Behind the bomber: never in the front arc.
+        gs.obstacles.push(rock(3, ObstacleKind::Debris, 10.0, 1.0));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::CardActionAt(torpedo, 3)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 14]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Failed);
+        assert!(mv.seismic.is_none());
+        assert_eq!(gs.obstacles.len(), 1);
+        assert!(gs.ships[0].upgrades.contains(&torpedo), "card kept");
+        assert!(rec.events.iter().any(|e| e.contains("not at Range 1-2")), "{:?}", rec.events);
     }
 
     #[test]

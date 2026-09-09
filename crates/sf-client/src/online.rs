@@ -100,6 +100,8 @@ pub struct Anim {
     /// Tokens on the board as the playback stands (drops appear as the
     /// move plays, detonated tokens vanish when their blast ends).
     pub tokens: Vec<BombToken>,
+    /// Obstacles blown up by Seismic Torpedoes so far in the playback.
+    pub removed_obstacles: Vec<u32>,
 }
 
 impl Anim {
@@ -111,6 +113,7 @@ impl Anim {
             end_poses: HashMap::new(),
             attack_no: 0,
             tokens,
+            removed_obstacles: Vec::new(),
         }
     }
 
@@ -158,6 +161,9 @@ pub struct Online {
     pub overrides: HashMap<u32, Pose>,
     /// Waiting for the player to click an enemy to target-lock.
     pub lock_pick: bool,
+    /// Waiting for the player to click an obstacle for this Seismic
+    /// Torpedo card.
+    pub obstacle_pick: Option<UpgradeId>,
     /// Human-readable summary of last turn's combat, shown in the HUD.
     pub combat_log: Vec<String>,
     /// Active Declare Target prompt: (attacker, options) awaiting input.
@@ -448,7 +454,9 @@ fn demo_queue(game: &Game, snap: &Snap) -> Anim {
             .map(|v| {
                 let (damage, crits, ion, stress) = match t.kind {
                     BombKind::Proton => (0, 1, 0, 0),
-                    BombKind::Seismic | BombKind::ClusterMine => (1, 0, 0, 0),
+                    BombKind::Seismic | BombKind::ClusterMine | BombKind::SeismicTorpedo => {
+                        (1, 0, 0, 0)
+                    }
                     BombKind::Ion => (0, 0, 2, 0),
                     BombKind::Thermal => (1, 0, 0, 1),
                     BombKind::ProximityMine => (2, 0, 0, 0),
@@ -873,6 +881,11 @@ fn animate(
                 }
                 if k >= mv.path.len() {
                     a.tokens.extend(mv.dropped_after.iter().copied());
+                    // A Seismic Torpedo blast plays after the move (and
+                    // after any mines the move set off).
+                    if let Some(blast) = &mv.seismic {
+                        a.queue.push_front(AnimItem::Detonation(blast.detonation.clone()));
+                    }
                     // Mines this move set off play right after it.
                     for d in mv.mines_hit.iter().rev() {
                         a.queue.push_front(AnimItem::Detonation(d.clone()));
@@ -926,7 +939,12 @@ fn animate(
                             }
                         }
                     }
-                    a.tokens.retain(|t| t.id != d.token.id);
+                    if d.token.kind == BombKind::SeismicTorpedo {
+                        // The token id is the obstacle's: it is gone now.
+                        a.removed_obstacles.push(d.token.id);
+                    } else {
+                        a.tokens.retain(|t| t.id != d.token.id);
+                    }
                     a.current = None;
                     continue;
                 }
@@ -1203,9 +1221,11 @@ fn planning_input(
     if keys.just_pressed(KeyCode::Digit0) && extras.second.is_some() {
         online.second_pick = !online.second_pick;
         online.lock_pick = false;
+        online.obstacle_pick = None;
     }
     let plan_action = |online: &mut Online, action: PlannedAction| {
         online.lock_pick = false;
+        online.obstacle_pick = None;
         if online.second_pick {
             online.second_pick = false;
             let action = (action != PlannedAction::Pass).then_some(action);
@@ -1293,15 +1313,47 @@ fn planning_input(
     if keys.just_pressed(KeyCode::KeyK) && !extras.card_actions.is_empty() {
         let cards = &extras.card_actions;
         let next = match cur_action {
-            Some(PlannedAction::CardAction(c)) => {
+            Some(PlannedAction::CardAction(c) | PlannedAction::CardActionAt(c, _)) => {
                 cards.iter().position(|u| *u == c).and_then(|i| cards.get(i + 1).copied())
             }
             _ => Some(cards[0]),
         };
-        plan_action(
-            &mut online,
-            next.map(PlannedAction::CardAction).unwrap_or(PlannedAction::Pass),
-        );
+        let seismic = next.is_some_and(|c| {
+            game.content.upgrades.upgrade(c).and_then(|u| u.effect)
+                == Some(UpgradeEffect::SeismicTorpedoAction)
+        });
+        if seismic {
+            // The torpedo needs a target: the next click on an obstacle
+            // plans it.
+            online.lock_pick = false;
+            online.obstacle_pick = next;
+            online.status =
+                "Seismic Torpedo: click an obstacle (Range 1-2, in your arc after moving)".into();
+        } else {
+            plan_action(
+                &mut online,
+                next.map(PlannedAction::CardAction).unwrap_or(PlannedAction::Pass),
+            );
+        }
+    }
+    if let Some(card) = online.obstacle_pick
+        && buttons.just_pressed(MouseButton::Left)
+        && let Some(cur) = cursor.0
+    {
+        let hit = online.snap.as_ref().and_then(|snap| {
+            snap.obstacles
+                .iter()
+                .find(|o| {
+                    obstacle::point_in_convex(cur, &o.polygon())
+                        || (o.kind == ObstacleKind::BlackHole
+                            && (cur - o.center).dot(cur - o.center) <= 1.0)
+                })
+                .map(|o| o.id)
+        });
+        if let Some(id) = hit {
+            online.status.clear();
+            plan_action(&mut online, PlannedAction::CardActionAt(card, id));
+        }
     }
     if keys.just_pressed(KeyCode::KeyM) && !mines.is_empty() {
         let next = match cur_action {
@@ -1594,6 +1646,7 @@ fn action_name(game: &Game, snap: Option<&Snap>, a: PlannedAction) -> String {
         PlannedAction::BarrelRollFar(Side::Left) => "Far Roll L".into(),
         PlannedAction::BarrelRollFar(Side::Right) => "Far Roll R".into(),
         PlannedAction::CardAction(card) => format!("{} action", card_name(game, card)),
+        PlannedAction::CardActionAt(card, _) => format!("{} at obstacle", card_name(game, card)),
     }
 }
 
@@ -1754,7 +1807,7 @@ fn draw_bomb_token(gizmos: &mut Gizmos, game: &Game, t: &BombToken, own: bool) {
     let r = render::PX * 0.32;
     let tint = bomb_color(t.kind);
     match t.kind {
-        BombKind::Proton | BombKind::Seismic | BombKind::Thermal => {
+        BombKind::Proton | BombKind::Seismic | BombKind::Thermal | BombKind::SeismicTorpedo => {
             // A round bomb with a fuse tick.
             gizmos.circle_2d(center, r, tint);
             gizmos.circle_2d(center, r * 0.55, tint);
@@ -1791,7 +1844,7 @@ fn draw_bomb_token(gizmos: &mut Gizmos, game: &Game, t: &BombToken, own: bool) {
 fn bomb_color(kind: BombKind) -> Color {
     match kind {
         BombKind::Proton => Color::srgb(1.0, 0.6, 0.2),
-        BombKind::Seismic => Color::srgb(1.0, 0.8, 0.3),
+        BombKind::Seismic | BombKind::SeismicTorpedo => Color::srgb(1.0, 0.8, 0.3),
         BombKind::Thermal => Color::srgb(1.0, 0.35, 0.25),
         BombKind::Ion | BombKind::ConnerNet => Color::srgb(0.5, 0.8, 1.0),
         BombKind::ProximityMine | BombKind::ClusterMine => Color::srgb(1.0, 0.45, 0.35),
@@ -1811,7 +1864,7 @@ fn draw_detonation(gizmos: &mut Gizmos, game: &Game, snap: &Snap, anim: &Anim, d
             * render::PX;
     let tint = bomb_color(d.token.kind).with_alpha(alpha);
     match d.token.kind {
-        BombKind::Proton | BombKind::Seismic | BombKind::Thermal => {
+        BombKind::Proton | BombKind::Seismic | BombKind::Thermal | BombKind::SeismicTorpedo => {
             // Fireball core, then a white shock ring racing to Range 1.
             let core = (q * 3.0).min(1.0);
             gizmos.circle_2d(center, 6.0 + core * 34.0, Color::srgba(1.0, 0.5, 0.1, alpha));
@@ -1901,7 +1954,8 @@ fn draw(
         Some(a) => &a.tokens,
         None => &snap.bombs,
     };
-    for o in &snap.obstacles {
+    let gone: &[u32] = online.anim.as_ref().map(|a| a.removed_obstacles.as_slice()).unwrap_or(&[]);
+    for o in snap.obstacles.iter().filter(|o| !gone.contains(&o.id)) {
         draw_obstacle(&mut gizmos, &game, o, time.elapsed_secs());
     }
     // Effects demo: keep Onyx-2's firing arc up so the asteroid's shadow

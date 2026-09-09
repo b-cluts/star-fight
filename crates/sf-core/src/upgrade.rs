@@ -323,6 +323,7 @@ impl UpgradeEffect {
                 | MissileAttackTwice
                 | TorpedoStressIfHullLow
                 | TorpedoStripShield
+                | SeismicTorpedoAction
                 | TorpedoIonSplash
                 | MissileSplashRange1
                 | MissileFriendsLockOnHit

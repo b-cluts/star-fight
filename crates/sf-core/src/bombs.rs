@@ -37,6 +37,10 @@ pub enum BombKind {
     /// The crossing ship suffers 1 damage, receives 2 ion tokens and
     /// skips its Perform Action step.
     ConnerNet,
+    /// A Seismic Torpedo going off on an obstacle: each ship at Range 1
+    /// rolls 1 attack die and suffers any damage or critical rolled. Never
+    /// a token on the board; only appears in a `Detonation`.
+    SeismicTorpedo,
 }
 
 impl BombKind {
@@ -68,6 +72,7 @@ impl BombKind {
             BombKind::ProximityMine => "Proximity Mine",
             BombKind::ClusterMine => "Cluster Mine",
             BombKind::ConnerNet => "Conner Net",
+            BombKind::SeismicTorpedo => "Seismic Torpedo",
         }
     }
 }

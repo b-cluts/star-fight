@@ -105,6 +105,9 @@ pub enum PlannedAction {
     /// A card's "Action:" (Marksmanship, Rage, Expose, R2-F2): its effect
     /// lasts for the round.
     CardAction(UpgradeId),
+    /// A card action aimed at an obstacle (Seismic Torpedo): the card and
+    /// the obstacle id. Only resolved as the main action of the turn.
+    CardActionAt(UpgradeId, u32),
 }
 
 impl PlannedAction {
@@ -120,6 +123,7 @@ impl PlannedAction {
             PlannedAction::DropMine(_) => None,
             PlannedAction::BarrelRollFar(_) => Some(ActionKind::BarrelRoll),
             PlannedAction::CardAction(_) => None,
+            PlannedAction::CardActionAt(..) => None,
         }
     }
 }
