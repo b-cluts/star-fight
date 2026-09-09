@@ -508,6 +508,8 @@ impl GameState {
                     owner: PlayerId(seat as u32),
                     class: class_id,
                     pilot: pilot_id,
+                    lingers: content.pilots.pilot(pilot_id).and_then(|p| p.ability)
+                        == Some(PilotAbility::SurviveUntilEndOfCombat),
                     upgrades: entry.upgrades.clone(),
                     callsign: callsigns[n].clone(),
                     pose: None,
@@ -924,22 +926,39 @@ impl GameState {
         why: &str,
         events: &mut Vec<String>,
     ) -> bool {
+        self.auto_lock_within(content, i, 3, why, events)
+    }
+
+    /// `auto_lock` limited to enemies within `bands` range bands. Captain
+    /// Kagi, when lockable, takes the lock whoever is nearer.
+    fn auto_lock_within(
+        &mut self,
+        content: &Content,
+        i: usize,
+        bands: u8,
+        why: &str,
+        events: &mut Vec<String>,
+    ) -> bool {
         if self.ships[i].lock.is_some() || self.ships[i].destroyed {
             return false;
         }
         let Some(p) = self.ships[i].pose else { return false };
         let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
-        let target = (0..self.ships.len())
+        let candidates: Vec<(usize, f64)> = (0..self.ships.len())
             .filter(|&e| self.ships[e].owner != self.ships[i].owner && !self.ships[e].destroyed)
             .filter_map(|e| {
                 let q = self.ships[e].pose?;
                 let theirs =
                     rules::footprint_corners(q, self.class_of(content, &self.ships[e]).footprint);
                 let d = combat::base_distance(&mine, &theirs);
-                (d <= 3.0 * combat::RANGE_BAND_UNITS).then_some((e, d))
+                (d <= f64::from(bands) * combat::RANGE_BAND_UNITS).then_some((e, d))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(e, _)| e);
+            .collect();
+        let kagi = candidates.iter().find(|(e, _)| {
+            self.ability(content, &self.ships[*e]) == Some(PilotAbility::EnemyLocksMustTargetMe)
+        });
+        let target =
+            kagi.or_else(|| candidates.iter().min_by(|a, b| a.1.total_cmp(&b.1))).map(|(e, _)| *e);
         let Some(e) = target else { return false };
         self.ships[i].lock = Some(self.ships[e].id);
         events.push(format!(
@@ -977,9 +996,30 @@ impl GameState {
     }
 
     fn discard_card(&mut self, content: &Content, i: usize, card: UpgradeId, why: &str) -> String {
-        self.ships[i].upgrades.retain(|u| *u != card);
         let name = content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_default();
+        if self.tomax_keeps(content, i, card) {
+            return format!(
+                "{}: {name} — {why}, card discarded; Tomax Bren flips it back faceup",
+                self.label(content, i)
+            );
+        }
+        self.ships[i].upgrades.retain(|u| *u != card);
         format!("{}: {name} — {why}, card discarded", self.label(content, i))
+    }
+
+    /// Tomax Bren: once per round a discarded Elite Pilot Talent is
+    /// flipped faceup again (the card stays equipped).
+    fn tomax_keeps(&mut self, content: &Content, i: usize, card: UpgradeId) -> bool {
+        let talent = content.upgrades.upgrade(card).is_some_and(|c| c.slot == Slot::Talent);
+        if !talent
+            || self.ability(content, &self.ships[i])
+                != Some(PilotAbility::FlipTalentFaceupAfterDiscard)
+            || self.ships[i].used_round.contains(&card)
+        {
+            return false;
+        }
+        self.ships[i].used_round.push(card);
+        true
     }
 
     /// Any living enemy inside ship `i`'s firing arc at Range 1?
@@ -1044,6 +1084,22 @@ impl GameState {
     /// an enemy is in arc at Range 1; Soontir Fel gains a focus token;
     /// Cool Hand is discarded for a focus token.
     fn gain_stress(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        // Captain Yorr: a friend at Range 1-2 with two or fewer stress
+        // tokens takes the token instead (never from another Yorr).
+        let yorr = PilotAbility::AbsorbFriendlyStressAtRange1To2;
+        if self.ability(content, &self.ships[i]) != Some(yorr)
+            && let Some(y) = self.friends_within(content, i, 2).into_iter().find(|&y| {
+                self.ability(content, &self.ships[y]) == Some(yorr) && self.ships[y].stress <= 2
+            })
+        {
+            events.push(format!(
+                "{}: Captain Yorr — takes the stress token meant for {}",
+                self.label(content, y),
+                self.label(content, i)
+            ));
+            self.gain_stress(content, y, events);
+            return;
+        }
         self.ships[i].stress += 1;
         let who = self.label(content, i);
         match self.ability(content, &self.ships[i]) {
@@ -1627,7 +1683,7 @@ impl GameState {
         let s = &mut self.ships[i];
         if s.hull > 0 {
             s.hull -= 1;
-            if s.hull == 0 {
+            if s.hull == 0 && !s.lingers {
                 s.destroyed = true;
             }
             DamagePoint::Hull
@@ -1866,7 +1922,7 @@ impl GameState {
             DamagePoint::Shield
         } else if s.hull > 0 {
             s.hull -= 1;
-            if s.hull == 0 {
+            if s.hull == 0 && !s.lingers {
                 s.destroyed = true;
             }
             DamagePoint::Hull
@@ -2232,10 +2288,30 @@ impl GameState {
         } else {
             None
         };
+        // Youngster: friendly ships of his class at Range 1-3 may use
+        // his talent's action.
+        let me = self.ships.iter().position(|x| x.id == s.id);
+        let shared: Vec<UpgradeId> = me
+            .map(|me| {
+                (0..self.ships.len())
+                    .filter(|&y| {
+                        y != me
+                            && self.ships[y].owner == s.owner
+                            && !self.ships[y].destroyed
+                            && self.ships[y].class == s.class
+                            && self.ability(content, &self.ships[y])
+                                == Some(PilotAbility::ShareTalentAction)
+                            && self.range_between(content, me, y).is_some()
+                    })
+                    .flat_map(|y| self.ships[y].upgrades.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
         let card_actions = s
             .upgrades
             .iter()
             .copied()
+            .chain(shared)
             .filter(|u| {
                 matches!(
                     content.upgrades.upgrade(*u).and_then(|c| c.effect),
@@ -2370,6 +2446,31 @@ impl GameState {
                 }
             }
             PlannedAction::TargetLock(target) => {
+                // Captain Kagi: an enemy in lock range must be locked
+                // instead of anyone else.
+                let my_corners = rules::footprint_corners(pose, fp);
+                let kagi = (0..self.ships.len()).find(|&k| {
+                    let s = &self.ships[k];
+                    s.owner != self.ships[i].owner
+                        && !s.destroyed
+                        && self.ability(content, s) == Some(PilotAbility::EnemyLocksMustTargetMe)
+                        && s.pose.is_some_and(|q| {
+                            let theirs =
+                                rules::footprint_corners(q, self.class_of(content, s).footprint);
+                            combat::base_distance(&my_corners, &theirs)
+                                <= 3.0 * combat::RANGE_BAND_UNITS
+                        })
+                });
+                let target = match kagi {
+                    Some(k) if self.ships[k].id != target => {
+                        events.push(format!(
+                            "{}: Captain Kagi draws the target lock",
+                            self.label(content, i)
+                        ));
+                        self.ships[k].id
+                    }
+                    _ => target,
+                };
                 // ST-321 locks anywhere; Long-Range Scanners only beyond
                 // Range 2 (and at any distance past it).
                 let anywhere = self.has_effect(content, i, UpgradeEffect::TitleLockAnywhere);
@@ -2397,6 +2498,16 @@ impl GameState {
                     .is_some();
                 if in_range {
                     self.ships[i].lock = Some(target);
+                    // Dutch Vander: a friend at Range 1-2 locks too.
+                    if self.ability(content, &self.ships[i])
+                        == Some(PilotAbility::FriendlyLockAfterLock)
+                    {
+                        for f in self.friends_within(content, i, 2) {
+                            if self.auto_lock(content, f, "Dutch Vander", events) {
+                                break;
+                            }
+                        }
+                    }
                     ActionResult::Performed
                 } else {
                     let who = self.label(content, i);
@@ -2529,7 +2640,11 @@ impl GameState {
     ) -> Option<(Maneuver, &'static str)> {
         let navigator = self.has_effect(content, i, UpgradeEffect::CrewRotateDialSameBearing);
         let stay = self.has_effect(content, i, UpgradeEffect::RotateDialSameSpeedRed);
-        if !navigator && !stay {
+        let ability = self.ability(content, &self.ships[i]);
+        let juno = ability == Some(PilotAbility::AdjustManeuverSpeedBy1);
+        let tetran =
+            ability == Some(PilotAbility::KTurnSpeed1Or3Or5) && man.steer == maneuver::Steer::KTurn;
+        if !navigator && !stay && !juno && !tetran {
             return None;
         }
         let start = self.ships[i].pose?;
@@ -2548,6 +2663,34 @@ impl GameState {
             return None;
         }
         let stressed = self.ships[i].stress > 0;
+        // Juno Eclipse: the same bearing one speed slower or faster (the
+        // dial's entry when it has one). Tetran Cowall: a Koiogran turn
+        // at speed 1, 3 or 5, nearest to the planned speed first.
+        let alternatives: Vec<(u8, &'static str)> = if juno {
+            vec![
+                (man.distance.saturating_sub(1).max(1), "Juno Eclipse"),
+                (man.distance + 1, "Juno Eclipse"),
+            ]
+        } else if tetran {
+            let mut v: Vec<(u8, &'static str)> =
+                [1u8, 3, 5].into_iter().map(|d| (d, "Tetran Cowall")).collect();
+            v.sort_by_key(|(d, _)| d.abs_diff(man.distance));
+            v
+        } else {
+            Vec::new()
+        };
+        for (d, who) in alternatives {
+            if d == man.distance {
+                continue;
+            }
+            let m =
+                dial.iter().find(|m| m.steer == man.steer && m.distance == d).copied().unwrap_or(
+                    Maneuver { steer: man.steer, distance: d, difficulty: man.difficulty },
+                );
+            if maneuver::segments(m).is_ok() && !bad(&m) {
+                return Some((m, who));
+            }
+        }
         if navigator {
             let mut same: Vec<&Maneuver> = dial
                 .iter()
@@ -2794,7 +2937,12 @@ impl GameState {
             return Err(Rejection::ShipDestroyed);
         }
         if let Some(card) = bomb
-            && !self.bomb_kind(content, i, card).is_some_and(|k| !k.is_mine())
+            && !self.bomb_kind(content, i, card).is_some_and(|k| {
+                // Deathfire drops mines on the reveal too.
+                !k.is_mine()
+                    || self.ability(content, &self.ships[i])
+                        == Some(PilotAbility::FreeBombActionOnRevealOrAction)
+            })
         {
             return Err(Rejection::NoSuchUpgrade);
         }
@@ -3090,6 +3238,29 @@ impl GameState {
             if self.ships[i].destroyed || self.ships[i].pose.is_none() {
                 continue;
             }
+            // Commander Alozen: a lock on an enemy at Range 1.
+            if self.ability(content, &self.ships[i])
+                == Some(PilotAbility::LockAtRange1AtCombatStart)
+            {
+                self.auto_lock_within(content, i, 1, "Commander Alozen", events);
+            }
+            // Colonel Jendon: his lock goes to a friend at Range 1 without one.
+            if self.ability(content, &self.ships[i])
+                == Some(PilotAbility::GiveLockToFriendlyAtCombatStart)
+                && let Some(l) = self.ships[i].lock
+                && let Some(f) = self
+                    .friends_at_range1(content, i)
+                    .into_iter()
+                    .find(|&f| self.ships[f].lock.is_none())
+            {
+                self.ships[f].lock = Some(l);
+                self.ships[i].lock = None;
+                events.push(format!(
+                    "{}: Colonel Jendon — hands his target lock to {}",
+                    self.label(content, i),
+                    self.label(content, f)
+                ));
+            }
             // Rey: a stored focus token comes back for the Combat phase.
             if self.ships[i].stored_focus > 0
                 && self.has_effect(content, i, UpgradeEffect::CrewStoreFocusTokens)
@@ -3376,6 +3547,48 @@ impl GameState {
                 ));
             }
         }
+        // Chewbacca (Heroes of the Resistance): a friend destroyed at
+        // Range 1-3 of him lets him attack at once.
+        if rec.defender_destroyed && self.combat.as_ref().is_some_and(|cs| cs.followup.is_none()) {
+            let d_idx = shot.d_idx;
+            let d_owner = self.ships[d_idx].owner;
+            let chewie = (0..self.ships.len()).find(|&k| {
+                k != d_idx
+                    && self.ships[k].owner == d_owner
+                    && !self.ships[k].destroyed
+                    && self.ability(content, &self.ships[k])
+                        == Some(PilotAbility::AttackWhenFriendlyDestroyed)
+                    && self.range_between(content, k, d_idx).is_some()
+            });
+            if let Some(k) = chewie {
+                let options = self.attack_options(content, k);
+                let lock = self.ships[k].lock;
+                let primary: Vec<&AttackOption> =
+                    options.iter().filter(|o| o.weapon.is_none()).collect();
+                let pick =
+                    primary.iter().find(|o| Some(o.target) == lock).copied().or_else(|| {
+                        primary.iter().copied().min_by(|a, b| a.dist.total_cmp(&b.dist))
+                    });
+                if let Some(o) = pick {
+                    let t = self.ships.iter().position(|s| s.id == o.target).expect("option");
+                    let cs = self.combat.as_mut().expect("in combat");
+                    cs.events.push(format!(
+                        "{}: Chewbacca — attacks after a friend's destruction",
+                        self.ships[k].callsign
+                    ));
+                    cs.followup = Some((
+                        k,
+                        Shot {
+                            d_idx: t,
+                            range: o.range,
+                            weapon: None,
+                            second: false,
+                            focus_hit: false,
+                        },
+                    ));
+                }
+            }
+        }
         rec
     }
 
@@ -3495,7 +3708,9 @@ impl GameState {
             let mut dropped_before = Vec::new();
             if let Some(card) = self.ships[i].bomb.take()
                 && let Some(kind) = self.bomb_kind(content, i, card)
-                && !kind.is_mine()
+                && (!kind.is_mine()
+                    || self.ability(content, &self.ships[i])
+                        == Some(PilotAbility::FreeBombActionOnRevealOrAction))
             {
                 dropped_before = self.drop_bomb(content, i, card, kind, &mut events);
             }
@@ -3726,6 +3941,34 @@ impl GameState {
                             if self.auto_lock(content, f, "Systems Officer", &mut events) {
                                 break;
                             }
+                        }
+                    }
+                    // Lando Calrissian (pilot): a friend at Range 1 takes a
+                    // free action from its bar — focus, else evade.
+                    if !self.ships[i].destroyed
+                        && self.ability(content, &self.ships[i])
+                            == Some(PilotAbility::FriendlyFreeActionAfterGreen)
+                        && let Some(f) = self
+                            .friends_at_range1(content, i)
+                            .into_iter()
+                            .find(|&f| self.may_act_freely(content, f))
+                    {
+                        let bar = self.action_bar(content, &self.ships[f]);
+                        let what = if bar.contains(&ActionKind::Focus) {
+                            self.ships[f].focus += 1;
+                            Some("focus")
+                        } else if bar.contains(&ActionKind::Evade) {
+                            self.ships[f].evade += 1;
+                            Some("evade")
+                        } else {
+                            None
+                        };
+                        if let Some(what) = what {
+                            events.push(format!(
+                                "{}: Lando Calrissian — {} takes a free {what} action",
+                                self.label(content, i),
+                                self.label(content, f)
+                            ));
                         }
                     }
                     // R2-D2 (astromech): a shield back after a green maneuver.
@@ -4045,6 +4288,40 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) {
+        // End of the Combat phase: Fel's Wrath finally goes down.
+        for i in 0..self.ships.len() {
+            if self.ships[i].hull == 0 && !self.ships[i].destroyed {
+                self.ships[i].destroyed = true;
+                events.push(format!(
+                    "{}: Fel's Wrath — destroyed at the end of the Combat phase",
+                    self.label(content, i)
+                ));
+            }
+        }
+        // Start of the End phase: Lieutenant Colzet spends his lock to
+        // flip a facedown card on the locked ship.
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.ability(content, &self.ships[i])
+                    != Some(PilotAbility::SpendLockToFlipFacedownCrit)
+            {
+                continue;
+            }
+            let Some(l) = self.ships[i].lock else { continue };
+            let Ok(e) = self.ship_index(l) else { continue };
+            if self.ships[e].destroyed || self.facedown_cards(content, e) == 0 {
+                continue;
+            }
+            self.ships[i].lock = None;
+            let effect = crit::draw(roll());
+            events.push(format!(
+                "{}: Lieutenant Colzet — lock spent, {}'s facedown card turns faceup: {}",
+                self.label(content, i),
+                self.label(content, e),
+                effect.name()
+            ));
+            self.apply_crit_effect(content, e, effect, roll, events);
+        }
         // End of the Combat phase: Mara Jade stresses every unstressed
         // enemy at Range 1.
         for i in 0..self.ships.len() {
@@ -5040,7 +5317,14 @@ impl GameState {
                     == Some(UpgradeEffect::CancelEvadeDiscard)
             })
         {
-            self.ships[a_idx].upgrades.retain(|u| *u != card);
+            if self.tomax_keeps(content, a_idx, card) {
+                events.push(format!(
+                    "{}: Tomax Bren — Crack Shot flipped back faceup",
+                    self.label(content, a_idx)
+                ));
+            } else {
+                self.ships[a_idx].upgrades.retain(|u| *u != card);
+            }
             evades -= 1;
             events.push(format!(
                 "{}: Crack Shot — cancels an evade result, card discarded",
@@ -7781,6 +8065,192 @@ mod tests {
             "{:?}",
             rec.events
         );
+    }
+
+    #[test]
+    fn captain_yorr_absorbs_a_friends_stress() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("captainyorr", Pose::new(10.0, 3.0, FRAC_PI_2), 1),
+                // PS7: moves after Yorr, whose green straight 1 comes first.
+                ("maulermithel", Pose::new(13.0, 2.5, FRAC_PI_2), 2),
+            ],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        let k3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 3);
+        gs.plan_maneuver(&c, P0, ShipId(1), k3).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        assert_eq!(gs.ships[1].stress, 0, "{:?}", rec.events);
+        assert_eq!(gs.ships[0].stress, 1);
+    }
+
+    #[test]
+    fn captain_kagi_draws_enemy_target_locks() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("obsidiansquadronpilot", Pose::new(6.0, 2.5, FRAC_PI_2), 5),
+                ("captainkagi", Pose::new(14.0, 3.0, FRAC_PI_2), 1),
+            ],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[2].pose = Some(Pose::new(12.0, 11.5, -FRAC_PI_2));
+        gs.plan_action(&c, P1, ShipId(2), PlannedAction::TargetLock(ShipId(0))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 30]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(2)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed, "{:?}", rec.events);
+        // The lock went on Kagi: the X-Wing shoots him and spends it.
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(2)).expect("X-Wing fired");
+        assert_eq!(shot.defender, ShipId(1), "{:?}", rec.events);
+        assert!(shot.lock_spent);
+    }
+
+    #[test]
+    fn fels_wrath_fires_back_at_zero_hull_then_dies() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("felswrath", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("hortonsalm", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].pose = Some(Pose::new(10.0, 16.5, -FRAC_PI_2));
+        gs.ships[0].hull = 1;
+        // Horton (PS8) first: two hits through four blank defense dice.
+        let rec = resolve(&c, &mut gs, vec![0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert!(
+            rec.attacks.iter().any(|a| a.attacker == ShipId(0)),
+            "still fires: {:?}",
+            rec.events
+        );
+        assert!(gs.ships[0].destroyed, "gone with the End phase");
+        assert!(rec.events.iter().any(|e| e.contains("Fel\'s Wrath")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn juno_and_tetran_change_speed_to_stay_on_the_board() {
+        let c = content();
+        // Juno flies south from the edge: straight 3 would leave, straight 2 stays.
+        let mut gs = skirmish(
+            &c,
+            &[("junoeclipse", Pose::new(10.0, 2.0, -FRAC_PI_2), 3)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].pose = Some(Pose::new(10.0, 2.5, -FRAC_PI_2));
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.maneuver.distance, 2, "{:?}", rec.events);
+        assert!(!mv.destroyed);
+        // Tetran: a Koiogran 5 from y=16 would leave; speed 3 is the nearest that stays.
+        let mut gs = skirmish(
+            &c,
+            &[("tetrancowall", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].pose = Some(Pose::new(10.0, 16.0, FRAC_PI_2));
+        gs.ships[1].pose = Some(Pose::new(3.0, 17.5, -FRAC_PI_2));
+        let k5 = dial_index(&c, gs.ships[0].class, |m| {
+            m.steer == crate::maneuver::Steer::KTurn && m.distance == 5
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), k5).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.maneuver.distance, 3, "{:?}", rec.events);
+        assert!(!mv.destroyed);
+    }
+
+    #[test]
+    fn chewbacca_attacks_when_a_friend_is_destroyed() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[
+                ("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 4),
+                ("chewbacca_2", Pose::new(6.0, 17.5, -FRAC_PI_2), 3),
+            ],
+        );
+        gs.ships[1].hull = 1;
+        gs.ships[1].shields = 0;
+        // Chewbacca (PS5) blanks; the TIE (PS3) kills the T-70; Chewbacca fires again.
+        let rec = resolve(
+            &c,
+            &mut gs,
+            vec![7, 7, 7, 7, 7, 7, 7, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7],
+        );
+        assert!(gs.ships[1].destroyed, "{:?}", rec.events);
+        let chewie: Vec<&AttackRecord> =
+            rec.attacks.iter().filter(|a| a.attacker == ShipId(2)).collect();
+        assert_eq!(chewie.len(), 2, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn alozen_jendon_and_colzet_manage_target_locks() {
+        let c = content();
+        // Alozen locks the X-Wing at Range 1 when combat starts.
+        let mut gs = skirmish(
+            &c,
+            &[("commanderalozen", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].pose = Some(Pose::new(10.0, 11.0, -FRAC_PI_2));
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        // Locked at combat start, then spent rerolling his blanks.
+        assert!(imperial_shot(&rec).lock_spent, "{:?}", rec.events);
+
+        // Jendon hands his lock to the TIE beside him.
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("coloneljendon", Pose::new(10.0, 3.0, FRAC_PI_2), 1),
+                ("academypilot", Pose::new(13.0, 2.5, FRAC_PI_2), 2),
+            ],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].lock = Some(ShipId(2));
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        assert_eq!(gs.ships[1].lock, Some(ShipId(2)), "{:?}", rec.events);
+        assert_eq!(gs.ships[0].lock, None);
+
+        // Colzet spends his lock at the End phase to flip a facedown card
+        // (the X-Wing is staged out of range so no attack spends it first).
+        let mut gs =
+            duel_at(&c, "lieutenantcolzet", "bluesquadronnovice", Pose::new(2.0, 17.5, -FRAC_PI_2));
+        gs.ships[0].lock = Some(ShipId(1));
+        gs.ships[1].shields = 0;
+        gs.ships[1].hull = 2;
+        let rec = resolve(&c, &mut gs, vec![9, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert!(rec.attacks.is_empty(), "{:?}", rec.attacks);
+        assert_eq!(gs.ships[0].lock, None, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].crits, vec![CritEffect::StunnedPilot], "{:?}", rec.events);
+    }
+
+    #[test]
+    fn deathfire_drops_a_mine_on_reveal_and_tomax_keeps_crack_shot() {
+        let c = content();
+        let mines = UpgradeId(182);
+        let mut gs = skirmish(
+            &c,
+            &[("deathfire", Pose::new(10.0, 3.0, FRAC_PI_2), 1)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].upgrades.push(mines);
+        gs.plan_bomb(&c, P0, ShipId(0), Some(mines)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.dropped_before.len(), 1, "{:?}", rec.events);
+        assert_eq!(mv.dropped_before[0].kind, BombKind::ProximityMine);
+
+        // Tomax Bren (PS8): Crack Shot cancels the lone evade and stays equipped.
+        let crack = UpgradeId(105);
+        let mut gs = duel(&c, "tomaxbren", "bluesquadronnovice");
+        gs.ships[0].upgrades.push(crack);
+        let rec = resolve(&c, &mut gs, vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(imperial_shot(&rec).hits, 2, "{:?}", rec.events);
+        assert!(gs.ships[0].upgrades.contains(&crack), "{:?}", rec.events);
     }
 
     #[test]

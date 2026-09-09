@@ -449,6 +449,20 @@ impl PilotAbility {
                 | PilotAbility::SecondaryRangePlusMinus1
                 | PilotAbility::TargetTouchingShipInArc
                 | PilotAbility::ChooseCritFromThree
+                | PilotAbility::LockAtRange1AtCombatStart
+                | PilotAbility::GiveLockToFriendlyAtCombatStart
+                | PilotAbility::SpendLockToFlipFacedownCrit
+                | PilotAbility::AbsorbFriendlyStressAtRange1To2
+                | PilotAbility::EnemyLocksMustTargetMe
+                | PilotAbility::SurviveUntilEndOfCombat
+                | PilotAbility::FriendlyLockAfterLock
+                | PilotAbility::FriendlyFreeActionAfterGreen
+                | PilotAbility::ShareTalentAction
+                | PilotAbility::FreeBombActionOnRevealOrAction
+                | PilotAbility::AdjustManeuverSpeedBy1
+                | PilotAbility::KTurnSpeed1Or3Or5
+                | PilotAbility::FlipTalentFaceupAfterDiscard
+                | PilotAbility::AttackWhenFriendlyDestroyed
                 | PilotAbility::BoostWithTurnTemplate
                 | PilotAbility::BarrelRollWithStraight2
                 | PilotAbility::FreeRepositionAfterFocus

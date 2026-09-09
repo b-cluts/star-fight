@@ -176,6 +176,10 @@ pub struct ShipState {
     /// Rey (crew): focus tokens stored on the card between rounds.
     #[serde(default)]
     pub stored_focus: u8,
+    /// Fel's Wrath: at 0 hull the ship lingers until the end of the
+    /// Combat phase instead of being destroyed at once.
+    #[serde(default)]
+    pub lingers: bool,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.
