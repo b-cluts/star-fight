@@ -223,5 +223,52 @@
             anchor_px: (152, 0),
             portrait: None,
         ),
+        (
+            id: 11,
+            name: "X-Wing T-65",
+            xws: "xwing",
+            faction: RebelAlliance,
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 11,
+            attack_dice: 3,
+            agility: 2,
+            hull: 3,
+            shields: 2,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [Torpedo, Astromech],
+
+            // Placeholder: the T-70 art stands in for the T-65 (same
+            // silhouette; S-foils differ only in detail at this scale).
+            sprite: "ships/xwing-t70.png",
+            sprite_px: (720, 809),
+            anchor_px: (362, 1),
+            portrait: None,
+        ),
+        (
+            // Mission 1 (core rules p.22): the senator's shuttle token —
+            // a Rebel "ship" with no attack and no actions, moved by the
+            // Rebel player at the start of every Activation phase.
+            id: 12,
+            name: "Senator's Shuttle",
+            xws: "senatorsshuttle",
+            faction: RebelAlliance,
+            size: Large,
+            footprint: (length: 2.0, width: 2.0),
+            maneuver_set: 12,
+            attack_dice: 0,
+            agility: 2,
+            hull: 6,
+            // 6 when playing with 100-point squads (set by the mission).
+            shields: 0,
+            action_bar: [],
+            upgrade_bar: [],
+
+            // Placeholder: the Lambda art stands in for the shuttle token.
+            sprite: "ships/lambda-shuttle.png",
+            sprite_px: (305, 381),
+            anchor_px: (152, 0),
+            portrait: None,
+        ),
     ],
 )

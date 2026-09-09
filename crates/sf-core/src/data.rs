@@ -226,8 +226,12 @@ mod tests {
         for p in &pilots.pilots {
             assert!(ids.insert(p.id), "duplicate pilot id {:?}", p.id);
             assert!(ships.class(p.class).is_some(), "{} flies an unknown class", p.name);
+            if p.cost == 0 {
+                // A mission token (the senator's shuttle), not a card.
+                assert_eq!(p.skill, 0, "{} is a token and moves first", p.name);
+                continue;
+            }
             assert!((1..=12).contains(&p.skill), "{} skill out of range", p.name);
-            assert!(p.cost > 0);
         }
         for class in &ships.classes {
             let basic = pilots
@@ -259,7 +263,8 @@ mod tests {
         }
         let ships = ShipDb::from_ron(&read_asset("ships.ron")).expect("ships.ron");
         let pilots = PilotDb::from_ron(&read_asset("pilots.ron")).expect("pilots.ron");
-        for p in &pilots.pilots {
+        // Cost 0 = a mission token (the senator's shuttle), not a card.
+        for p in pilots.pilots.iter().filter(|p| p.cost > 0) {
             let rel = pilots.card_image(&ships, p.id).unwrap();
             assert!(
                 std::path::Path::new(&format!("{root}/{rel}")).is_file(),

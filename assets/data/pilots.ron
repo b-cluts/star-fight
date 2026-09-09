@@ -107,5 +107,15 @@
         (id: 1002, class: 10, name: "Colonel Jendon", xws: "coloneljendon",   unique: true,  skill: 6, cost: 26, talent_slot: false, source: LambdaShuttleExpansion, ability: Some(GiveLockToFriendlyAtCombatStart)),
         (id: 1003, class: 10, name: "Captain Yorr", xws: "captainyorr",       unique: true,  skill: 4, cost: 24, talent_slot: false, source: LambdaShuttleExpansion, ability: Some(AbsorbFriendlyStressAtRange1To2)),
         (id: 1004, class: 10, name: "Omicron Group Pilot", xws: "omicrongrouppilot", unique: false, skill: 2, cost: 21, talent_slot: false, source: LambdaShuttleExpansion, ability: None),
+        // ---------------- X-Wing T-65 (class 11) ----------------
+        (id: 1101, class: 11, name: "Rookie Pilot", xws: "rookiepilot",             unique: false, skill: 2, cost: 21, talent_slot: false, source: OriginalCoreSet, ability: None),
+        (id: 1102, class: 11, name: "Red Squadron Pilot", xws: "redsquadronpilot",  unique: false, skill: 4, cost: 23, talent_slot: false, source: OriginalCoreSet, ability: None),
+        (id: 1103, class: 11, name: "Biggs Darklighter", xws: "biggsdarklighter",   unique: true,  skill: 5, cost: 25, talent_slot: false, source: OriginalCoreSet, ability: Some(ProtectFriendsAtRange1)),
+        (id: 1104, class: 11, name: "Garven Dreis", xws: "garvendreis",             unique: true,  skill: 6, cost: 26, talent_slot: false, source: XWingExpansion,  ability: Some(PassSpentFocusRange1To2)),
+        (id: 1105, class: 11, name: "Luke Skywalker", xws: "lukeskywalker",         unique: true,  skill: 8, cost: 28, talent_slot: true,  source: OriginalCoreSet, ability: Some(DefenseFocusToEvade)),
+        (id: 1106, class: 11, name: "Wedge Antilles", xws: "wedgeantilles",         unique: true,  skill: 9, cost: 29, talent_slot: true,  source: XWingExpansion,  ability: Some(DefenderAgilityMinus1)),
+        // ---------------- Senator's shuttle (class 12, mission 1 token) ----------------
+        // Not a card: skill 0 so it moves first, cost 0, never in a squad.
+        (id: 1201, class: 12, name: "Senator", xws: "senatorsshuttle", unique: false, skill: 0, cost: 0, talent_slot: false, source: OriginalCoreSet, ability: None),
     ],
 )

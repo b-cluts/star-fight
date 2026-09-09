@@ -41,6 +41,7 @@ pub enum Source {
     /// Imperial Aces (TIE Interceptor repaints).
     ImperialAces,
     LambdaShuttleExpansion,
+    XWingExpansion,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -234,12 +235,38 @@ pub enum PilotAbility {
     /// receive a stress token, if you have 2 or fewer stress tokens, you
     /// may receive that token instead.
     AbsorbFriendlyStressAtRange1To2,
+    // ---- X-Wing T-65 ----
+    /// Biggs Darklighter: other friendly ships at Range 1 cannot be
+    /// targeted by attacks if the attacker could target you instead.
+    ProtectFriendsAtRange1,
+    /// Garven Dreis: after spending a focus token, you may place that
+    /// token on any other friendly ship at Range 1-2 (instead of
+    /// discarding it).
+    PassSpentFocusRange1To2,
+    /// Luke Skywalker: when defending, you may change 1 of your focus
+    /// results to an evade result.
+    DefenseFocusToEvade,
+    /// Wedge Antilles: when attacking, reduce the defender's agility
+    /// value by 1 (to a minimum of 0).
+    DefenderAgilityMinus1,
 }
 
 impl PilotAbility {
     /// The card text (for the in-game glossary).
     pub fn text(self) -> &'static str {
         match self {
+            PilotAbility::ProtectFriendsAtRange1 => {
+                "Biggs Darklighter: other friendly ships at Range 1 cannot be targeted by attacks if the attacker could target you instead."
+            }
+            PilotAbility::PassSpentFocusRange1To2 => {
+                "Garven Dreis: after spending a focus token, you may place that token on any other friendly ship at Range 1-2 (instead of discarding it)."
+            }
+            PilotAbility::DefenseFocusToEvade => {
+                "Luke Skywalker: when defending, you may change 1 of your focus results to an evade result."
+            }
+            PilotAbility::DefenderAgilityMinus1 => {
+                "Wedge Antilles: when attacking, reduce the defender's agility value by 1 (to a minimum of 0)."
+            }
             PilotAbility::FocusToResult => {
                 "Poe Dameron: while attacking or defending, if you have a focus token, you may change 1 focus result to a hit or evade result."
             }
