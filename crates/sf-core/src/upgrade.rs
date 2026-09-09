@@ -325,6 +325,13 @@ impl UpgradeEffect {
                 | TorpedoStripShield
                 | SeismicTorpedoAction
                 | BarrelRollActionDiscardLock
+                | BombOnRevealProton
+                | BombOnRevealSeismic
+                | BombOnRevealIon
+                | BombOnRevealThermal
+                | BombActionProximityMines
+                | BombActionClusterMines
+                | BombActionConnerNet
                 | TorpedoIonSplash
                 | MissileSplashRange1
                 | MissileFriendsLockOnHit
