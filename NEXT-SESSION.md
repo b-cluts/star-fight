@@ -252,9 +252,23 @@ and Server `ws://127.0.0.1:7777`.
       (`faction_for_seat`), printed forces on a squad-less join
       (`mission::fixed_squad`), `winner_reason`. Client: zones drawn from
       the snapshot, satellites as cyan diamonds, HUD mission line, glossary
-      Rules tab lists the missions. UNPLAYTESTED on screen. NEXT (user
-      request 2026-09-10): a BOT SEAT for solo play/testing (sf-core
-      `bot.rs` decisions + server virtual client + setup field "Bots").
+      Rules tab lists the missions. UNPLAYTESTED on screen.
+      BOT SEATS DONE 2026-09-10 (commit 7ff72be; 235 tests): `sf-core::bot`
+      (`View` from a snapshot; `placements`, `plans` scoring every dial
+      option — off-board skipped unless an allowed escape edge, bump/rock
+      penalties, nearest enemy in arc at Range 1-3 best, satellites for
+      Imperial bots in mission 3, shuttle heads for the far edge;
+      `safe_maneuver` fallback; `choose_target` weakest/secondary; `squad`
+      = cheapest generic pilot × points). Server `bot.rs`: a virtual client
+      per bot seat (channel pair + `SessionCmd::Msg`), seated right after
+      the host joins (`GameSetup.bots`, validate bots < players), names
+      "Bot N", mission printed forces; places on the first Placement
+      snapshot of a turn, plans+commits once per Planning turn, answers
+      ChooseTarget, on a Rejected re-plans safe maneuvers once. Client:
+      setup field 9 "Bots (computer players)". Bots are NOT unique-checked
+      against human squads. UNPLAYTESTED on screen (server test
+      `a_bot_seat_plays_a_solo_game_through` covers 3 rounds).
+      NEXT: user playtest of missions + bots → v0.5.0 (protocol 4).
       >>> RESUME HERE: card automation is essentially COMPLETE
       (2026-09-09, 216 tests). Upgrade-effect batches 1-3 (commits
       0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B

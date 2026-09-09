@@ -36,6 +36,13 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    special rules (the senator's shuttle and the **P** Protect action, the
    disabled ship, satellite scanning, reinforcements placed mid-game) and
    objectives are enforced and explained in the glossary's Rules tab.
+   **Solo play**: the setup screen's last field, **Bots**, seats computer
+   players after you (up to players − 1), so a duel, a team game, a
+   free-for-all or a mission can be tried alone. Bots place their ships,
+   fly toward the nearest enemy (or an escape edge / satellite in a
+   mission), take Focus, and shoot the weakest target; they field the
+   cheapest generic pilot of their faction up to the points, or the
+   mission's printed force.
 3. Card images for the squad builder are optional; see
    [Card images](#card-images-optional) below. Without them the builder
    shows the card text.
