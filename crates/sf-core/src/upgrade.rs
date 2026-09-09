@@ -327,6 +327,8 @@ impl UpgradeEffect {
                 | BarrelRollActionDiscardLock
                 | TwoDifferentModifications
                 | BarGainsSystemCheaper
+                | BlankToEvadeAtRange3OrOutsideArc
+                | ShareLockWithFriendly
                 | StressDefenderIfInArc
                 | ScoreToSettle
                 | CannonTractorToken

@@ -855,6 +855,15 @@ impl GameState {
         friends.len() as u8
     }
 
+    /// Targeting Synchronizer: a friend within Range 1-2 of the attacker
+    /// holds a lock on `target` and shares it.
+    fn synced_lock(&self, content: &Content, a_idx: usize, target: ShipId) -> bool {
+        self.friends_within(content, a_idx, 2).into_iter().any(|f| {
+            self.ships[f].lock == Some(target)
+                && self.has_effect(content, f, UpgradeEffect::ShareLockWithFriendly)
+        })
+    }
+
     /// Is a living enemy of ship `i` with `ability` at Range 1 of it?
     fn enemy_ability_at_range1(&self, content: &Content, i: usize, ability: PilotAbility) -> bool {
         (0..self.ships.len()).any(|e| {
@@ -4535,7 +4544,9 @@ impl GameState {
                 let armed = match req {
                     AttackRequirement::Free => true,
                     AttackRequirement::TargetLock => {
-                        self.ships[a_idx].lock == Some(s.id) || deadeye
+                        self.ships[a_idx].lock == Some(s.id)
+                            || deadeye
+                            || self.synced_lock(content, a_idx, s.id)
                     }
                     AttackRequirement::Focus => self.ships[a_idx].focus > 0,
                 };
@@ -4630,6 +4641,14 @@ impl GameState {
                     AttackRequirement::TargetLock if self.ships[a_idx].lock == Some(defender) => {
                         self.ships[a_idx].lock = None;
                         lock_spent = true;
+                    }
+                    // Targeting Synchronizer: a friend's lock counts, and
+                    // nothing is spent.
+                    AttackRequirement::TargetLock if self.synced_lock(content, a_idx, defender) => {
+                        events.push(format!(
+                            "{}: Targeting Synchronizer — fires on a friend's lock",
+                            self.label(content, a_idx)
+                        ));
                     }
                     // Deadeye: the focus token is spent as the lock.
                     AttackRequirement::TargetLock => {
@@ -5232,6 +5251,20 @@ impl GameState {
                 }
             }
             self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
+            // Autothrusters: beyond Range 2 or outside the attacker's arc,
+            // a blank becomes an evade.
+            let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+            if evading < incoming
+                && (range == 3 || !self.ship_in_front_arc(content, a_idx, d_idx))
+                && self.has_effect(content, d_idx, UpgradeEffect::BlankToEvadeAtRange3OrOutsideArc)
+                && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Blank)
+            {
+                *f = DefenseFace::Evade;
+                events.push(format!(
+                    "{}: Autothrusters — blank result to evade",
+                    self.label(content, d_idx)
+                ));
+            }
             // Agent Kallus: one focus result to an evade against his mark.
             let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
             if evading < incoming
@@ -8251,6 +8284,44 @@ mod tests {
         let rec = resolve(&c, &mut gs, vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
         assert_eq!(imperial_shot(&rec).hits, 2, "{:?}", rec.events);
         assert!(gs.ships[0].upgrades.contains(&crack), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn autothrusters_turn_a_blank_into_an_evade_at_range_3() {
+        let c = content();
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(75));
+        let rec = resolve(&c, &mut gs, vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).range, 3);
+        assert_eq!(rebel_shot(&rec).hits, 2, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn targeting_synchronizer_shares_a_friends_lock_for_ordnance() {
+        let c = content();
+        let torps = UpgradeId(1);
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[
+                ("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4),
+                ("bluesquadronnovice", Pose::new(13.0, 17.5, -FRAC_PI_2), 1),
+            ],
+        );
+        gs.ships[1].upgrades.push(torps);
+        gs.ships[2].upgrades.push(UpgradeId(25));
+        gs.ships[2].lock = Some(ShipId(0));
+        let mut rolls = scripted(vec![7; 30]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let CombatStep::NeedTarget(p) = gs.combat_step(&c, &mut rolls).unwrap() else {
+            panic!("expected a weapon choice for the X-Wing")
+        };
+        assert_eq!(p.attacker, ShipId(1));
+        assert!(p.options.iter().any(|o| o.weapon == Some(torps)), "{:?}", p.options);
+        let rec = gs.declare_target(&c, P1, ShipId(0), Some(torps), &mut rolls).unwrap();
+        assert!(!rec.lock_spent && !rec.attacker_focus_spent);
+        assert_eq!(gs.ships[2].lock, Some(ShipId(0)), "the friend keeps the lock");
     }
 
     #[test]

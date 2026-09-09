@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (214 tests),
+`cargo build` clean, `cargo test --workspace` green (216 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -233,7 +233,7 @@ and Server `ws://127.0.0.1:7777`.
       the second-action keys, the black hole pull, the torpedo pick and
       Lorrir's keys — ask the user for feedback next session.
       >>> RESUME HERE: card automation is essentially COMPLETE
-      (2026-09-09, 214 tests). Upgrade-effect batches 1-3 (commits
+      (2026-09-09, 216 tests). Upgrade-effect batches 1-3 (commits
       0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B
       (add020a, c709fd4) are in. Machinery worth knowing: `used_round`
       (once-per-round cards, cleared in the End phase), `ordnance`
