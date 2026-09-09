@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (174 tests),
+`cargo build` clean, `cargo test --workspace` green (182 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -208,28 +208,28 @@ and Server `ws://127.0.0.1:7777`.
       for what is live and what was skipped); ~~in-game glossary~~ DONE
       2026-09-09 (F1 / "? glossary" button, see the backlog entry —
       unseen on screen by the user yet).
-      >>> RESUME HERE (after the 2026-09-09 compaction): 1. Seismic
-      Torpedo (Torpedo slot, id 4? check upgrades.ron xws
-      "seismictorpedo": "Action: choose an obstacle at Range 1-2; each
-      ship at Range 1 of it suffers 1 damage; discard the card and
-      remove the obstacle" — needs a planned target: add
-      `PlannedAction::CardActionAt(UpgradeId, u32 obstacle id)`, a
-      planning key (e.g. T then click the obstacle) and the client's
-      obstacle hit-test with `obstacle::point_in_convex`; removal =
-      `obstacles.retain`; animate the token vanishing). 2. Lieutenant
-      Lorrir (barrel roll with the bank-1 templates for a stress:
-      `PlannedAction::BarrelRollBank(Side, forward: bool)` — geometry:
-      bank template alongside the base, ship placed at its far end;
-      approximate as the straight-1 roll plus a ±0.5-unit fore/aft
-      slide and a 45° heading change? Better: apply `maneuver::apply`
-      of a bank-1 from a pose rotated 90° at the base side, like
-      barrel_roll_pose does for the straight), Turr Phennir (free boost
-      or roll after attacking: `SecondActionKind::RepositionAfterAttack`
-      executed in perform_attack_on's after-attack step, records on
-      AttackRecord for the animation), Expert Handling (barrel roll as a
-      card action with stress if no icon, then remove an enemy lock).
-      3. Then v0.4.0 once the user has tried the setup screen, the
-      second-action keys and the black hole pull on screen.
+      >>> RESUME HERE: everything below is DONE 2026-09-09 (commits
+      d97a1e6, d9d9915; 182 tests): ~~Seismic Torpedo~~ (card action
+      `PlannedAction::CardActionAt(card, obstacle id)` — key K offers it,
+      then click the obstacle; after moving it must be at Range 1-2 in
+      the primary arc; every ship at Range 1 rolls one attack die via
+      `detonate` with `BombKind::SeismicTorpedo`, obstacle removed;
+      `MoveRecord.seismic: Option<SeismicBlast>`, client plays the blast
+      and hides the obstacle via `Anim.removed_obstacles`).
+      ~~Lieutenant Lorrir~~ (`PlannedAction::BarrelRollBank(Side,
+      forward)`, `action::barrel_roll_bank_pose`: bank-1 template from
+      the side midpoint, ship set flush at its far end, heading turns
+      45° — away from the roll side when bending forward; keys ; and '
+      (Shift = backward); 1 stress). ~~Turr Phennir~~
+      (`SecondActionKind::RepositionAfterAttack`: the second slot is kept
+      through movement and performed in `perform_attack_on` after the
+      attack; `AttackRecord.reposition: Option<Reposition>` moves the
+      sprite when the attack animation ends). ~~Expert Handling~~
+      (`ActionExtras.expert_roll`: barrel roll allowed without the icon,
+      stress if missing, then one enemy lock on the ship removed —
+      `after_expert_roll`). NEXT: v0.4.0 once the user has tried the
+      setup screen, the second-action keys, the black hole pull, the
+      torpedo pick and Lorrir's keys on screen (all unplaytested).
       Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
