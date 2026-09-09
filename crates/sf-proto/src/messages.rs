@@ -97,11 +97,15 @@ pub enum ServerMsg {
     GameCreated {
         code: String,
     },
-    /// Both players present — the match begins. You are `seat`
-    /// (0 deploys South, 1 North).
+    /// Every seat is taken — the match begins. You are `seat` on side
+    /// `team`; `players` lists every seat's name in seat order. Sides
+    /// deploy South, North, East, West in team order.
     GameStart {
         seat: u8,
-        opponent: String,
+        #[serde(default)]
+        team: u8,
+        #[serde(default)]
+        players: Vec<String>,
         board: Board,
         /// The host's setup (scenario name and numbers).
         #[serde(default)]
@@ -112,11 +116,16 @@ pub enum ServerMsg {
         phase: Phase,
         turn: u32,
         ships: Vec<ShipView>,
-        committed: [bool; 2],
+        /// One entry per seat.
+        committed: Vec<bool>,
         /// Seat holding the initiative token (breaks pilot-skill ties:
         /// moves first AND fires first at equal skill).
         initiative: u8,
-        squad_totals: [u32; 2],
+        /// Squad points per seat.
+        squad_totals: Vec<u32>,
+        /// Side (team) of each seat.
+        #[serde(default)]
+        teams: Vec<u8>,
         /// Bomb and mine tokens on the board (public).
         #[serde(default)]
         bombs: Vec<BombToken>,
@@ -165,7 +174,7 @@ pub enum ServerMsg {
         events: Vec<String>,
     },
     GameOver {
-        /// Winning seat; None on mutual destruction.
+        /// Winning side (team index); None when you resigned.
         winner: Option<u8>,
         reason: String,
     },

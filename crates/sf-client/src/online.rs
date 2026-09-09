@@ -41,9 +41,12 @@ pub struct Snap {
     pub phase: Phase,
     pub turn: u32,
     pub ships: Vec<ShipView>,
-    pub committed: [bool; 2],
+    /// One entry per seat.
+    pub committed: Vec<bool>,
     pub initiative: u8,
-    pub totals: [u32; 2],
+    pub totals: Vec<u32>,
+    /// Side of each seat.
+    pub teams: Vec<u8>,
     /// Bomb and mine tokens on the board.
     pub bombs: Vec<BombToken>,
     /// Asteroid and debris tokens.
@@ -146,7 +149,10 @@ pub struct Online {
     pub target: Option<sf_proto::tls::Target>,
     pub seat: Option<u8>,
     pub code: Option<String>,
-    pub opponent: String,
+    /// Every seat's name, in seat order (from GameStart).
+    pub players: Vec<String>,
+    /// Our side (team index).
+    pub team: u8,
     pub snap: Option<Snap>,
     /// Snapshot held back while a turn animation plays.
     pub pending_snap: Option<Snap>,
@@ -198,6 +204,17 @@ impl Online {
 
     fn my_seat(&self) -> u8 {
         self.seat.unwrap_or(0)
+    }
+
+    /// The board edge our side deploys from.
+    fn my_edge(&self, teams: &[u8]) -> Seat {
+        let sides = teams.iter().copied().max().map_or(2, |m| m + 1);
+        Seat::for_side(self.team, sides)
+    }
+
+    /// Is a ship on our side?
+    fn friendly(&self, view: &ShipView) -> bool {
+        view.team == self.team
     }
 
     fn send(&self, m: ClientMsg) {
@@ -259,6 +276,7 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
     ShipView {
         id: ShipId(id),
         owner: sf_core::ship::PlayerId(owner),
+        team: owner as u8,
         class: sf_core::ship::ShipClassId(class),
         callsign: callsign.into(),
         pilot: "Demo Pilot".into(),
@@ -352,9 +370,10 @@ fn demo_snap(game: &Game) -> Snap {
         phase: Phase::Combat,
         turn: 1,
         ships,
-        committed: [true, true],
+        committed: vec![true, true],
         initiative: 0,
-        totals: [100, 100],
+        totals: vec![100, 100],
+        teams: vec![0, 1],
         bombs,
         obstacles,
     }
@@ -502,17 +521,29 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         .as_ref()
                         .map(|s| format!(" — {}", s.summary()))
                         .unwrap_or_default();
-                    online.status = format!("Game code: {code}{what}  —  waiting for opponent…");
+                    let missing = online.setup.as_ref().map(|s| s.players).unwrap_or(2) - 1;
+                    online.status = format!(
+                        "Game code: {code}{what}  —  waiting for {missing} more player{}…",
+                        if missing == 1 { "" } else { "s" }
+                    );
                     online.code = Some(code);
                 }
-                ServerMsg::GameStart { seat, opponent, board, setup } => {
+                ServerMsg::GameStart { seat, team, players, board, setup } => {
                     if setup.is_some() {
                         online.setup = setup;
                     }
                     game.board = board;
                     online.seat = Some(seat);
-                    online.status = format!("Matched with {opponent} — place your ships");
-                    online.opponent = opponent;
+                    online.team = team;
+                    let others: Vec<&str> = players
+                        .iter()
+                        .enumerate()
+                        .filter(|(s, _)| *s != seat as usize)
+                        .map(|(_, n)| n.as_str())
+                        .collect();
+                    online.status =
+                        format!("Matched with {} — place your ships", others.join(", "));
+                    online.players = players;
                 }
                 ServerMsg::Snapshot {
                     phase,
@@ -521,6 +552,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     committed,
                     initiative,
                     squad_totals,
+                    teams,
                     bombs,
                     obstacles,
                 } => {
@@ -540,6 +572,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         committed,
                         initiative,
                         totals: squad_totals,
+                        teams,
                         bombs,
                         obstacles,
                     };
@@ -612,10 +645,10 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         .push(AnimItem::TurnEnd);
                 }
                 ServerMsg::GameOver { winner, reason } => {
-                    let text = match (winner, online.seat) {
-                        (Some(w), Some(s)) if w == s => format!("VICTORY — {reason}"),
-                        (Some(_), _) => format!("DEFEAT — {reason}"),
-                        (None, _) => format!("DRAW — {reason}"),
+                    let text = match winner {
+                        Some(w) if w == online.team => format!("VICTORY — {reason}"),
+                        Some(_) => format!("DEFEAT — {reason}"),
+                        None => format!("GAME OVER — {reason}"),
                     };
                     online.over = Some(text);
                 }
@@ -652,15 +685,24 @@ fn seed_default_placement(online: &mut Online, game: &Game) {
     }
     let Some(snap) = &online.snap else { return };
     let seat = online.my_seat();
-    let (y, heading) =
-        if seat == 0 { (1.5, FRAC_PI_2) } else { (game.board.height - 1.5, -FRAC_PI_2) };
+    let edge = online.my_edge(&snap.teams);
+    let heading = edge.facing();
+    // Along the edge, 1.5 units in; teammates start further along so
+    // their rows do not overlap.
+    let (x0, y0, x1, y1) = game.board.deploy_zone(edge);
     let mut seeds = Vec::new();
-    let mut x = 5.0;
+    let mut t = 3.0 + f64::from(seat) * 1.5;
     for view in snap.ships.iter().filter(|s| s.owner.0 == seat as u32) {
         if view.pose.is_none() && !online.overrides.contains_key(&view.id.0) {
-            seeds.push((view.id.0, Pose::new(x, y, heading)));
+            let pose = match edge {
+                Seat::South => Pose::new(t, y0 + 1.5, heading),
+                Seat::North => Pose::new(t, y1 - 1.5, heading),
+                Seat::East => Pose::new(x1 - 1.5, t, heading),
+                Seat::West => Pose::new(x0 + 1.5, t, heading),
+            };
+            seeds.push((view.id.0, pose));
         }
-        x += 4.0;
+        t += 4.0;
     }
     for (id, pose) in seeds {
         online.overrides.insert(id, pose);
@@ -1409,7 +1451,7 @@ fn planning_input(
         let target = online.snap.as_ref().and_then(|snap| {
             snap.ships
                 .iter()
-                .filter(|v| v.owner.0 != seat as u32 && !v.destroyed)
+                .filter(|v| !online.friendly(v) && !v.destroyed)
                 .find(|v| {
                     v.pose.is_some_and(|p| {
                         let fp = game.ships.classes[game.class_index(v.class)].footprint;
@@ -2036,15 +2078,17 @@ fn draw(
         }
         let class = &game.ships.classes[game.class_index(view.class)];
         let own = view.owner.0 == seat as u32;
+        let ally = !own && online.friendly(view);
         let selected = own && online.sel == Some(view.id.0);
-        let mut color = match (own, selected) {
-            (_, true) => Color::srgb(1.0, 0.9, 0.3),
-            (true, _) => Color::srgba(0.3, 0.9, 0.4, 0.7),
-            (false, _) => Color::srgba(0.9, 0.4, 0.3, 0.7),
+        let mut color = match (own, ally, selected) {
+            (_, _, true) => Color::srgb(1.0, 0.9, 0.3),
+            (true, _, _) => Color::srgba(0.3, 0.9, 0.4, 0.7),
+            (_, true, _) => Color::srgba(0.4, 0.7, 1.0, 0.7),
+            _ => Color::srgba(0.9, 0.4, 0.3, 0.7),
         };
         // Placement legality tint for own provisional poses.
         if own && snap.phase == Phase::Placement {
-            let zone_seat = if seat == 0 { Seat::South } else { Seat::North };
+            let zone_seat = online.my_edge(&snap.teams);
             let corners = rules::footprint_corners(pose, class.footprint);
             let on_rock =
                 snap.obstacles.iter().any(|o| obstacle::convex_overlap(&corners, &o.polygon()));
@@ -2159,19 +2203,33 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         return;
     };
     let seat = online.my_seat();
-    let init = if snap.initiative == seat { "you" } else { "opponent" };
-    let committed = format!(
-        "committed: you {} / opp {}",
-        if snap.committed[seat as usize] { "✔" } else { "—" },
-        if snap.committed[1 - seat as usize] { "✔" } else { "—" },
-    );
+    let team_of = |s: usize| snap.teams.get(s).copied().unwrap_or(s as u8);
+    let init = if snap.initiative == seat {
+        "you".to_string()
+    } else if team_of(snap.initiative as usize) == online.team {
+        "ally".to_string()
+    } else {
+        "enemy".to_string()
+    };
+    let name_of = |s: usize| {
+        if s == seat as usize {
+            "you".to_string()
+        } else {
+            online.players.get(s).cloned().unwrap_or_else(|| format!("seat {s}"))
+        }
+    };
+    let committed: Vec<String> = (0..snap.committed.len())
+        .map(|s| format!("{} {}", name_of(s), if snap.committed[s] { "✔" } else { "—" }))
+        .collect();
+    let committed = format!("committed: {}", committed.join(" / "));
+    let mine: u32 =
+        (0..snap.totals.len()).filter(|s| team_of(*s) == online.team).map(|s| snap.totals[s]).sum();
+    let theirs: u32 =
+        (0..snap.totals.len()).filter(|s| team_of(*s) != online.team).map(|s| snap.totals[s]).sum();
     let scenario = online.setup.as_ref().map(|s| format!(" | {}", s.summary())).unwrap_or_default();
     let mut lines = vec![format!(
-        "TURN {} | {:?} | initiative: {init} ({} vs {} pts) | {committed}{scenario}",
-        snap.turn,
-        snap.phase,
-        snap.totals[seat as usize],
-        snap.totals[1 - seat as usize],
+        "TURN {} | {:?} | initiative: {init} ({mine} vs {theirs} pts) | {committed}{scenario}",
+        snap.turn, snap.phase,
     )];
     if let Some(view) = online.sel.and_then(|id| snap.ships.iter().find(|v| v.id.0 == id)) {
         let class = &game.ships.classes[game.class_index(view.class)];

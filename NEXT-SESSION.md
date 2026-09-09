@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (216 tests),
+`cargo build` clean, `cargo test --workspace` green (220 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -251,13 +251,37 @@ and Server `ws://127.0.0.1:7777`.
       Lightning Reflexes, Millennium Falcon title, Daredevil,
       Experimental Interface, Snap Shot, Decoy, Hyperwave Comm Scanner,
       Intelligence Agent; pilot Han Solo HotR (setup anywhere beyond
-      Range 3). Unplaytested on screen: everything since v0.4.0 plus
-      the setup screen, second-action keys, black hole pull, torpedo
-      pick, Lorrir keys. NEXT candidates: playtest feedback → v0.5.0;
-      multi-player seats (GameSetup already reserves >2 players;
-      GameState/Seat/server session are 2-player; protocol change);
-      the data-only cards above as planning toggles (a "reveal card"
-      slot like `bomb` for Lightning Reflexes / Falcon title / Decoy).
+      Range 3). MULTI-PLAYER SEATS DONE 2026-09-09 (PROTOCOL 4,
+      unreleased): `GameSetup.players` 2-4 + `teams: Vec<u8>` (side per
+      seat; empty = free-for-all; `set_teams`, `points_for_seat` =
+      points / seats on the side per core rules p.20, `mode_name`);
+      `Seat` gained East/West with `deploy_zone` rectangles and
+      `Seat::for_side` (sides deploy S, N, E, W); `GameState.teams`,
+      `allied()`, `seat_of()`, `seat_ranks()` (initiative side first,
+      then seat order), `alive_teams()`/`check_victory()`, `winner`
+      is now the winning TEAM index, `resign()` destroys the player's
+      ships and returns the winner only when one side is left; every
+      "friendly/enemy" check in game.rs and weapons.rs is team-based
+      (ownership checks stay for control/hidden info); `ShipView.team`.
+      Server: capacity = setup.players, per-seat SquadRules, lobby code
+      stays open until full, GameStart { seat, team, players }, Snapshot
+      { committed: Vec, squad_totals: Vec, teams }, resign/disconnect
+      with >2 sides keeps the game going (pre-start disconnect cancels
+      the lobby). Client: setup screen fields Players (2-4) and Mode
+      (teams / free-for-all), placement seeding per edge, ally colour
+      (blue), team-based lock picking, HUD committed list per seat.
+      Presets: Team battle 2v2, Outnumbered 1v2, Three-way and Four-way
+      free-for-all; glossary "Team play and free-for-all". Tests:
+      sf-core team/FFA tests, rules East/West zones, server 3-player
+      flow (220 total). NOT done: unique-pilot limit per team (rules
+      p.19) is still per squad; free-for-all is our extension (rules
+      only know two sides); >2 seats unplaytested on screen — needs 3
+      clients. Unplaytested on screen: everything since v0.4.0 plus the
+      setup screen, second-action keys, black hole pull, torpedo pick,
+      Lorrir keys. NEXT: playtest feedback → v0.5.0 (protocol 4 means
+      new zips for everyone); the data-only cards above as planning
+      toggles (a "reveal card" slot like `bomb` for Lightning Reflexes /
+      Falcon title / Decoy).
       Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
@@ -814,6 +838,6 @@ pins.txt + last-used menu values), starfield.rs.
   considering an alternative approach.
 - Real squad costs, pilot roster (abilities would activate Injured
   Pilot), ordnance content, faction rosters for the squad builder.
-- 3+ players: designed-for but GameState/Seat model is 2-player.
+- 3+ players: DONE 2026-09-09 (teams / free-for-all, 2-4 seats); unique-per-team limit not enforced.
 - Boost exists as an action (T-70 bar) — sandbox/online action keys
   cover it; no dedicated preview arrows yet.

@@ -37,19 +37,20 @@ pub enum Phase {
     GameOver,
 }
 
-/// Who holds initiative at setup. The lower squad-point total's player
-/// takes it; on a tie, seat 0 (the game creator) rolls one red die —
-/// Hit/Crit keeps it, Focus/Blank hands it to the opponent. ("Choosing"
-/// is automated as choosing yourself.)
-pub fn initiative_seat(totals: [u32; 2], tie_roll: crate::dice::AttackFace) -> usize {
+/// Who holds initiative at setup: the side with the lowest squad-point
+/// total. On a tie the first tied side (the game creator's, when it is
+/// among them) rolls one red die — Hit/Crit keeps it, Focus/Blank hands
+/// it to the next tied side. ("Choosing" is automated as choosing
+/// yourself.) Returns the index into `totals`.
+pub fn initiative_seat(totals: &[u32], tie_roll: crate::dice::AttackFace) -> usize {
     use crate::dice::AttackFace;
-    match totals[0].cmp(&totals[1]) {
-        std::cmp::Ordering::Less => 0,
-        std::cmp::Ordering::Greater => 1,
-        std::cmp::Ordering::Equal => match tie_roll {
-            AttackFace::Hit | AttackFace::Crit => 0,
-            AttackFace::Focus | AttackFace::Blank => 1,
-        },
+    let low = totals.iter().copied().min().unwrap_or(0);
+    let tied: Vec<usize> = (0..totals.len()).filter(|&i| totals[i] == low).collect();
+    match (tied.len(), tie_roll) {
+        (0, _) => 0,
+        (1, _) => tied[0],
+        (_, AttackFace::Hit | AttackFace::Crit) => tied[0],
+        (_, AttackFace::Focus | AttackFace::Blank) => tied[1],
     }
 }
 
@@ -96,17 +97,19 @@ fn substitute_non_red(dial: &[Maneuver], crits: &[CritEffect]) -> Option<Maneuve
 
 /// Movement phase order: LOWEST pilot skill moves first. At equal skill
 /// the initiative player's ships go first; then ship id.
-pub fn movement_order(ships: &[(ShipId, u8, PlayerId)], initiative: PlayerId) -> Vec<ShipId> {
+pub fn movement_order(ships: &[(ShipId, u8, PlayerId)], ranks: &[u8]) -> Vec<ShipId> {
+    let rank = |p: PlayerId| ranks.get(p.0 as usize).copied().unwrap_or(u8::MAX);
     let mut v: Vec<_> = ships.to_vec();
-    v.sort_by_key(|&(id, skill, owner)| (skill, owner != initiative, id.0));
+    v.sort_by_key(|&(id, skill, owner)| (skill, rank(owner), id.0));
     v.into_iter().map(|(id, _, _)| id).collect()
 }
 
 /// Combat phase order: HIGHEST pilot skill fires first. At equal skill
 /// the initiative player's ships fire first; then ship id.
-pub fn combat_order(ships: &[(ShipId, u8, PlayerId)], initiative: PlayerId) -> Vec<ShipId> {
+pub fn combat_order(ships: &[(ShipId, u8, PlayerId)], ranks: &[u8]) -> Vec<ShipId> {
+    let rank = |p: PlayerId| ranks.get(p.0 as usize).copied().unwrap_or(u8::MAX);
     let mut v: Vec<_> = ships.to_vec();
-    v.sort_by_key(|&(id, skill, owner)| (std::cmp::Reverse(skill), owner != initiative, id.0));
+    v.sort_by_key(|&(id, skill, owner)| (std::cmp::Reverse(skill), rank(owner), id.0));
     v.into_iter().map(|(id, _, _)| id).collect()
 }
 
@@ -382,6 +385,9 @@ pub enum CombatStep {
 pub struct ShipView {
     pub id: ShipId,
     pub owner: PlayerId,
+    /// The owner's side: ships on the same team are friendly.
+    #[serde(default)]
+    pub team: u8,
     pub class: ShipClassId,
     pub callsign: String,
     /// Pilot card name and printed skill (crits may lower the effective
@@ -435,12 +441,19 @@ pub struct GameState {
     pub phase: Phase,
     pub turn: u32,
     pub ships: Vec<ShipState>,
-    pub committed: [bool; 2],
-    pub winner: Option<PlayerId>,
-    /// Holder of the initiative token (see `initiative_seat`).
+    /// One entry per seat.
+    pub committed: Vec<bool>,
+    /// The winning side (team index) once the game is over.
+    pub winner: Option<u8>,
+    /// Holder of the initiative token (see `initiative_seat`): the first
+    /// seat of the side that has it.
     pub initiative: PlayerId,
     /// Squad-point totals per seat, for display.
-    pub squad_totals: [u32; 2],
+    pub squad_totals: Vec<u32>,
+    /// Side (team) of each seat; seats on one side are friendly and win
+    /// or lose together. A duel is `[0, 1]`.
+    #[serde(default)]
+    pub teams: Vec<u8>,
     /// Present while the Combat phase is being stepped through.
     pub combat: Option<CombatState>,
     /// Bomb and mine tokens currently on the board.
@@ -452,9 +465,9 @@ pub struct GameState {
     #[serde(default)]
     pub obstacles: Vec<Obstacle>,
     /// Leia Organa (crew) was discarded this round: that seat's red
-    /// maneuvers are flown as white.
+    /// maneuvers are flown as white (one entry per seat).
     #[serde(default)]
-    pub white_reds: [bool; 2],
+    pub white_reds: Vec<bool>,
 }
 
 impl GameState {
@@ -469,7 +482,7 @@ impl GameState {
     ) -> Result<Self, String> {
         let a = Squad::basic(content, "south", fleets[0]);
         let b = Squad::basic(content, "north", fleets[1]);
-        Self::from_squads(board, content, [&a, &b], tie_roll)
+        Self::from_squads(board, content, &[&a, &b], &[0, 1], tie_roll)
     }
 
     /// Build a game from two (already validated) squads. `tie_roll` is
@@ -478,12 +491,18 @@ impl GameState {
     pub fn from_squads(
         board: Board,
         content: &Content,
-        squads: [&Squad; 2],
+        squads: &[&Squad],
+        teams: &[u8],
         tie_roll: crate::dice::AttackFace,
     ) -> Result<Self, String> {
+        let n = squads.len();
+        if !(2..=4).contains(&n) {
+            return Err(format!("{n} squads: a game needs 2-4"));
+        }
+        let teams: Vec<u8> = if teams.len() == n { teams.to_vec() } else { (0..n as u8).collect() };
         let pilot_of =
             |id: PilotId| content.pilots.pilot(id).ok_or_else(|| format!("unknown pilot {id:?}"));
-        let factions = [squads[0].faction, squads[1].faction];
+        let factions: Vec<_> = squads.iter().map(|s| s.faction).collect();
         let squad_names = crate::ship::squad_names(&factions);
         let mut ships = Vec::new();
         for (seat, squad) in squads.iter().enumerate() {
@@ -558,15 +577,16 @@ impl GameState {
             phase: Phase::Placement,
             turn: 1,
             ships,
-            committed: [false, false],
+            committed: vec![false; n],
             winner: None,
             initiative: PlayerId(0),
-            squad_totals: [0, 0],
+            squad_totals: vec![0; n],
+            teams: teams.clone(),
             combat: None,
             bombs: Vec::new(),
             next_bomb_id: 0,
             obstacles: Vec::new(),
-            white_reds: [false, false],
+            white_reds: vec![false; n],
         };
         for i in 0..gs_probe.ships.len() {
             let (h, sh) = (
@@ -577,27 +597,84 @@ impl GameState {
             gs_probe.ships[i].shields = sh;
         }
         let ships = gs_probe.ships;
-        let squad_totals = [squads[0].cost(content), squads[1].cost(content)];
-        let initiative = PlayerId(initiative_seat(squad_totals, tie_roll) as u32);
+        let squad_totals: Vec<u32> = squads.iter().map(|s| s.cost(content)).collect();
+        // Initiative goes to the side with the lowest total; the token
+        // sits with that side's first seat.
+        let sides = teams.iter().copied().max().unwrap_or(0) as usize + 1;
+        let side_totals: Vec<u32> = (0..sides)
+            .map(|t| {
+                squad_totals
+                    .iter()
+                    .zip(&teams)
+                    .filter(|(_, x)| **x as usize == t)
+                    .map(|(c, _)| c)
+                    .sum()
+            })
+            .collect();
+        let side = initiative_seat(&side_totals, tie_roll) as u8;
+        let initiative = PlayerId(teams.iter().position(|t| *t == side).unwrap_or(0) as u32);
         Ok(Self {
             board,
             phase: Phase::Placement,
             turn: 1,
             ships,
-            committed: [false, false],
+            committed: vec![false; n],
             winner: None,
             initiative,
             squad_totals,
+            teams,
             combat: None,
             bombs: Vec::new(),
             next_bomb_id: 0,
             obstacles: Vec::new(),
-            white_reds: [false, false],
+            white_reds: vec![false; n],
         })
     }
 
-    fn seat_of(player: PlayerId) -> Seat {
-        if player.0 == 0 { Seat::South } else { Seat::North }
+    /// The side (team) of a seat.
+    pub fn team(&self, player: PlayerId) -> u8 {
+        self.teams.get(player.0 as usize).copied().unwrap_or(player.0 as u8)
+    }
+
+    /// Number of sides in the game.
+    pub fn sides(&self) -> u8 {
+        self.teams.iter().copied().max().map_or(2, |m| m + 1)
+    }
+
+    /// Are two seats on the same side (a seat is allied with itself)?
+    pub fn allied(&self, a: PlayerId, b: PlayerId) -> bool {
+        self.team(a) == self.team(b)
+    }
+
+    /// The board edge a seat deploys from: its side's edge.
+    pub fn seat_of(&self, player: PlayerId) -> Seat {
+        Seat::for_side(self.team(player), self.sides())
+    }
+
+    /// Tie-break rank per seat for equal pilot skill: the initiative
+    /// side first (its initiative seat, then its other seats in seat
+    /// order), then the other sides in seat order.
+    fn seat_ranks(&self) -> Vec<u8> {
+        let n = self.committed.len().max(2);
+        let init = self.initiative.0 as usize;
+        let init_team = self.team(self.initiative);
+        let mut order: Vec<usize> = vec![init];
+        order.extend((0..n).filter(|&s| s != init && self.team(PlayerId(s as u32)) == init_team));
+        order.extend((0..n).filter(|&s| self.team(PlayerId(s as u32)) != init_team));
+        let mut ranks = vec![u8::MAX; n];
+        for (rank, seat) in order.into_iter().enumerate() {
+            ranks[seat] = rank as u8;
+        }
+        ranks
+    }
+
+    /// Sides with at least one ship still in play.
+    fn alive_teams(&self) -> Vec<u8> {
+        let mut v: Vec<u8> =
+            self.ships.iter().filter(|s| !s.destroyed).map(|s| self.team(s.owner)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     fn class_of<'a>(&self, content: &'a Content, ship: &ShipState) -> &'a ShipClass {
@@ -665,7 +742,7 @@ impl GameState {
         let gemmer = self.ability(content, s) == Some(PilotAbility::AgilityPlus1IfEnemyAtRange1)
             && self.ships.iter().position(|x| x.id == s.id).is_some_and(|i| {
                 (0..self.ships.len()).any(|e| {
-                    self.ships[e].owner != s.owner
+                    !self.allied(self.ships[e].owner, s.owner)
                         && !self.ships[e].destroyed
                         && self.range_between(content, i, e) == Some(1)
                 })
@@ -761,7 +838,7 @@ impl GameState {
         (0..self.ships.len())
             .filter(|&o| {
                 o != s
-                    && self.ships[o].owner == self.ships[s].owner
+                    && self.allied(self.ships[o].owner, self.ships[s].owner)
                     && !self.ships[o].destroyed
                     && self.range_between(content, s, o).is_some_and(|r| r <= band)
             })
@@ -800,7 +877,7 @@ impl GameState {
         }
         self.ships
             .iter()
-            .filter(|s| s.owner != self.ships[i].owner)
+            .filter(|s| !self.allied(s.owner, self.ships[i].owner))
             .max_by_key(|s| {
                 (content.pilots.pilot(s.pilot).map(|p| p.cost).unwrap_or(0), u32::MAX - s.id.0)
             })
@@ -814,7 +891,7 @@ impl GameState {
         let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
         (0..self.ships.len()).any(|k| {
             let s = &self.ships[k];
-            s.owner != self.ships[i].owner
+            !self.allied(s.owner, self.ships[i].owner)
                 && !s.destroyed
                 && self.has_effect(content, k, UpgradeEffect::ReduceAgilityWhileTouching)
                 && s.pose.is_some_and(|q| {
@@ -836,7 +913,7 @@ impl GameState {
         let friends: Vec<usize> = (0..self.ships.len())
             .filter(|&f| {
                 f != a_idx
-                    && self.ships[f].owner == self.ships[a_idx].owner
+                    && self.allied(self.ships[f].owner, self.ships[a_idx].owner)
                     && !self.ships[f].destroyed
                     && self.ships[f].evade > 0
                     && self.range_between(content, f, d_idx).is_some()
@@ -867,7 +944,7 @@ impl GameState {
     /// Is a living enemy of ship `i` with `ability` at Range 1 of it?
     fn enemy_ability_at_range1(&self, content: &Content, i: usize, ability: PilotAbility) -> bool {
         (0..self.ships.len()).any(|e| {
-            self.ships[e].owner != self.ships[i].owner
+            !self.allied(self.ships[e].owner, self.ships[i].owner)
                 && !self.ships[e].destroyed
                 && self.ability(content, &self.ships[e]) == Some(ability)
                 && self.range_between(content, i, e) == Some(1)
@@ -954,7 +1031,9 @@ impl GameState {
         let Some(p) = self.ships[i].pose else { return false };
         let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
         let candidates: Vec<(usize, f64)> = (0..self.ships.len())
-            .filter(|&e| self.ships[e].owner != self.ships[i].owner && !self.ships[e].destroyed)
+            .filter(|&e| {
+                !self.allied(self.ships[e].owner, self.ships[i].owner) && !self.ships[e].destroyed
+            })
             .filter_map(|e| {
                 let q = self.ships[e].pose?;
                 let theirs =
@@ -989,9 +1068,9 @@ impl GameState {
         friends.extend(self.friends_at_range1(content, i));
         for f in friends {
             let fid = self.ships[f].id;
-            if let Some(e) = (0..self.ships.len())
-                .find(|&e| self.ships[e].owner != owner && self.ships[e].lock == Some(fid))
-            {
+            if let Some(e) = (0..self.ships.len()).find(|&e| {
+                !self.allied(self.ships[e].owner, owner) && self.ships[e].lock == Some(fid)
+            }) {
                 self.ships[e].lock = None;
                 events.push(format!(
                     "{}: Black One — {}'s lock on {} removed",
@@ -1034,7 +1113,7 @@ impl GameState {
     /// Any living enemy inside ship `i`'s firing arc at Range 1?
     fn enemy_in_arc_at_range1(&self, content: &Content, i: usize) -> bool {
         (0..self.ships.len()).any(|e| {
-            self.ships[e].owner != self.ships[i].owner
+            !self.allied(self.ships[e].owner, self.ships[i].owner)
                 && !self.ships[e].destroyed
                 && self.range_between(content, i, e) == Some(1)
                 && self.ship_in_front_arc(content, i, e)
@@ -1384,7 +1463,7 @@ impl GameState {
             })
             .collect();
         for k in holders {
-            let enemy = self.ships[k].owner != self.ships[a_idx].owner;
+            let enemy = !self.allied(self.ships[k].owner, self.ships[a_idx].owner);
             let pick = if enemy {
                 faces
                     .iter()
@@ -1772,7 +1851,7 @@ impl GameState {
                 let friends: Vec<usize> = (0..self.ships.len())
                     .filter(|&j| {
                         j != a_idx
-                            && self.ships[j].owner == self.ships[a_idx].owner
+                            && self.allied(self.ships[j].owner, self.ships[a_idx].owner)
                             && !self.ships[j].destroyed
                             && self.ships[j].lock.is_none()
                             && matches!(self.range_between(content, a_idx, j), Some(1 | 2))
@@ -1827,7 +1906,7 @@ impl GameState {
             let pick = near
                 .iter()
                 .copied()
-                .find(|&j| self.ships[j].owner != self.ships[a_idx].owner)
+                .find(|&j| !self.allied(self.ships[j].owner, self.ships[a_idx].owner))
                 .or_else(|| near.first().copied());
             if let Some(j) = pick {
                 self.damage_point(j);
@@ -1842,7 +1921,7 @@ impl GameState {
         // hit on the defender — taken when it finishes the defender off
         // and the attacker keeps at least one hull.
         if !self.ships[d_idx].destroyed
-            && self.ships[d_idx].owner != self.ships[a_idx].owner
+            && !self.allied(self.ships[d_idx].owner, self.ships[a_idx].owner)
             && self.ships[d_idx].shields == 0
             && self.ships[d_idx].hull == 1
             && self.ships[a_idx].shields + self.ships[a_idx].hull >= 3
@@ -1891,7 +1970,7 @@ impl GameState {
             let owner = self.ships[a_idx].owner;
             let specialists: Vec<usize> = (0..self.ships.len())
                 .filter(|&k| {
-                    self.ships[k].owner == owner
+                    self.allied(self.ships[k].owner, owner)
                         && !self.ships[k].destroyed
                         && self.has_effect(content, k, UpgradeEffect::CrewFocusAfterFriendlyMiss)
                         && (k == a_idx
@@ -1902,7 +1981,7 @@ impl GameState {
                 let friends: Vec<usize> = (0..self.ships.len())
                     .filter(|&j| {
                         j != a_idx
-                            && self.ships[j].owner == owner
+                            && self.allied(self.ships[j].owner, owner)
                             && !self.ships[j].destroyed
                             && self.range_between(content, a_idx, j).is_some()
                     })
@@ -2066,10 +2145,10 @@ impl GameState {
         let own_placed: Vec<(ShipId, Pose, Footprint)> = self
             .ships
             .iter()
-            .filter(|s| s.owner == player && s.id != ship_id)
+            .filter(|s| self.allied(s.owner, player) && s.id != ship_id)
             .filter_map(|s| s.pose.map(|p| (s.id, p, self.class_of(content, s).footprint)))
             .collect();
-        rules::placement_legal(&self.board, Self::seat_of(player), pose, fp, &own_placed).map_err(
+        rules::placement_legal(&self.board, self.seat_of(player), pose, fp, &own_placed).map_err(
             |e| match e {
                 rules::PlacementError::OutOfZone => Rejection::OutOfZone,
                 rules::PlacementError::OverlapsShip(_) => Rejection::OverlapsShip,
@@ -2150,7 +2229,7 @@ impl GameState {
         }
         if let PlannedAction::TargetLock(target) = planned {
             let t = self.ship_index(target)?;
-            if self.ships[t].owner == player || self.ships[t].destroyed {
+            if self.allied(self.ships[t].owner, player) || self.ships[t].destroyed {
                 return Err(Rejection::BadLockTarget);
             }
         }
@@ -2270,7 +2349,7 @@ impl GameState {
         }
         if let PlannedAction::TargetLock(target) = planned {
             let t = self.ship_index(target)?;
-            if self.ships[t].owner == player || self.ships[t].destroyed {
+            if self.allied(self.ships[t].owner, player) || self.ships[t].destroyed {
                 return Err(Rejection::BadLockTarget);
             }
         }
@@ -2305,7 +2384,7 @@ impl GameState {
                 (0..self.ships.len())
                     .filter(|&y| {
                         y != me
-                            && self.ships[y].owner == s.owner
+                            && self.allied(self.ships[y].owner, s.owner)
                             && !self.ships[y].destroyed
                             && self.ships[y].class == s.class
                             && self.ability(content, &self.ships[y])
@@ -2460,7 +2539,7 @@ impl GameState {
                 let my_corners = rules::footprint_corners(pose, fp);
                 let kagi = (0..self.ships.len()).find(|&k| {
                     let s = &self.ships[k];
-                    s.owner != self.ships[i].owner
+                    !self.allied(s.owner, self.ships[i].owner)
                         && !s.destroyed
                         && self.ability(content, s) == Some(PilotAbility::EnemyLocksMustTargetMe)
                         && s.pose.is_some_and(|q| {
@@ -2597,7 +2676,7 @@ impl GameState {
                     // ship sits in, then a free straight boost.
                     Some(UpgradeEffect::LockAndBoostAction) => {
                         let enemy = (0..self.ships.len()).find(|&e| {
-                            self.ships[e].owner != self.ships[i].owner
+                            !self.allied(self.ships[e].owner, self.ships[i].owner)
                                 && !self.ships[e].destroyed
                                 && matches!(self.range_between(content, i, e), Some(1 | 2))
                         });
@@ -2775,7 +2854,7 @@ impl GameState {
             // critical turns one faceup.
             Some(UpgradeEffect::CrewSaboteurAction) => {
                 let target = (0..self.ships.len()).find(|&e| {
-                    self.ships[e].owner != self.ships[i].owner
+                    !self.allied(self.ships[e].owner, self.ships[i].owner)
                         && !self.ships[e].destroyed
                         && self.facedown_cards(content, e) > 0
                         && self.range_between(content, i, e) == Some(1)
@@ -2902,7 +2981,7 @@ impl GameState {
         let me = self.ships[i].id;
         let owner = self.ships[i].owner;
         if let Some(e) = (0..self.ships.len())
-            .find(|&e| self.ships[e].owner != owner && self.ships[e].lock == Some(me))
+            .find(|&e| !self.allied(self.ships[e].owner, owner) && self.ships[e].lock == Some(me))
         {
             self.ships[e].lock = None;
             events.push(format!(
@@ -3173,7 +3252,7 @@ impl GameState {
             return Err(Rejection::PlansIncomplete);
         }
         self.committed[seat] = true;
-        if self.committed != [true, true] {
+        if self.committed.iter().any(|c| !c) {
             return Ok(None);
         }
         let (moves, pulls, detonations, mut events) = self.resolve_movement(content, roll);
@@ -3219,7 +3298,8 @@ impl GameState {
             combatants.iter().find(|(s, _, _)| *s == id).map(|(_, k, _)| *k).unwrap_or(0)
         };
         let mut groups: Vec<Vec<ShipId>> = Vec::new();
-        for id in combat_order(&combatants, self.initiative) {
+        let ranks = self.seat_ranks();
+        for id in combat_order(&combatants, &ranks) {
             match groups.last_mut() {
                 Some(g) if skill_of(g[0]) == skill_of(id) => g.push(id),
                 _ => groups.push(vec![id]),
@@ -3563,7 +3643,7 @@ impl GameState {
             let d_owner = self.ships[d_idx].owner;
             let chewie = (0..self.ships.len()).find(|&k| {
                 k != d_idx
-                    && self.ships[k].owner == d_owner
+                    && self.allied(self.ships[k].owner, d_owner)
                     && !self.ships[k].destroyed
                     && self.ability(content, &self.ships[k])
                         == Some(PilotAbility::AttackWhenFriendlyDestroyed)
@@ -3644,7 +3724,7 @@ impl GameState {
                     (s.id, if scopes { 0 } else { self.effective_skill(content, s) }, s.owner)
                 })
                 .collect::<Vec<_>>(),
-            self.initiative,
+            &self.seat_ranks(),
         );
         let mut records = Vec::new();
         let mut events: Vec<String> = Vec::new();
@@ -3666,7 +3746,9 @@ impl GameState {
             }
             let owner = self.ships[k].owner;
             let any_red = (0..self.ships.len()).any(|j| {
-                self.ships[j].owner == owner && !self.ships[j].destroyed && planned_red(self, j)
+                self.allied(self.ships[j].owner, owner)
+                    && !self.ships[j].destroyed
+                    && planned_red(self, j)
             });
             if any_red
                 && let Some(card) =
@@ -4341,7 +4423,7 @@ impl GameState {
             }
             let enemies: Vec<usize> = (0..self.ships.len())
                 .filter(|&e| {
-                    self.ships[e].owner != self.ships[i].owner
+                    !self.allied(self.ships[e].owner, self.ships[i].owner)
                         && !self.ships[e].destroyed
                         && self.ships[e].stress == 0
                         && self.range_between(content, i, e) == Some(1)
@@ -4448,26 +4530,27 @@ impl GameState {
             }
         }
 
-        self.white_reds = [false, false];
-        self.committed = [false, false];
+        let n = self.committed.len();
+        self.white_reds = vec![false; n];
+        self.committed = vec![false; n];
         self.turn += 1;
-        let alive = |p: u32| self.ships.iter().any(|s| s.owner == PlayerId(p) && !s.destroyed);
-        match (alive(0), alive(1)) {
-            (true, true) => self.phase = Phase::Planning,
-            (true, false) => {
+        self.check_victory();
+    }
+
+    /// One side left (or none): the game is over. With every last ship
+    /// destroyed at once the side with initiative wins (core rules p.13).
+    fn check_victory(&mut self) {
+        let alive = self.alive_teams();
+        match alive.len() {
+            0 => {
                 self.phase = Phase::GameOver;
-                self.winner = Some(PlayerId(0));
+                self.winner = Some(self.team(self.initiative));
             }
-            (false, true) => {
+            1 => {
                 self.phase = Phase::GameOver;
-                self.winner = Some(PlayerId(1));
+                self.winner = Some(alive[0]);
             }
-            (false, false) => {
-                // Both final ships destroyed simultaneously: the player
-                // with initiative wins (core rules p.13).
-                self.phase = Phase::GameOver;
-                self.winner = Some(self.initiative);
-            }
+            _ => self.phase = Phase::Planning,
         }
     }
 
@@ -4517,7 +4600,7 @@ impl GameState {
         }
         let mut options = Vec::new();
         for s in &self.ships {
-            if s.owner == self.ships[a_idx].owner || s.destroyed {
+            if self.allied(s.owner, self.ships[a_idx].owner) || s.destroyed {
                 continue;
             }
             let Some(pose) = s.pose else { continue };
@@ -5607,12 +5690,32 @@ impl GameState {
         }
     }
 
-    /// Concede. Returns the winner.
-    pub fn resign(&mut self, player: PlayerId) -> PlayerId {
-        let other = PlayerId(1 - (player.0 & 1));
+    /// Concede: the player's ships leave the game. With more than two
+    /// sides the others fight on; returns the winning side once the game
+    /// is over (a resigning player's side may still win through a
+    /// teammate).
+    pub fn resign(&mut self, player: PlayerId) -> Option<u8> {
+        for s in self.ships.iter_mut().filter(|s| s.owner == player) {
+            s.destroyed = true;
+        }
+        let seat = player.0 as usize;
+        if seat < self.committed.len() {
+            self.committed[seat] = true;
+        }
+        let alive = self.alive_teams();
+        if alive.len() >= 2 {
+            return None;
+        }
         self.phase = Phase::GameOver;
-        self.winner = Some(other);
-        other
+        self.winner = Some(alive.first().copied().unwrap_or_else(|| {
+            let mut others: Vec<u8> = (0..self.committed.len() as u8)
+                .map(|s| self.team(PlayerId(u32::from(s))))
+                .filter(|t| *t != self.team(player))
+                .collect();
+            others.sort_unstable();
+            others.first().copied().unwrap_or(0)
+        }));
+        self.winner
     }
 
     /// Scatter obstacle tokens on the board before setup (core rules
@@ -5643,6 +5746,7 @@ impl GameState {
                 ShipView {
                     id: s.id,
                     owner: s.owner,
+                    team: self.team(s.owner),
                     class: s.class,
                     callsign: s.callsign.clone(),
                     pilot: pilot_name(s.pilot),
@@ -5775,21 +5879,98 @@ mod tests {
         // Mirror match: all skill 1; P1 holds initiative.
         let ships =
             [(ShipId(0), 1, P0), (ShipId(1), 1, P0), (ShipId(2), 1, P1), (ShipId(3), 1, P1)];
-        assert_eq!(movement_order(&ships, P1), vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]);
-        assert_eq!(combat_order(&ships, P1), vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]);
+        assert_eq!(
+            movement_order(&ships, &[1, 0]),
+            vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]
+        );
+        assert_eq!(combat_order(&ships, &[1, 0]), vec![ShipId(2), ShipId(3), ShipId(0), ShipId(1)]);
+    }
+
+    #[test]
+    fn team_game_seats_share_a_side_and_win_together() {
+        use crate::squad::Squad;
+        let c = content();
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let tie = Squad::basic(&c, "i", &[pilot("academypilot")]);
+        let xw = Squad::basic(&c, "r", &[pilot("bluesquadronnovice")]);
+        let mut gs = GameState::from_squads(
+            board(),
+            &c,
+            &[&tie, &tie, &xw, &xw],
+            &[0, 0, 1, 1],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
+        assert_eq!(gs.sides(), 2);
+        assert!(gs.allied(P0, PlayerId(1)) && !gs.allied(P0, PlayerId(2)));
+        assert_eq!((gs.seat_of(PlayerId(1)), gs.seat_of(PlayerId(3))), (Seat::South, Seat::North));
+        // Initiative: the Imperial side (2 x 12 = 24) is cheaper than the Rebel one.
+        assert_eq!(gs.initiative, P0);
+        assert_eq!(gs.seat_ranks(), vec![0, 1, 2, 3]);
+        // Teammates deploy on the same edge, side by side.
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(6.0, 2.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(14.0, 2.5, FRAC_PI_2)).unwrap();
+        assert_eq!(
+            gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(6.0, 2.5, FRAC_PI_2)),
+            Err(Rejection::OverlapsShip),
+            "not onto a teammate"
+        );
+        // Squad callsigns stay distinct across four seats.
+        let names: Vec<&str> = gs.ships.iter().map(|s| s.callsign.as_str()).collect();
+        assert_eq!(names, vec!["Obsidian-leader", "Onyx-leader", "Red-leader", "Gold-leader"]);
+        // One Rebel resigning leaves the game on; the second ends it.
+        assert_eq!(gs.resign(PlayerId(2)), None);
+        assert_eq!(gs.phase, Phase::Placement);
+        assert_eq!(gs.resign(PlayerId(3)), Some(0));
+        assert_eq!(gs.winner, Some(0));
+    }
+
+    #[test]
+    fn free_for_all_deploys_each_side_on_its_own_edge() {
+        use crate::squad::Squad;
+        let c = content();
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let tie = Squad::basic(&c, "i", &[pilot("academypilot")]);
+        let xw = Squad::basic(&c, "r", &[pilot("bluesquadronnovice")]);
+        let mut gs = GameState::from_squads(
+            board(),
+            &c,
+            &[&tie, &xw, &tie],
+            &[],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
+        assert_eq!(gs.teams, vec![0, 1, 2]);
+        assert!(!gs.allied(P0, PlayerId(2)), "same faction, different sides");
+        assert_eq!(gs.seat_of(PlayerId(2)), Seat::East);
+        assert_eq!(
+            gs.place_ship(&c, PlayerId(2), ShipId(2), Pose::new(10.0, 10.0, std::f64::consts::PI)),
+            Err(Rejection::OutOfZone)
+        );
+        gs.place_ship(&c, PlayerId(2), ShipId(2), Pose::new(18.5, 10.0, std::f64::consts::PI))
+            .unwrap();
+        // Two sides gone: the last one standing wins.
+        gs.ships[0].destroyed = true;
+        gs.ships[1].destroyed = true;
+        gs.check_victory();
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(2)));
     }
 
     #[test]
     fn initiative_setup_rules() {
         use crate::dice::AttackFace;
         // Lower squad total takes it outright — die irrelevant.
-        assert_eq!(initiative_seat([12, 24], AttackFace::Blank), 0);
-        assert_eq!(initiative_seat([48, 24], AttackFace::Hit), 1);
+        assert_eq!(initiative_seat(&[12, 24], AttackFace::Blank), 0);
+        assert_eq!(initiative_seat(&[48, 24], AttackFace::Hit), 1);
         // Tie: seat 0 rolls. Hit/Crit keeps, Focus/Blank hands over.
-        assert_eq!(initiative_seat([24, 24], AttackFace::Hit), 0);
-        assert_eq!(initiative_seat([24, 24], AttackFace::Crit), 0);
-        assert_eq!(initiative_seat([24, 24], AttackFace::Focus), 1);
-        assert_eq!(initiative_seat([24, 24], AttackFace::Blank), 1);
+        assert_eq!(initiative_seat(&[24, 24], AttackFace::Hit), 0);
+        assert_eq!(initiative_seat(&[24, 24], AttackFace::Crit), 0);
+        assert_eq!(initiative_seat(&[24, 24], AttackFace::Focus), 1);
+        assert_eq!(initiative_seat(&[24, 24], AttackFace::Blank), 1);
+        // Three sides: the lowest total wins outright; a tie between the
+        // last two hands over to the second of them on a blank.
+        assert_eq!(initiative_seat(&[30, 20, 25], AttackFace::Blank), 1);
+        assert_eq!(initiative_seat(&[30, 20, 20], AttackFace::Blank), 2);
     }
 
     #[test]
@@ -5834,7 +6015,7 @@ mod tests {
         assert!((moves[1].end.anchor.y - 16.0).abs() < 1e-9);
         assert_eq!(gs.phase, Phase::Planning);
         assert_eq!(gs.turn, 2);
-        assert_eq!(gs.committed, [false, false]);
+        assert_eq!(gs.committed, vec![false, false]);
     }
 
     #[test]
@@ -5877,7 +6058,7 @@ mod tests {
         let moves = gs.commit_plans(&c, P1, &mut || 7).unwrap().unwrap().moves;
         assert!(moves[0].destroyed);
         assert_eq!(gs.phase, Phase::GameOver);
-        assert_eq!(gs.winner, Some(P1));
+        assert_eq!(gs.winner, Some(1));
     }
 
     #[test]
@@ -6157,9 +6338,14 @@ mod tests {
                 callsign: String::new(),
             }],
         };
-        let mut gs =
-            GameState::from_squads(board(), &c, [&imperial, &rebel], crate::dice::AttackFace::Hit)
-                .unwrap();
+        let mut gs = GameState::from_squads(
+            board(),
+            &c,
+            &[&imperial, &rebel],
+            &[0, 1],
+            crate::dice::AttackFace::Hit,
+        )
+        .unwrap();
         // Starting values include Hull/Shield Upgrade; skill includes VI.
         assert_eq!((gs.ships[1].hull, gs.ships[1].shields), (4, 4));
         assert_eq!(gs.effective_skill(&c, &gs.ships[1]), 6);
@@ -6220,7 +6406,8 @@ mod tests {
         let a = Squad::basic(c, "i", &[pilot(imperial)]);
         let b = Squad::basic(c, "r", &[pilot(rebel)]);
         let mut gs =
-            GameState::from_squads(board(), c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+            GameState::from_squads(board(), c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
+                .unwrap();
         gs.place_ship(c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
         gs.ships[1].pose = Some(xwing);
@@ -6249,7 +6436,8 @@ mod tests {
         let a = Squad::basic(c, "i", &ids(imperial));
         let b = Squad::basic(c, "r", &ids(rebel));
         let mut gs =
-            GameState::from_squads(board(), c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+            GameState::from_squads(board(), c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
+                .unwrap();
         let all: Vec<_> = imperial.iter().chain(rebel.iter()).collect();
         for (k, (_, pose, _)) in all.iter().enumerate() {
             let player = if k < imperial.len() { P0 } else { P1 };
@@ -7366,7 +7554,7 @@ mod tests {
         assert_eq!(rec.attacks.len(), 2, "destroyed ship of equal skill still fires");
         assert!(rec.attacks.iter().all(|a| a.defender_destroyed));
         assert_eq!(gs.phase, Phase::GameOver);
-        assert_eq!(gs.winner, Some(P0), "initiative wins the mutual kill");
+        assert_eq!(gs.winner, Some(0), "initiative wins the mutual kill");
     }
 
     #[test]
@@ -7439,9 +7627,9 @@ mod tests {
         gs.plan_maneuver(&c, P0, ShipId(0), straight2(&c, TIE)).unwrap();
         gs.commit_plans(&c, P0, &mut || 7).unwrap();
         assert_eq!(gs.commit_plans(&c, P0, &mut || 7), Err(Rejection::AlreadyCommitted));
-        assert_eq!(gs.resign(P1), P0);
+        assert_eq!(gs.resign(P1), Some(0));
         assert_eq!(gs.phase, Phase::GameOver);
-        assert_eq!(gs.winner, Some(P0));
+        assert_eq!(gs.winner, Some(0));
     }
 
     // ---------------- Bombs ----------------

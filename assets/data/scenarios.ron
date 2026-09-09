@@ -1,5 +1,6 @@
 // Scenario presets offered to the host before a game. Numbers may be
-// adjusted on the setup screen; `players` other than 2 is reserved.
+// adjusted on the setup screen. `players` 2-4; `teams` lists each seat's
+// side (empty = every seat its own side).
 (
     scenarios: [
         (id: "dogfight", name: "Standard dogfight",
@@ -23,5 +24,17 @@
         (id: "grand", name: "Grand battle (150 points)",
          description: "Big squads on a 24x24 board with eight asteroids.",
          points: 150, asteroids: 8, board_width: 24, board_height: 24),
+        (id: "teams", name: "Team battle (2 vs 2)",
+         description: "Four players in two teams (core rules p.20): each side shares 100 points between its two players, deploys on the same edge and wins together. Six asteroids.",
+         players: 4, teams: [0, 0, 1, 1], asteroids: 6),
+        (id: "outnumbered", name: "Outnumbered (1 vs 2)",
+         description: "One 100-point squad against two 50-point squads on the far edge. Four asteroids.",
+         players: 3, teams: [0, 1, 1], asteroids: 4),
+        (id: "threeway", name: "Three-way free-for-all",
+         description: "Three sides, 60 points each, deploying south, north and east. Last side flying wins. Four asteroids.",
+         players: 3, points: 60, asteroids: 4),
+        (id: "fourway", name: "Four-way free-for-all",
+         description: "Four sides, 60 points each, one on every edge of a 24x24 board. Last side flying wins. Six asteroids.",
+         players: 4, points: 60, asteroids: 6, board_width: 24, board_height: 24),
     ],
 )

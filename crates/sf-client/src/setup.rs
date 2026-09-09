@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use sf_core::scenario::{BOARD_RANGE, GameSetup, MAX_TOKENS, POINTS_RANGE};
+use sf_core::scenario::{BOARD_RANGE, GameSetup, MAX_PLAYERS, MAX_TOKENS, POINTS_RANGE};
 use sf_proto::messages::ClientMsg;
 use sf_proto::tls::Target;
 
@@ -28,14 +28,17 @@ pub struct SetupForm {
     pub setup: GameSetup,
     /// Highlighted number field (see FIELDS).
     pub field: usize,
+    /// Teams (two sides) rather than a free-for-all when players > 2.
+    pub team_mode: bool,
 }
 
-const FIELDS: [&str; 7] = [
+const FIELDS: [&str; 8] = [
     "Asteroids",
     "Debris clouds",
     "Black holes",
-    "Squad points",
+    "Squad points (per side)",
     "Players",
+    "Mode",
     "Board width",
     "Board height",
 ];
@@ -54,6 +57,7 @@ fn enter(mut form: ResMut<SetupForm>, game: Res<Game>) {
     form.field = 0;
     if let Some(s) = game.content.scenarios.scenarios.get(form.scenario) {
         form.setup = GameSetup::from(s);
+        form.team_mode = form.setup.is_team_game();
     }
 }
 
@@ -82,6 +86,7 @@ fn input(
         if let Some(i) = pick {
             form.scenario = i;
             form.setup = GameSetup::from(&presets[i]);
+            form.team_mode = form.setup.is_team_game();
         }
     }
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -96,8 +101,10 @@ fn input(
         - i32::from(keys.just_pressed(KeyCode::ArrowLeft));
     if delta != 0 {
         let field = form.field;
+        let team_mode = form.team_mode;
         let s = &mut form.setup;
         let bump_u8 = |v: u8, max: u8| (v as i32 + delta).clamp(0, max as i32) as u8;
+        let mut toggled = None;
         match field {
             0 => s.asteroids = bump_u8(s.asteroids, MAX_TOKENS - s.debris - s.black_holes),
             1 => s.debris = bump_u8(s.debris, MAX_TOKENS - s.asteroids - s.black_holes),
@@ -107,8 +114,15 @@ fn input(
                     .clamp(POINTS_RANGE.0 as i32, POINTS_RANGE.1 as i32)
                     as u32
             }
-            4 => s.players = bump_u8(s.players, 8).max(2),
+            4 => {
+                s.players = bump_u8(s.players, MAX_PLAYERS).max(2);
+                s.set_teams(team_mode);
+            }
             5 => {
+                toggled = Some(!team_mode);
+                s.set_teams(!team_mode);
+            }
+            6 => {
                 s.board_width =
                     (s.board_width + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
@@ -116,6 +130,9 @@ fn input(
                 s.board_height =
                     (s.board_height + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
+        }
+        if let Some(t) = toggled {
+            form.team_mode = t;
         }
         // Edited numbers make it a custom variant of the preset.
         let base = presets.get(form.scenario).map(|p| p.name.clone()).unwrap_or_default();
@@ -164,12 +181,20 @@ fn show(
     }
     lines.push(String::new());
     let s = &form.setup;
+    let mode = if s.players <= 2 {
+        "duel".to_string()
+    } else if form.team_mode {
+        format!("teams ({})", s.mode_name())
+    } else {
+        "free-for-all".to_string()
+    };
     let values = [
         s.asteroids.to_string(),
         s.debris.to_string(),
         s.black_holes.to_string(),
         s.points.to_string(),
         s.players.to_string(),
+        mode,
         s.board_width.to_string(),
         s.board_height.to_string(),
     ];
@@ -179,8 +204,14 @@ fn show(
     }
     lines.push(String::new());
     lines.push(format!("Will create: {}", s.summary()));
-    if s.players != 2 {
-        lines.push("(only 2-player games can be created for now)".into());
+    if s.players > 2 {
+        lines.push(if form.team_mode {
+            "Teams: two sides share the squad points per side, deploy on the same edge and win together."
+                .into()
+        } else {
+            "Free-for-all: every player is a side with the full points, on their own board edge (south, north, east, west)."
+                .into()
+        });
     }
     if !online.status.is_empty() {
         lines.push(online.status.clone());

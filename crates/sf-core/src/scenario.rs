@@ -37,6 +37,9 @@ pub struct Scenario {
     pub board_width: f64,
     #[serde(default = "twenty")]
     pub board_height: f64,
+    /// Side (team) of each seat; empty = every seat its own side.
+    #[serde(default)]
+    pub teams: Vec<u8>,
 }
 
 /// What the host actually sends: a scenario name plus the numbers, which
@@ -52,6 +55,10 @@ pub struct GameSetup {
     pub black_holes: u8,
     pub board_width: f64,
     pub board_height: f64,
+    /// Side (team) of each seat, `players` entries, ids 0..sides. Empty
+    /// = every seat its own side (a free-for-all; the plain duel for 2).
+    #[serde(default)]
+    pub teams: Vec<u8>,
 }
 
 impl Default for GameSetup {
@@ -65,6 +72,7 @@ impl Default for GameSetup {
             black_holes: 0,
             board_width: 20.0,
             board_height: 20.0,
+            teams: Vec::new(),
         }
     }
 }
@@ -80,9 +88,13 @@ impl From<&Scenario> for GameSetup {
             black_holes: s.black_holes,
             board_width: s.board_width,
             board_height: s.board_height,
+            teams: s.teams.clone(),
         }
     }
 }
+
+/// Most seats a game can hold (one board edge per side).
+pub const MAX_PLAYERS: u8 = 4;
 
 /// Limits the server enforces on a host's setup.
 pub const MAX_TOKENS: u8 = 12;
@@ -90,9 +102,69 @@ pub const POINTS_RANGE: (u32, u32) = (20, 400);
 pub const BOARD_RANGE: (f64, f64) = (12.0, 40.0);
 
 impl GameSetup {
+    /// The side of `seat` (its own index when no teams are set).
+    pub fn team_of(&self, seat: u8) -> u8 {
+        self.teams.get(seat as usize).copied().unwrap_or(seat)
+    }
+
+    /// Side of every seat, `players` long.
+    pub fn team_list(&self) -> Vec<u8> {
+        (0..self.players).map(|s| self.team_of(s)).collect()
+    }
+
+    /// Number of sides.
+    pub fn sides(&self) -> u8 {
+        let mut ids: Vec<u8> = self.team_list();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.len() as u8
+    }
+
+    /// Seats on the side of `seat`.
+    pub fn seats_on_side(&self, seat: u8) -> u8 {
+        let t = self.team_of(seat);
+        self.team_list().iter().filter(|x| **x == t).count() as u8
+    }
+
+    /// Squad points for one seat: every side gets `points`, shared out
+    /// among its players (core rules p.20, team play).
+    pub fn points_for_seat(&self, seat: u8) -> u32 {
+        self.points / u32::from(self.seats_on_side(seat).max(1))
+    }
+
+    /// Two-sided game (teams) or every seat for itself?
+    pub fn is_team_game(&self) -> bool {
+        self.players > 2 && self.sides() == 2
+    }
+
+    /// Choose the mode for the current player count: two teams split as
+    /// equally as possible (the odd player joins the first side alone),
+    /// or a free-for-all with one side per seat.
+    pub fn set_teams(&mut self, teams: bool) {
+        self.teams = if teams && self.players > 2 {
+            let half = self.players.div_ceil(2);
+            (0..self.players).map(|s| u8::from(s >= half)).collect()
+        } else {
+            Vec::new()
+        };
+    }
+
     pub fn validate(&self) -> Result<(), String> {
-        if self.players != 2 {
-            return Err(format!("{}-player games are not supported yet (2 only)", self.players));
+        if !(2..=MAX_PLAYERS).contains(&self.players) {
+            return Err(format!(
+                "{}-player games are not supported (2-{MAX_PLAYERS})",
+                self.players
+            ));
+        }
+        if !self.teams.is_empty() && self.teams.len() != self.players as usize {
+            return Err("one team entry per player".into());
+        }
+        let sides = self.sides();
+        if sides < 2 {
+            return Err("at least two sides".into());
+        }
+        if self.team_list().iter().any(|t| *t >= sides) {
+            return Err("team ids must be 0..sides".into());
         }
         if self.points < POINTS_RANGE.0 || self.points > POINTS_RANGE.1 {
             return Err(format!("squad points must be {}-{}", POINTS_RANGE.0, POINTS_RANGE.1));
@@ -127,9 +199,27 @@ impl GameSetup {
         kinds
     }
 
+    /// "2 vs 2", "1 vs 2", "3-way free-for-all"…
+    pub fn mode_name(&self) -> String {
+        if self.players <= 2 {
+            return "duel".into();
+        }
+        if self.sides() == 2 {
+            let list = self.team_list();
+            let a = list.iter().filter(|t| **t == 0).count();
+            let b = list.len() - a;
+            format!("{a} vs {b}")
+        } else {
+            format!("{}-way free-for-all", self.players)
+        }
+    }
+
     /// One-line summary for lobbies and the HUD.
     pub fn summary(&self) -> String {
         let mut parts = vec![format!("{} pts", self.points)];
+        if self.players > 2 {
+            parts.push(format!("{} players, {}", self.players, self.mode_name()));
+        }
         match (self.asteroids, self.debris) {
             (0, 0) if self.black_holes == 0 => parts.push("open space".into()),
             (0, 0) => {}
@@ -156,7 +246,26 @@ mod tests {
     #[test]
     fn validation_limits() {
         assert!(GameSetup::default().validate().is_ok());
-        assert!(GameSetup { players: 3, ..Default::default() }.validate().is_err());
+        assert!(GameSetup { players: 5, ..Default::default() }.validate().is_err());
+        assert!(
+            GameSetup { players: 3, teams: vec![0, 0, 0], ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        let mut three = GameSetup { players: 3, ..Default::default() };
+        three.set_teams(true);
+        assert_eq!(three.teams, vec![0, 0, 1]);
+        assert_eq!(three.mode_name(), "2 vs 1");
+        assert_eq!((three.points_for_seat(0), three.points_for_seat(2)), (50, 100));
+        three.set_teams(false);
+        assert_eq!(three.sides(), 3);
+        assert_eq!(three.points_for_seat(1), 100);
+        assert!(three.validate().is_ok());
+        let mut four = GameSetup { players: 4, ..Default::default() };
+        four.set_teams(true);
+        assert_eq!(four.teams, vec![0, 0, 1, 1]);
+        assert!(four.is_team_game());
+        assert!(four.validate().is_ok());
         assert!(GameSetup { asteroids: 10, debris: 3, ..Default::default() }.validate().is_err());
         assert!(GameSetup { points: 10, ..Default::default() }.validate().is_err());
         assert!(GameSetup { board_width: 50.0, ..Default::default() }.validate().is_err());

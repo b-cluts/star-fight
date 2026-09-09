@@ -199,15 +199,19 @@ pub struct ShipState {
 pub const CALLSIGN_MAX: usize = 20;
 
 /// Squad name for the `nth` squad (0-based) of a faction in a game: the
-/// first Rebel squad is Red, a second one Gold; Imperial squadrons are
-/// Obsidian then Onyx — so mirror matches stay distinguishable while a
-/// lone squad always gets the classic name.
+/// first Rebel squad is Red, then Gold, Blue, Green; Imperial squadrons
+/// are Obsidian, Onyx, Black, Scimitar — so mirror matches and team
+/// games stay distinguishable while a lone squad gets the classic name.
 pub fn default_squad_name(faction: Faction, nth: usize) -> &'static str {
-    match (faction, nth % 2) {
+    match (faction, nth % 4) {
         (Faction::Empire, 0) => "Obsidian",
-        (Faction::Empire, _) => "Onyx",
+        (Faction::Empire, 1) => "Onyx",
+        (Faction::Empire, 2) => "Black",
+        (Faction::Empire, _) => "Scimitar",
         (Faction::RebelAlliance, 0) => "Red",
-        (Faction::RebelAlliance, _) => "Gold",
+        (Faction::RebelAlliance, 1) => "Gold",
+        (Faction::RebelAlliance, 2) => "Blue",
+        (Faction::RebelAlliance, _) => "Green",
     }
 }
 

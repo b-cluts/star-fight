@@ -98,8 +98,9 @@ async fn two_clients_play_a_full_turn() {
     send(&mut b, &ClientMsg::JoinGame { code, squad: None }).await;
 
     let seat_a = recv_until(&mut a, |m| match m {
-        ServerMsg::GameStart { seat, opponent, .. } => {
-            assert_eq!(opponent, "bob");
+        ServerMsg::GameStart { seat, players, team, .. } => {
+            assert_eq!(players[1], "bob");
+            assert_eq!(team, 0);
             Some(seat)
         }
         _ => None,
@@ -280,4 +281,97 @@ async fn custom_squads_are_validated_and_used() {
     assert_eq!(names, ["Howl", "Obsidian-2", "Red-leader"]);
     assert_eq!(snap.0[0].skill, 10, "Howlrunner 8 + Veteran Instincts 2");
     assert_eq!(snap.0[2].upgrades, vec!["R2 Astromech".to_string()]);
+}
+
+/// Three seats: the game starts when the last one joins, every seat learns
+/// its side, the third side deploys on the East edge, and a fourth client
+/// finds no open game.
+#[tokio::test]
+async fn three_player_free_for_all_starts_when_the_third_seat_joins() {
+    use sf_core::scenario::GameSetup;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(sf_server::run(listener, Arc::new(content()), sf_server::ServerOpts::insecure()));
+    let url = format!("ws://127.0.0.1:{port}");
+    let (mut a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut c, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let (mut d, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    for (ws, name) in [(&mut a, "ann"), (&mut b, "ben"), (&mut c, "cat"), (&mut d, "dan")] {
+        send(
+            ws,
+            &ClientMsg::Hello {
+                proto_version: sf_proto::PROTOCOL_VERSION,
+                name: name.into(),
+                password: String::new(),
+            },
+        )
+        .await;
+        assert!(matches!(recv(ws).await, ServerMsg::Welcome { .. }));
+    }
+    let setup = GameSetup { players: 3, points: 60, asteroids: 0, ..GameSetup::default() };
+    send(&mut a, &ClientMsg::CreateGame { squad: None, setup: Some(setup) }).await;
+    let code = recv_until(&mut a, |m| match m {
+        ServerMsg::GameCreated { code } => Some(code),
+        _ => None,
+    })
+    .await;
+    send(&mut b, &ClientMsg::JoinGame { code: code.clone(), squad: None }).await;
+    // Two of three: still waiting, no GameStart yet for anyone.
+    recv_until(&mut b, |m| match m {
+        ServerMsg::Error { message } if message.contains("2 of 3") => Some(()),
+        _ => None,
+    })
+    .await;
+    send(&mut c, &ClientMsg::JoinGame { code: code.clone(), squad: None }).await;
+    let mut teams = Vec::new();
+    for ws in [&mut a, &mut b, &mut c] {
+        let (seat, team, players) = recv_until(ws, |m| match m {
+            ServerMsg::GameStart { seat, team, players, .. } => Some((seat, team, players)),
+            _ => None,
+        })
+        .await;
+        assert_eq!(players, vec!["ann", "ben", "cat"]);
+        assert_eq!(team, seat, "free-for-all: every seat its own side");
+        teams.push(team);
+    }
+    assert_eq!(teams, vec![0, 1, 2]);
+    // The game is full: the code is gone.
+    send(&mut d, &ClientMsg::JoinGame { code, squad: None }).await;
+    recv_until(&mut d, |m| match m {
+        ServerMsg::Error { message } if message.contains("no open game") => Some(()),
+        _ => None,
+    })
+    .await;
+    // Seat 2 deploys on the East edge (facing west), not the North one.
+    let ships = recv_until(&mut c, |m| match m {
+        ServerMsg::Snapshot { phase: Phase::Placement, ships, teams, .. } => {
+            assert_eq!(teams, vec![0, 1, 2]);
+            Some(ships)
+        }
+        _ => None,
+    })
+    .await;
+    let mine: Vec<ShipId> = ships.iter().filter(|s| s.owner.0 == 2).map(|s| s.id).collect();
+    assert_eq!(mine.len(), 2);
+    send(
+        &mut c,
+        &ClientMsg::PlaceShip { ship_id: mine[0], pose: Pose::new(10.0, 18.0, -FRAC_PI_2) },
+    )
+    .await;
+    recv_until(&mut c, |m| matches!(m, ServerMsg::Rejected { .. }).then_some(())).await;
+    send(
+        &mut c,
+        &ClientMsg::PlaceShip {
+            ship_id: mine[0],
+            pose: Pose::new(18.5, 10.0, std::f64::consts::PI),
+        },
+    )
+    .await;
+    let placed = recv_until(&mut c, |m| match m {
+        ServerMsg::Snapshot { ships, .. } => Some(ships),
+        _ => None,
+    })
+    .await;
+    assert!(placed.iter().any(|s| s.id == mine[0] && s.pose.is_some()));
 }

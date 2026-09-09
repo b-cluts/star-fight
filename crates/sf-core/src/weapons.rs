@@ -76,7 +76,7 @@ pub fn weapon_status(
     // (target, band, in arc, distance, obstructed) for every targetable enemy
     let enemies: Vec<(ShipId, u8, bool, f64, bool)> = ships
         .iter()
-        .filter(|s| s.owner != me.owner && !s.destroyed)
+        .filter(|s| s.team != me.team && !s.destroyed)
         .filter_map(|s| {
             let pose = s.pose?;
             let fp = content.ships.class(s.class)?.footprint;
@@ -202,7 +202,8 @@ mod tests {
         let b = Squad::basic(c, "r", &[pilot("bluesquadronnovice")]);
         let board = Board { width: 20.0, height: 20.0, deploy_depth: 3.0 };
         let mut gs =
-            GameState::from_squads(board, c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+            GameState::from_squads(board, c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
+                .unwrap();
         gs.ships[1].upgrades.push(torps);
         gs.place_ship(c, PlayerId(0), ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(c, PlayerId(1), ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
@@ -234,7 +235,8 @@ mod tests {
         let b = Squad::basic(&c, "r", &[pilot("bluesquadronnovice")]);
         let board = Board { width: 20.0, height: 20.0, deploy_depth: 3.0 };
         let mut gs =
-            GameState::from_squads(board, &c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+            GameState::from_squads(board, &c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
+                .unwrap();
         gs.ships[1].upgrades.push(UpgradeId(1));
         gs.place_ship(&c, PlayerId(0), ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
@@ -255,7 +257,8 @@ mod tests {
         let b = Squad::basic(&c, "r", &[pilot("bluesquadronnovice")]);
         let board = Board { width: 20.0, height: 20.0, deploy_depth: 3.0 };
         let mut gs =
-            GameState::from_squads(board, &c, [&a, &b], crate::dice::AttackFace::Hit).unwrap();
+            GameState::from_squads(board, &c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
+                .unwrap();
         gs.ships[1].upgrades.push(UpgradeId(1));
         gs.place_ship(&c, PlayerId(0), ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
         gs.place_ship(&c, PlayerId(1), ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();

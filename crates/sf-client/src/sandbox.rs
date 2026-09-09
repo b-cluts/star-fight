@@ -267,8 +267,8 @@ fn draw_overlays(
         let class = &game.ships.classes[ship.class_idx];
         let color = match (ship.seat, sel.ship == Some(entity)) {
             (_, true) => Color::srgb(1.0, 0.9, 0.3),
-            (Seat::South, _) => Color::srgba(0.3, 0.9, 0.4, 0.6),
-            (Seat::North, _) => Color::srgba(0.9, 0.4, 0.3, 0.6),
+            (Seat::South | Seat::West, _) => Color::srgba(0.3, 0.9, 0.4, 0.6),
+            (Seat::North | Seat::East, _) => Color::srgba(0.9, 0.4, 0.3, 0.6),
         };
         render::draw_base(&mut gizmos, &game, ship.pose, class.footprint, color);
     }

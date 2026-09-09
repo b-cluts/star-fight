@@ -79,8 +79,8 @@ pub fn placement_legal(
     placed: &[(ShipId, Pose, Footprint)],
 ) -> Result<(), PlacementError> {
     let corners = footprint_corners(pose, fp);
-    let (y0, y1) = board.deploy_zone(seat);
-    if !corners_within(&corners, 0.0, y0, board.width, y1) {
+    let (x0, y0, x1, y1) = board.deploy_zone(seat);
+    if !corners_within(&corners, x0, y0, x1, y1) {
         return Err(PlacementError::OutOfZone);
     }
     for &(id, other_pose, other_fp) in placed {
@@ -205,6 +205,21 @@ mod tests {
             &placed,
         );
         assert_eq!(r, Err(PlacementError::OverlapsShip(ShipId(7))));
+    }
+
+    #[test]
+    fn east_and_west_zones_hug_the_side_edges() {
+        use std::f64::consts::PI;
+        // East: x within the last 3 units, facing west into the board.
+        let r = placement_legal(&board(), Seat::East, Pose::new(18.5, 10.0, PI), FP_SMALL, &[]);
+        assert_eq!(r, Ok(()));
+        let r = placement_legal(&board(), Seat::East, Pose::new(10.0, 10.0, PI), FP_SMALL, &[]);
+        assert_eq!(r, Err(PlacementError::OutOfZone));
+        // West: x within the first 3 units, facing east (base behind, at x < 1.5).
+        let r = placement_legal(&board(), Seat::West, Pose::new(1.5, 10.0, 0.0), FP_SMALL, &[]);
+        assert_eq!(r, Ok(()));
+        let r = placement_legal(&board(), Seat::West, Pose::new(4.0, 10.0, 0.0), FP_SMALL, &[]);
+        assert_eq!(r, Err(PlacementError::OutOfZone));
     }
 
     #[test]

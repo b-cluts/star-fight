@@ -19,9 +19,15 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    (generated ones look like `abcd-efgh-jkmn`, avoid look-alike characters,
    and are accepted in any letter case),
    optionally build a squad (**Squad Builder**), then **Create Game** — pick a
-   scenario on the setup screen (asteroids, debris, squad points, board size;
-   Up/Down, Tab, Left/Right, Enter) and share the 4-letter code — or **Join
-   Game** with the code (the joiner plays the host's scenario).
+   scenario on the setup screen (asteroids, debris, squad points per side,
+   players 2-4 and the mode, board size; Up/Down, Tab, Left/Right, Enter)
+   and share the 4-letter code — or **Join Game** with the code (joiners
+   play the host's scenario; the game starts when every seat is taken).
+   With 3-4 players the mode is **teams** (two sides, split as equally as
+   possible, sharing the side's points and one board edge, winning
+   together — core rules p.20) or a **free-for-all** (every seat its own
+   side with the full points, deploying south, north, east and west; the
+   last side flying wins).
 3. Card images for the squad builder are optional; see
    [Card images](#card-images-optional) below. Without them the builder
    shows the card text.
