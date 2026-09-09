@@ -5,6 +5,7 @@ use sf_core::board::Board;
 use sf_core::bombs::{BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
+use sf_core::obstacle::Obstacle;
 use sf_core::ship::ShipId;
 use sf_core::squad::Squad;
 use sf_core::upgrade::UpgradeId;
@@ -108,6 +109,9 @@ pub enum ServerMsg {
         /// Bomb and mine tokens on the board (public).
         #[serde(default)]
         bombs: Vec<BombToken>,
+        /// Asteroid and debris tokens (fixed for the game).
+        #[serde(default)]
+        obstacles: Vec<Obstacle>,
     },
     /// A command of yours was refused.
     Rejected {

@@ -21,12 +21,13 @@ fn load_content() -> Content {
 fn usage() -> ! {
     eprintln!(
         "usage: sf-server [--port <port>] [--password <pw>] [--host <name-or-ip>] \
-         [--tls-dir <dir>] [--insecure]\n\
+         [--tls-dir <dir>] [--asteroids <n>] [--insecure]\n\
          \n\
          --password  server password players must enter (default: random, printed;\n\
                      compared case-insensitively, surrounding spaces ignored)\n\
          --host      host name / IP to print in the join string (default: detected)\n\
          --tls-dir   where tls_cert.pem / tls_key.pem live (default: current dir)\n\
+         --asteroids asteroid tokens scattered before setup (default 6, 0 = none)\n\
          --insecure  plaintext ws:// without password — local testing only"
     );
     std::process::exit(2);
@@ -50,6 +51,7 @@ async fn main() {
     let mut host: Option<String> = None;
     let mut tls_dir = PathBuf::from(".");
     let mut insecure = false;
+    let mut asteroids: u8 = 6;
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -69,6 +71,10 @@ async fn main() {
             }
             "--tls-dir" => {
                 tls_dir = PathBuf::from(value(i));
+                i += 1;
+            }
+            "--asteroids" => {
+                asteroids = value(i).parse().unwrap_or_else(|_| usage());
                 i += 1;
             }
             "--insecure" => insecure = true,
@@ -99,7 +105,7 @@ async fn main() {
         println!("server password: {password}");
         println!("join string (paste into the client's Server field):");
         println!("  starfight://{host}:{port}/#{fp}");
-        ServerOpts { tls: Some(tls), password: Some(password) }
+        ServerOpts { tls: Some(tls), password: Some(password), asteroids }
     };
     sf_server::run(listener, content, opts).await;
 }

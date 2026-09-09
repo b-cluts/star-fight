@@ -61,12 +61,14 @@ pub struct ServerOpts {
     pub tls: Option<Arc<rustls::ServerConfig>>,
     /// Required in every Hello; `None` disables the check.
     pub password: Option<String>,
+    /// Asteroid tokens scattered before setup (0 = open space).
+    pub asteroids: u8,
 }
 
 impl ServerOpts {
     /// Plaintext, no password — for tests and local development.
     pub fn insecure() -> Self {
-        Self { tls: None, password: None }
+        Self { tls: None, password: None, asteroids: 6 }
     }
 }
 
@@ -161,6 +163,7 @@ pub async fn run(listener: TcpListener, content: Arc<Content>, opts: ServerOpts)
             admission: admission.clone(),
             password: opts.password.clone(),
             ip: addr.ip(),
+            opts: Arc::new(opts.clone()),
         };
         match &acceptor {
             Some(acceptor) => {
@@ -186,6 +189,7 @@ struct Conn {
     admission: Arc<Admission>,
     password: Option<String>,
     ip: IpAddr,
+    opts: Arc<ServerOpts>,
 }
 
 /// Join codes: uppercase unambiguous characters (the lobby uppercases
@@ -221,7 +225,7 @@ async fn handle_conn<S>(stream: S, ctx: Conn)
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let Conn { lobby, content, admission, password, ip } = ctx;
+    let Conn { lobby, content, admission, password, ip, opts } = ctx;
     let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
         return;
     };
@@ -285,7 +289,7 @@ where
                 Ok(ClientMsg::CreateGame { squad }) => {
                     let code = join_code();
                     let (cmd_tx, cmd_rx) = mpsc::channel(64);
-                    tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone()));
+                    tokio::spawn(session(cmd_rx, content.clone(), lobby.clone(), code.clone(), opts.clone()));
                     lobby.lock().await.insert(code.clone(), cmd_tx.clone());
                     let (resp_tx, resp_rx) = oneshot::channel();
                     let _ = cmd_tx
@@ -404,6 +408,7 @@ async fn session(
     content: Arc<Content>,
     lobby: Lobby,
     code: String,
+    opts: Arc<ServerOpts>,
 ) {
     let mut players: Vec<(String, mpsc::Sender<ServerMsg>, Squad)> = Vec::new();
     let rules = SquadRules::default();
@@ -434,6 +439,7 @@ async fn session(
                         initiative: gs.initiative.0 as u8,
                         squad_totals: gs.squad_totals,
                         bombs: gs.bombs.clone(),
+                        obstacles: gs.obstacles.clone(),
                     }
                 );
             }
@@ -538,13 +544,16 @@ async fn session(
                 if players.len() == 2 {
                     // One red die, drawn now — only used if squad totals tie.
                     let tie_roll = sf_core::dice::AttackFace::from_d8(rand::random::<u8>());
-                    let gs = GameState::from_squads(
+                    let mut gs = GameState::from_squads(
                         default_board(),
                         &content,
                         [&players[0].2, &players[1].2],
                         tie_roll,
                     )
                     .expect("validated squads");
+                    let kinds =
+                        vec![sf_core::obstacle::ObstacleKind::Asteroid; opts.asteroids as usize];
+                    gs.place_obstacles(&kinds, rand::random::<u64>());
                     for s in 0..2u8 {
                         let opponent = players[1 - s as usize].0.clone();
                         send_to!(s, ServerMsg::GameStart { seat: s, opponent, board: gs.board });
@@ -585,6 +594,7 @@ async fn session(
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
                                     bombs: gs.bombs.clone(),
+                                    obstacles: gs.obstacles.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -603,6 +613,7 @@ async fn session(
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
                                     bombs: gs.bombs.clone(),
+                                    obstacles: gs.obstacles.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -621,6 +632,7 @@ async fn session(
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
                                     bombs: gs.bombs.clone(),
+                                    obstacles: gs.obstacles.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
@@ -639,6 +651,7 @@ async fn session(
                                     initiative: gs.initiative.0 as u8,
                                     squad_totals: gs.squad_totals,
                                     bombs: gs.bombs.clone(),
+                                    obstacles: gs.obstacles.clone(),
                                 }
                             ),
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),

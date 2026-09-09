@@ -34,7 +34,7 @@ async fn start(password: &str) -> (u16, String) {
     let tls = sf_server::tls::server_config(cert, key).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let opts = ServerOpts { tls: Some(tls), password: Some(password.to_string()) };
+    let opts = ServerOpts { tls: Some(tls), password: Some(password.to_string()), asteroids: 0 };
     tokio::spawn(sf_server::run(listener, Arc::new(content()), opts));
     (port, fp)
 }
