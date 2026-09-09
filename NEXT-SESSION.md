@@ -227,9 +227,17 @@ and Server `ws://127.0.0.1:7777`.
       sprite when the attack animation ends). ~~Expert Handling~~
       (`ActionExtras.expert_roll`: barrel roll allowed without the icon,
       stress if missing, then one enemy lock on the ship removed —
-      `after_expert_roll`). NEXT: v0.4.0 once the user has tried the
-      setup screen, the second-action keys, the black hole pull, the
-      torpedo pick and Lorrir's keys on screen (all unplaytested).
+      `after_expert_roll`). ~~v0.4.0~~ CUT 2026-09-09 (tag v0.4.0,
+      protocol 3, commit faaf170 "Version 0.4.0"; release zips from the
+      `v*` workflow). Still unplaytested on screen: the setup screen,
+      the second-action keys, the black hole pull, the torpedo pick and
+      Lorrir's keys — ask the user for feedback next session. NEXT
+      candidates (user asked "what else?" 2026-09-09): glossary marks
+      the bomb cards / Extra Munitions / Snap Shot as not automated
+      because they resolve outside `implemented()` (quick fix);
+      multi-player seats (unblocks scenarios/campaigns; protocol
+      change); remaining pilot abilities (26) and crew/system upgrade
+      effects (~70).
       Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
@@ -250,9 +258,8 @@ and Server `ws://127.0.0.1:7777`.
       MoveRecord gains `pre` (BB-8 roll) and `second`. Client keys: 0
       arms the second slot then any action key (1 clears), -/= turn
       boosts, [/] far rolls, K cycles card actions; HUD shows "2nd:" and
-      the move narration says "then …". Six tests. NEXT: cut v0.4.0
-      after the user has tried the keys (proto 3 means new zips for all
-      players); ~~reasons for unavailable weapons in the Declare Target
+      the move narration says "then …". Six tests. ~~Cut v0.4.0~~ DONE
+      2026-09-09; ~~reasons for unavailable weapons in the Declare Target
       prompt~~ DONE 2026-09-09 (`weapons::unavailable_reasons`,
       `PendingAttack.unavailable`, `ChooseTarget.unavailable`, shown as
       "not available now: Proton Torpedoes (needs a target lock on
