@@ -232,6 +232,29 @@ and Server `ws://127.0.0.1:7777`.
       `v*` workflow). Still unplaytested on screen: the setup screen,
       the second-action keys, the black hole pull, the torpedo pick and
       Lorrir's keys — ask the user for feedback next session.
+      >>> RESUME HERE (2026-09-10): MISSIONS DONE (commits 360ee55,
+      a0a94a6, 3caf658; 231 tests): core rules p.21-24 as `sf-core::mission`
+      (`MissionKind::{PoliticalEscort, AsteroidRun, DarkWhispers}`,
+      `MissionState` in GameState, `GameState::start_mission` after
+      `place_obstacles`, `deploy_zones(player)` → `rules::placement_legal_in`,
+      escape edges via `mission_escape` + `ShipState.escaped`, reinforcements
+      spawned in `mission_end_phase` and placed in a mid-game Placement
+      phase (poses public when turn > 1), `PlannedAction::Protect` (key P),
+      the senator's shuttle = class 12 / pilot 1201 cost 0 (kept out of
+      squads), disabled ship = first Rebel ship (speed ≤2 until turn 5),
+      satellites fixed by `satellite_positions`, auto-scan policy in
+      `mission_scan`, `mission_winner` replaces the alive-teams check).
+      Data: T-65 X-Wing class 11 (dial 11, pilots 1101-1106: Rookie, Red
+      Squadron, Biggs, Garven, Luke, Wedge — abilities data-only for now:
+      ProtectFriendsAtRange1, PassSpentFocusRange1To2, DefenseFocusToEvade,
+      DefenderAgilityMinus1). Proto 4 Snapshot += zones, mission
+      (MissionView); GameSetup/Scenario += mission; server: seat factions
+      (`faction_for_seat`), printed forces on a squad-less join
+      (`mission::fixed_squad`), `winner_reason`. Client: zones drawn from
+      the snapshot, satellites as cyan diamonds, HUD mission line, glossary
+      Rules tab lists the missions. UNPLAYTESTED on screen. NEXT (user
+      request 2026-09-10): a BOT SEAT for solo play/testing (sf-core
+      `bot.rs` decisions + server virtual client + setup field "Bots").
       >>> RESUME HERE: card automation is essentially COMPLETE
       (2026-09-09, 216 tests). Upgrade-effect batches 1-3 (commits
       0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B
