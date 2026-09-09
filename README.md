@@ -22,6 +22,15 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
 3. Card images for the squad builder are optional; see
    [Card images](#card-images-optional) below. Without them the builder
    shows the card text.
+4. In a game, plan with the keys shown in the HUD help line: Tab selects a
+   ship, Left/Right + Enter set the maneuver, number keys pick the action
+   (6 then click an enemy = target lock), **B** cycles a bomb to drop on
+   dial reveal, **M** makes a mine drop the action, C commits, X resigns.
+   Weapons fire from the Declare Target prompt (number keys or click).
+
+**Effects Demo** in the menu plays every weapon impact, missile flight,
+bomb token and detonation in a loop on a fake board so you can review the
+animations without an opponent (Esc returns to the menu).
 
 Downloads: **Actions → Release builds** (or a tagged GitHub Release) has zips
 for Linux and Windows containing both binaries and `assets/`.

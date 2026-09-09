@@ -10,7 +10,13 @@ the repo root, gitignored — read pages on demand; p.20 obstacles, p.20
 team play and p.21-24 missions are read but NOT implemented).
 
 What exists end-to-end:
-- Menu (over procedural starfield) → Offline Sandbox or Create/Join game.
+- Menu (over procedural starfield) → Offline Sandbox, Effects Demo, or
+  Create/Join game. The Effects Demo (online.rs `start_demo` /
+  `fx_demo` / `demo_queue`) plays a scripted loop on a fake snapshot —
+  every impact style, missile flight, turret shots, all seven bomb
+  tokens and their detonations — through the real animation queue, with
+  the HUD naming each effect; Esc leaves. Use it to review animations
+  without a game.
 - Networked play: hidden placement (drag, Q/E rotate, A submits all),
   secret planning of maneuver (dial keys) + action (keys 1-6; 6 then
   click enemy = target lock), C commits, X resigns.
@@ -161,8 +167,9 @@ and Server `ws://127.0.0.1:7777`.
       leaves the list (the combat log says "discarded (fired)"). Still
       open: greying out unavailable weapons inside the Declare Target
       prompt (needs `ChooseTarget` to carry reasons → protocol 3).
-   b. ~~Bombs~~ DONE 2026-09-09 (NOT yet seen on screen — playtest with
-      a TIE Bomber carrying Seismic Charges + Proximity Mines).
+   b. ~~Bombs~~ DONE 2026-09-09 (animations reviewable in the menu's
+      Effects Demo; the drop keys still need a real playtest with a TIE
+      Bomber carrying Seismic Charges + Proximity Mines).
       Rules as encoded (sf-core/src/bombs.rs + game.rs): planning key
       B cycles the dial-reveal bomb (`ClientMsg::PlanBomb`,
       `ShipState.bomb`), key M cycles the mine-drop action
