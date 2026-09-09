@@ -39,6 +39,37 @@ pub struct Content {
     pub dials: ManeuverDb,
     pub pilots: PilotDb,
     pub upgrades: UpgradeDb,
+    /// Tokens, actions, damage cards and rules terms for the in-game
+    /// glossary (`glossary.ron`).
+    pub glossary: GlossaryDb,
+}
+
+/// Which glossary tab an entry belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GlossaryCategory {
+    Tokens,
+    Actions,
+    Damage,
+    Rules,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlossaryEntry {
+    pub category: GlossaryCategory,
+    pub name: String,
+    pub text: String,
+}
+
+/// Contents of `assets/data/glossary.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlossaryDb {
+    pub entries: Vec<GlossaryEntry>,
+}
+
+impl GlossaryDb {
+    pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
+        parser().from_str(s)
+    }
 }
 
 impl Content {
@@ -47,16 +78,18 @@ impl Content {
         dials: &str,
         pilots: &str,
         upgrades: &str,
+        glossary: &str,
     ) -> Result<Self, ron::error::SpannedError> {
         Ok(Self {
             ships: ShipDb::from_ron(ships)?,
             dials: ManeuverDb::from_ron(dials)?,
             pilots: PilotDb::from_ron(pilots)?,
             upgrades: UpgradeDb::from_ron(upgrades)?,
+            glossary: GlossaryDb::from_ron(glossary)?,
         })
     }
 
-    /// Read the four data files from a directory.
+    /// Read the five data files from a directory.
     pub fn load_dir(dir: &str) -> Result<Self, String> {
         let read = |name: &str| {
             std::fs::read_to_string(format!("{dir}/{name}"))
@@ -67,6 +100,7 @@ impl Content {
             &read("maneuvers.ron")?,
             &read("pilots.ron")?,
             &read("upgrades.ron")?,
+            &read("glossary.ron")?,
         )
         .map_err(|e| format!("parse data in {dir}: {e}"))
     }
