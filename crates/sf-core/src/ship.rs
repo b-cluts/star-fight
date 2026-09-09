@@ -149,6 +149,9 @@ pub struct ShipState {
     /// Secretly chosen bomb card to drop when the dial is revealed.
     #[serde(default)]
     pub bomb: Option<crate::upgrade::UpgradeId>,
+    /// A shield was lost this round ("Red Ace" triggers once per round).
+    #[serde(default)]
+    pub shield_lost_round: bool,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

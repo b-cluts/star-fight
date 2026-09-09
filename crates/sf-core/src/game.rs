@@ -425,6 +425,7 @@ impl GameState {
                     plan: None,
                     planned_action: None,
                     bomb: None,
+                    shield_lost_round: false,
                     focus: 0,
                     evade: 0,
                     ion: 0,
@@ -501,6 +502,12 @@ impl GameState {
         if s.crits.contains(&CritEffect::DamagedCockpit) {
             return 0;
         }
+        // "Epsilon Ace": skill 12 while no Damage card is assigned.
+        if self.ability(content, s) == Some(PilotAbility::SkillTwelveWhileUndamaged)
+            && s.hull == self.max_hull(content, s)
+        {
+            return 12;
+        }
         let base = content.pilots.pilot(s.pilot).map(|p| p.skill).unwrap_or(0) as i16;
         let up = 2 * self.count_effect(content, s, UpgradeEffect::SkillPlus2) as i16
             + self.count_effect(content, s, UpgradeEffect::SkillPlus1) as i16
@@ -533,8 +540,18 @@ impl GameState {
     pub fn agility(&self, content: &Content, s: &ShipState) -> u8 {
         let structural =
             s.crits.iter().filter(|x| matches!(x, CritEffect::StructuralDamage)).count() as u8;
+        // Gemmer Sojan: +1 agility while an enemy ship is at Range 1.
+        let gemmer = self.ability(content, s) == Some(PilotAbility::AgilityPlus1IfEnemyAtRange1)
+            && self.ships.iter().position(|x| x.id == s.id).is_some_and(|i| {
+                (0..self.ships.len()).any(|e| {
+                    self.ships[e].owner != s.owner
+                        && !self.ships[e].destroyed
+                        && self.range_between(content, i, e) == Some(1)
+                })
+            });
         (self.printed(content, s).agility
-            + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit))
+            + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit)
+            + u8::from(gemmer))
         .saturating_sub(structural)
     }
 
@@ -629,6 +646,145 @@ impl GameState {
 
     fn has_effect(&self, content: &Content, i: usize, e: UpgradeEffect) -> bool {
         self.count_effect(content, &self.ships[i], e) > 0
+    }
+
+    /// The first equipped card carrying effect `e` (to discard it).
+    fn card_with_effect(&self, content: &Content, i: usize, e: UpgradeEffect) -> Option<UpgradeId> {
+        self.ships[i]
+            .upgrades
+            .iter()
+            .copied()
+            .find(|u| content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(e))
+    }
+
+    fn discard_card(&mut self, content: &Content, i: usize, card: UpgradeId, why: &str) -> String {
+        self.ships[i].upgrades.retain(|u| *u != card);
+        let name = content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_default();
+        format!("{}: {name} — {why}, card discarded", self.label(content, i))
+    }
+
+    /// Any living enemy inside ship `i`'s firing arc at Range 1?
+    fn enemy_in_arc_at_range1(&self, content: &Content, i: usize) -> bool {
+        (0..self.ships.len()).any(|e| {
+            self.ships[e].owner != self.ships[i].owner
+                && !self.ships[e].destroyed
+                && self.range_between(content, i, e) == Some(1)
+                && self.ship_in_front_arc(content, i, e)
+        })
+    }
+
+    /// The color a maneuver is flown at by ship `i`: crits first (Damaged
+    /// Engine / Thrust Control Fire redden), then cards that green it (R2
+    /// Astromech speed 1-2 straights, Nien Nunb crew straights, Twin Ion
+    /// Engine Mk. II banks), Ello Asty's white Tallon Rolls while
+    /// unstressed, and Adrenaline Rush turning a red maneuver white — the
+    /// second value is that card, to discard when the maneuver is flown.
+    fn maneuver_difficulty(
+        &self,
+        content: &Content,
+        i: usize,
+        man: &Maneuver,
+    ) -> (Difficulty, Option<UpgradeId>) {
+        use maneuver::Steer;
+        let s = &self.ships[i];
+        let mut d = crit::effective_difficulty(&s.crits, man);
+        let straight = man.steer == Steer::Straight;
+        let bank = matches!(man.steer, Steer::BankLeft | Steer::BankRight);
+        let tallon = matches!(man.steer, Steer::TallonLeft | Steer::TallonRight);
+        if d == Difficulty::Hard
+            && tallon
+            && s.stress == 0
+            && self.ability(content, s) == Some(PilotAbility::TallonWhiteWhileUnstressed)
+        {
+            d = Difficulty::Normal;
+        }
+        if (straight
+            && man.distance <= 2
+            && self.has_effect(content, i, UpgradeEffect::Speed1And2AreGreen))
+            || (straight && self.has_effect(content, i, UpgradeEffect::CrewStraightsAreGreen))
+            || (bank && self.has_effect(content, i, UpgradeEffect::BanksAreGreen))
+        {
+            d = Difficulty::Easy;
+        }
+        let mut rush = None;
+        if d == Difficulty::Hard
+            && let Some(card) =
+                self.card_with_effect(content, i, UpgradeEffect::TreatRedAsWhiteDiscard)
+        {
+            d = Difficulty::Normal;
+            rush = Some(card);
+        }
+        (d, rush)
+    }
+
+    /// Ship `i` receives a stress token. Nien Nunb (T-70) discards it when
+    /// an enemy is in arc at Range 1; Soontir Fel gains a focus token;
+    /// Cool Hand is discarded for a focus token.
+    fn gain_stress(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        self.ships[i].stress += 1;
+        let who = self.label(content, i);
+        match self.ability(content, &self.ships[i]) {
+            Some(PilotAbility::DiscardStressIfEnemyInArcRange1)
+                if self.enemy_in_arc_at_range1(content, i) =>
+            {
+                self.ships[i].stress -= 1;
+                events.push(format!("{who}: ability — stress discarded (enemy in arc at Range 1)"));
+            }
+            Some(PilotAbility::FocusOnStress) => {
+                self.ships[i].focus += 1;
+                events.push(format!("{who}: ability — focus token for the stress"));
+            }
+            _ => {}
+        }
+        if let Some(card) = self.card_with_effect(content, i, UpgradeEffect::FocusOrEvadeOnStress) {
+            self.ships[i].focus += 1;
+            let e = self.discard_card(content, i, card, "focus token for the stress");
+            events.push(e);
+        }
+    }
+
+    /// Ship `i` removes a stress token if it has one (Kyle Katarn crew
+    /// then grants a focus token). Returns whether one was removed.
+    fn lose_stress(&mut self, content: &Content, i: usize, events: &mut Vec<String>) -> bool {
+        if self.ships[i].stress == 0 {
+            return false;
+        }
+        self.ships[i].stress -= 1;
+        if self.has_effect(content, i, UpgradeEffect::CrewFocusAfterStressRemoved) {
+            self.ships[i].focus += 1;
+            events.push(format!("{}: Kyle Katarn — focus token", self.label(content, i)));
+        }
+        true
+    }
+
+    /// "Red Ace": the first shield lost each round grants an evade token.
+    fn after_shield_loss(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        if !self.ships[i].shield_lost_round
+            && self.ability(content, &self.ships[i]) == Some(PilotAbility::EvadeOnFirstShieldLoss)
+        {
+            self.ships[i].evade += 1;
+            events.push(format!(
+                "{}: ability — evade token (first shield lost)",
+                self.label(content, i)
+            ));
+        }
+        self.ships[i].shield_lost_round = true;
+    }
+
+    /// "Chaser": a focus token whenever another friendly ship at Range 1
+    /// spends one.
+    fn friend_spent_focus(&mut self, content: &Content, spender: usize, events: &mut Vec<String>) {
+        for f in self.friends_at_range1(content, spender) {
+            if self.ability(content, &self.ships[f])
+                == Some(PilotAbility::FocusWhenFriendlySpendsFocusRange1)
+            {
+                self.ships[f].focus += 1;
+                events.push(format!(
+                    "{}: ability — focus token (friend spent one)",
+                    self.label(content, f)
+                ));
+            }
+        }
     }
 
     /// Talent rerolls on attack, after the lock and friendly rerolls:
@@ -735,11 +891,11 @@ impl GameState {
             && self.ships[d_idx].focus == 0
             && self.ships[d_idx].evade == 0
         {
-            self.ships[a_idx].stress += 1;
             events.push(format!(
                 "{}: Opportunist — takes a stress token for +1 attack die",
                 self.label(content, a_idx)
             ));
+            self.gain_stress(content, a_idx, events);
             1
         } else {
             0
@@ -826,7 +982,7 @@ impl GameState {
                 "defender already damaged"
             }
             PilotAbility::StressForExtraAttackDie if self.ships[a_idx].stress == 0 => {
-                self.ships[a_idx].stress += 1;
+                self.gain_stress(content, a_idx, events);
                 "takes stress"
             }
             _ => return 0,
@@ -1131,6 +1287,25 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) -> (u8, u8) {
+        // Chewbacca flips every faceup card facedown unresolved;
+        // Determination discards Pilot-trait cards the same way.
+        if self.ability(content, &self.ships[i]) == Some(PilotAbility::FlipCritFacedownImmediately)
+        {
+            events.push(format!(
+                "{}: ability — card flipped facedown, no effect",
+                self.label(content, i)
+            ));
+            return (0, 0);
+        }
+        if effect.is_pilot_trait()
+            && self.has_effect(content, i, UpgradeEffect::DiscardPilotCritImmediately)
+        {
+            events.push(format!(
+                "{}: Determination — Pilot card discarded, no effect",
+                self.label(content, i)
+            ));
+            return (0, 0);
+        }
         let mut extra = (0u8, 0u8);
         let extra_point = |gs: &mut Self, extra: &mut (u8, u8)| match gs.damage_point(i) {
             DamagePoint::Shield => extra.0 += 1,
@@ -1236,7 +1411,7 @@ impl GameState {
         let man = *dial.get(index as usize).ok_or(Rejection::BadManeuverIndex)?;
         // Crits can make normally-white maneuvers red (Damaged Engine /
         // Thrust Control Fire) — the stress rule uses the effective color.
-        let difficulty = crit::effective_difficulty(&self.ships[i].crits, &man);
+        let (difficulty, _) = self.maneuver_difficulty(content, i, &man);
         if self.ships[i].stress > 0 && difficulty == Difficulty::Hard {
             return Err(Rejection::StressedRedForbidden);
         }
@@ -1390,6 +1565,7 @@ impl GameState {
                 destroyed: false,
             };
             let mut dice = 0;
+            let shields_before = self.ships[i].shields;
             match token.kind {
                 BombKind::Proton => {
                     self.faceup_card(content, i, roll, events);
@@ -1407,7 +1583,7 @@ impl GameState {
                     self.damage_point(i);
                     hit.damage = 1;
                     if !self.ships[i].destroyed {
-                        self.ships[i].stress += 1;
+                        self.gain_stress(content, i, events);
                         hit.stress = 1;
                     }
                 }
@@ -1448,6 +1624,9 @@ impl GameState {
                 }
             }
             hit.destroyed = self.ships[i].destroyed;
+            if self.ships[i].shields < shields_before && !hit.destroyed {
+                self.after_shield_loss(content, i, events);
+            }
             let mut what = Vec::new();
             if hit.damage > 0 {
                 what.push(format!("{} damage", hit.damage));
@@ -1528,7 +1707,8 @@ impl GameState {
         if self.committed != [true, true] {
             return Ok(None);
         }
-        let (moves, detonations, events) = self.resolve_movement(content, roll);
+        let (moves, detonations, mut events) = self.resolve_movement(content, roll);
+        self.combat_start_stress_relief(content, &mut events);
 
         // Combat order: highest pilot skill first (initiative breaks
         // ties), grouped by skill; each group's survivors are fixed when
@@ -1561,6 +1741,40 @@ impl GameState {
             detonations: detonations.clone(),
         });
         Ok(Some(ActivationRecords { moves, detonations, events }))
+    }
+
+    /// Start of the Combat phase: "Epsilon Leader" removes a stress token
+    /// from every friendly ship at Range 1; a Wingman card from one.
+    fn combat_start_stress_relief(&mut self, content: &Content, events: &mut Vec<String>) {
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed || self.ships[i].pose.is_none() {
+                continue;
+            }
+            let friends = self.friends_at_range1(content, i);
+            if self.ability(content, &self.ships[i])
+                == Some(PilotAbility::RemoveStressFriendlyRange1AtCombatStart)
+            {
+                for &f in &friends {
+                    if self.lose_stress(content, f, events) {
+                        events.push(format!(
+                            "{}: ability — stress removed from {}",
+                            self.label(content, i),
+                            self.label(content, f)
+                        ));
+                    }
+                }
+            }
+            if self.has_effect(content, i, UpgradeEffect::RemoveStressFriendlyAtCombatStart)
+                && let Some(&f) = friends.iter().find(|&&f| self.ships[f].stress > 0)
+                && self.lose_stress(content, f, events)
+            {
+                events.push(format!(
+                    "{}: Wingman — stress removed from {}",
+                    self.label(content, i),
+                    self.label(content, f)
+                ));
+            }
+        }
     }
 
     /// Narrated events of the turn so far (for streaming deltas).
@@ -1739,6 +1953,7 @@ impl GameState {
             };
             let dial = &content.dials.set(dial_id).expect("validated").maneuvers;
             let mut man = dial[self.ships[i].plan.expect("commit checked plans") as usize];
+            let (mut difficulty, mut rush) = self.maneuver_difficulty(content, i, &man);
             // p.17: a ship that is ALREADY stressed when it reveals a red
             // maneuver doesn't fly it — the opposing player picks any
             // non-red replacement. Unreachable through normal play until
@@ -1747,10 +1962,11 @@ impl GameState {
             // straight, an adversarial stand-in for the opponent's choice.
             // PROVISIONAL: the user may replace this policy.
             if self.ships[i].stress > 0
-                && crit::effective_difficulty(&self.ships[i].crits, &man) == Difficulty::Hard
+                && difficulty == Difficulty::Hard
                 && let Some(sub) = substitute_non_red(dial, &self.ships[i].crits)
             {
                 man = sub;
+                (difficulty, rush) = self.maneuver_difficulty(content, i, &man);
             }
             // Ionized ships ignore their dial: a white straight 1, then the
             // ion tokens come off.
@@ -1761,6 +1977,7 @@ impl GameState {
                     difficulty: Difficulty::Normal,
                 };
                 self.ships[i].ion = 0;
+                (difficulty, rush) = (Difficulty::Normal, None);
                 events.push(format!("{}: ionized — drifts straight 1", self.label(content, i)));
             }
             // Dial-reveal bombs drop before the ship moves.
@@ -1823,15 +2040,33 @@ impl GameState {
                 let ship = &mut self.ships[i];
                 ship.pose = Some(end);
                 ship.plan = None;
-                // Stress by the EFFECTIVE color (crits can redden a maneuver).
-                match crit::effective_difficulty(&ship.crits, &man) {
-                    Difficulty::Hard => ship.stress += 1,
-                    Difficulty::Easy => ship.stress = ship.stress.saturating_sub(1),
-                    Difficulty::Normal => {}
-                }
                 if fled {
                     ship.destroyed = true;
                 }
+            }
+            // Stress by the EFFECTIVE color (see maneuver_difficulty).
+            if let Some(card) = rush {
+                let e = self.discard_card(content, i, card, "red maneuver flown as white");
+                events.push(e);
+            }
+            match difficulty {
+                Difficulty::Hard => self.gain_stress(content, i, &mut events),
+                Difficulty::Easy => {
+                    self.lose_stress(content, i, &mut events);
+                }
+                Difficulty::Normal => {}
+            }
+            // "Night Beast": a free focus action after a green maneuver.
+            if difficulty == Difficulty::Easy
+                && !self.ships[i].destroyed
+                && self.ships[i].stress == 0
+                && self.ability(content, &self.ships[i]) == Some(PilotAbility::FreeFocusAfterGreen)
+            {
+                self.ships[i].focus += 1;
+                events.push(format!(
+                    "{}: ability — free focus after a green maneuver",
+                    self.label(content, i)
+                ));
             }
 
             // Mines: any token the base or template crossed goes off on
@@ -1879,7 +2114,9 @@ impl GameState {
             let mut dropped_after = Vec::new();
             let action_result = if destroyed {
                 ActionResult::Failed
-            } else if self.ships[i].stress > 0 {
+            } else if self.ships[i].stress > 0
+                && self.ability(content, &self.ships[i]) != Some(PilotAbility::ActionsWhileStressed)
+            {
                 ActionResult::SkippedStressed
             } else if bumped {
                 ActionResult::SkippedBumped
@@ -2045,6 +2282,7 @@ impl GameState {
         for ship in &mut self.ships {
             ship.focus = 0;
             ship.evade = 0;
+            ship.shield_lost_round = false;
             if let Some(l) = ship.lock
                 && dead.contains(&l)
             {
@@ -2356,6 +2594,9 @@ impl GameState {
                 }
             }
         }
+        if attacker_focus_spent {
+            self.friend_spent_focus(content, a_idx, events);
+        }
         let raw_hits = attack_faces.iter().filter(|f| **f == AttackFace::Hit).count() as u8;
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
 
@@ -2415,6 +2656,9 @@ impl GameState {
                 }
             }
             evades += eyes;
+        }
+        if defender_focus_spent {
+            self.friend_spent_focus(content, d_idx, events);
         }
         // Sensor Cluster: with no focus result to convert, the focus token
         // turns one blank into an evade instead.
@@ -2514,7 +2758,7 @@ impl GameState {
                 Some(UpgradeEffect::CannonOneDamageAndStress) => {
                     (hits, crits) = (1, 0);
                     let stressed = if self.ships[d_idx].stress == 0 {
-                        self.ships[d_idx].stress = 1;
+                        self.gain_stress(content, d_idx, events);
                         " and stressed"
                     } else {
                         ""
@@ -2577,6 +2821,9 @@ impl GameState {
             }
         }
 
+        if shields_lost > 0 && !self.ships[d_idx].destroyed {
+            self.after_shield_loss(content, d_idx, events);
+        }
         // "If you are hit by an attack": at least one uncanceled result.
         if hits + crits > 0 {
             self.discard_on_hit(content, d_idx, events);
@@ -4755,5 +5002,215 @@ mod tests {
         assert_eq!(shot.hits, 0);
         assert!(shot.defender_focus_spent);
         assert!(rec.events.iter().any(|e| e.contains("Sensor Cluster")), "{:?}", rec.events);
+    }
+
+    // ---------------- Token, stress and movement abilities ----------------
+
+    #[test]
+    fn night_beast_gets_a_free_focus_after_a_green_maneuver() {
+        let c = content();
+        // Straight 3 is green on the TIE dial; the X-Wing starts closer so
+        // the two still end at Range 3.
+        let mut gs =
+            duel_at(&c, "nightbeast", "bluesquadronnovice", Pose::new(10.0, 16.0, -FRAC_PI_2));
+        let s3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 3);
+        gs.plan_maneuver(&c, P0, ShipId(0), s3).unwrap();
+        // Night Beast (PS5) fires first: [Eye, Eye] spent with the free focus.
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = imperial_shot(&rec);
+        assert!(shot.attacker_focus_spent);
+        assert_eq!(shot.hits, 2);
+        assert!(rec.events.iter().any(|e| e.contains("free focus")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn red_ace_gains_one_evade_per_round_on_the_first_shield_lost() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("academypilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5),
+                ("academypilot", Pose::new(12.0, 2.5, FRAC_PI_2), 5),
+            ],
+            &[("redace", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        // Red Ace (PS6) fires blanks; TIE 0 lands two hits (two shields
+        // gone, one evade token); TIE 1's single hit meets that evade.
+        let rolls = vec![7, 7, 7, 7, 7, 7, 7, 0, 0, 7, 7, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7];
+        let rec = resolve(&c, &mut gs, rolls);
+        let second = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(second.evade_spent);
+        assert_eq!(second.hits, 0);
+        assert_eq!(gs.ships[2].shields, 1);
+        assert_eq!(rec.events.iter().filter(|e| e.contains("first shield lost")).count(), 1);
+    }
+
+    #[test]
+    fn epsilon_leader_and_wingman_clear_stress_when_combat_starts() {
+        let c = content();
+        let wingman = UpgradeId(134);
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("epsilonleader", Pose::new(10.0, 2.5, FRAC_PI_2), 5),
+                ("zetasquadronpilot", Pose::new(11.5, 2.5, FRAC_PI_2), 5),
+            ],
+            &[
+                ("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4),
+                ("bluesquadronnovice", Pose::new(11.5, 17.5, -FRAC_PI_2), 4),
+            ],
+        );
+        gs.ships[2].upgrades.push(wingman);
+        gs.ships[1].stress = 1;
+        gs.ships[3].stress = 1;
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(gs.ships[1].stress, 0);
+        assert_eq!(gs.ships[3].stress, 0);
+        assert!(rec.events.iter().any(|e| e.contains("Wingman")), "{:?}", rec.events);
+        assert!(
+            rec.events.iter().any(|e| e.contains("stress removed from Obsidian-2")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn stress_riders_nien_nunb_soontir_fel_and_cool_hand() {
+        let c = content();
+        // Nien Nunb facing a TIE at Range 1: the stress is discarded.
+        let mut gs = duel(&c, "academypilot", "niennunb");
+        gs.ships[0].pose = Some(Pose::new(10.0, 7.5, FRAC_PI_2));
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.5, -FRAC_PI_2));
+        let mut ev = Vec::new();
+        gs.gain_stress(&c, 1, &mut ev);
+        assert_eq!(gs.ships[1].stress, 0);
+        assert!(ev.iter().any(|e| e.contains("stress discarded")), "{ev:?}");
+        // Facing away: the TIE is behind, the stress stays.
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.5, FRAC_PI_2));
+        gs.gain_stress(&c, 1, &mut ev);
+        assert_eq!(gs.ships[1].stress, 1);
+
+        // Soontir Fel takes a focus token with every stress.
+        let mut gs = duel(&c, "soontirfel", "bluesquadronnovice");
+        gs.gain_stress(&c, 0, &mut ev);
+        assert_eq!((gs.ships[0].stress, gs.ships[0].focus), (1, 1));
+
+        // Cool Hand: discarded for a focus token.
+        let mut gs = talent_duel(&c, UpgradeId(117));
+        gs.gain_stress(&c, 1, &mut ev);
+        assert_eq!((gs.ships[1].stress, gs.ships[1].focus), (1, 1));
+        assert!(!gs.ships[1].upgrades.contains(&UpgradeId(117)));
+    }
+
+    #[test]
+    fn a_wing_aces_tycho_acts_while_stressed_and_gemmer_dodges_up_close() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("tychocelchu", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.ships[1].stress = 1;
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("gemmersojan", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        assert_eq!(gs.agility(&c, &gs.ships[1]), 3);
+        gs.ships[0].pose = Some(Pose::new(10.0, 7.5, FRAC_PI_2));
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.5, -FRAC_PI_2));
+        assert_eq!(gs.agility(&c, &gs.ships[1]), 4);
+    }
+
+    #[test]
+    fn epsilon_ace_flies_at_skill_12_until_damaged() {
+        let c = content();
+        let mut gs = duel(&c, "epsilonace", "bluesquadronnovice");
+        assert_eq!(gs.effective_skill(&c, &gs.ships[0]), 12);
+        gs.ships[0].hull -= 1;
+        assert_eq!(gs.effective_skill(&c, &gs.ships[0]), 4);
+    }
+
+    #[test]
+    fn chaser_gains_a_focus_when_a_friend_at_range_1_spends_one() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5),
+                ("chaser", Pose::new(11.5, 2.5, FRAC_PI_2), 5),
+            ],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        // Obsidian [Eye, Eye] spends its focus → Chaser gets one and spends
+        // it on its own [Eye, Blank].
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let chaser = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(chaser.attacker_focus_spent);
+        assert_eq!(chaser.hits, 1);
+        assert!(rec.events.iter().any(|e| e.contains("friend spent one")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn cards_and_pilots_recolour_maneuvers() {
+        let c = content();
+        use crate::maneuver::Steer;
+        // R2 Astromech greens a white speed-2 straight (hand-built: every
+        // dial in the data already prints those green), not a speed 3.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        let white = |steer, distance| Maneuver { steer, distance, difficulty: Difficulty::Normal };
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &white(Steer::Straight, 2)).0, Difficulty::Normal);
+        gs.ships[1].upgrades.push(UpgradeId(41));
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &white(Steer::Straight, 2)).0, Difficulty::Easy);
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &white(Steer::Straight, 3)).0, Difficulty::Normal);
+
+        // Twin Ion Engine Mk. II greens the TIE's white bank 3.
+        let bank = white(Steer::BankLeft, 3);
+        assert_eq!(gs.maneuver_difficulty(&c, 0, &bank).0, Difficulty::Normal);
+        gs.ships[0].upgrades.push(UpgradeId(78));
+        assert_eq!(gs.maneuver_difficulty(&c, 0, &bank).0, Difficulty::Easy);
+
+        // Ello Asty: Tallon Rolls are white while unstressed only.
+        let mut gs = duel(&c, "academypilot", "elloasty");
+        let tallon = c.dials.set(c.ships.class(XWING).unwrap().maneuver_set).unwrap().maneuvers
+            [dial_index(&c, XWING, |m| m.steer == Steer::TallonLeft) as usize];
+        assert_eq!(tallon.difficulty, Difficulty::Hard);
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &tallon).0, Difficulty::Normal);
+        gs.ships[1].stress = 1;
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &tallon).0, Difficulty::Hard);
+
+        // Adrenaline Rush: a TIE's red K-turn flown white, card discarded.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[0].upgrades.push(UpgradeId(114));
+        let kturn = dial_index(&c, TIE, |m| m.steer == Steer::KTurn && m.distance == 3);
+        gs.plan_maneuver(&c, P0, ShipId(0), kturn).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(gs.ships[0].stress, 0);
+        assert!(!gs.ships[0].upgrades.contains(&UpgradeId(114)));
+        assert!(rec.events.iter().any(|e| e.contains("Adrenaline Rush")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn chewbacca_and_determination_neutralise_faceup_cards() {
+        let c = content();
+        let mut ev = Vec::new();
+        let mut gs = duel(&c, "academypilot", "chewbacca");
+        let mut rolls = scripted(vec![7]);
+        gs.apply_crit_effect(&c, 1, CritEffect::DirectHit, &mut rolls, &mut ev);
+        assert!(gs.ships[1].crits.is_empty());
+        assert!(ev.iter().any(|e| e.contains("flipped facedown")), "{ev:?}");
+
+        let mut gs = talent_duel(&c, UpgradeId(109));
+        gs.apply_crit_effect(&c, 1, CritEffect::StunnedPilot, &mut rolls, &mut ev);
+        assert!(gs.ships[1].crits.is_empty(), "Pilot card discarded");
+        gs.apply_crit_effect(&c, 1, CritEffect::ConsoleFire, &mut rolls, &mut ev);
+        assert_eq!(gs.ships[1].crits, vec![CritEffect::ConsoleFire], "Ship cards still attach");
     }
 }

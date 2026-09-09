@@ -253,6 +253,17 @@ impl PilotAbility {
                 | PilotAbility::LockedEnemiesCannotModifyDice
                 | PilotAbility::FriendlyRerollAttackRange1
                 | PilotAbility::RerollPerFriendlyRange1
+                | PilotAbility::TallonWhiteWhileUnstressed
+                | PilotAbility::DiscardStressIfEnemyInArcRange1
+                | PilotAbility::EvadeOnFirstShieldLoss
+                | PilotAbility::FreeFocusAfterGreen
+                | PilotAbility::FocusWhenFriendlySpendsFocusRange1
+                | PilotAbility::RemoveStressFriendlyRange1AtCombatStart
+                | PilotAbility::SkillTwelveWhileUndamaged
+                | PilotAbility::ActionsWhileStressed
+                | PilotAbility::AgilityPlus1IfEnemyAtRange1
+                | PilotAbility::FlipCritFacedownImmediately
+                | PilotAbility::FocusOnStress
         )
     }
 }

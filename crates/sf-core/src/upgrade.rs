@@ -337,6 +337,14 @@ impl UpgradeEffect {
                 | ExtraAttackDieForStress
                 | ReduceAgilityIfNotInDefenderArc
                 | BlankToEvadeSpendFocus
+                | Speed1And2AreGreen
+                | BanksAreGreen
+                | CrewStraightsAreGreen
+                | TreatRedAsWhiteDiscard
+                | RemoveStressFriendlyAtCombatStart
+                | FocusOrEvadeOnStress
+                | DiscardPilotCritImmediately
+                | CrewFocusAfterStressRemoved
         )
     }
 }

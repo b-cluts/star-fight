@@ -60,6 +60,17 @@ pub fn draw(raw: u8) -> CritEffect {
 }
 
 impl CritEffect {
+    /// Cards with the Pilot trait (Determination discards them unresolved).
+    pub fn is_pilot_trait(&self) -> bool {
+        matches!(
+            self,
+            CritEffect::BlindedPilot
+                | CritEffect::DamagedCockpit
+                | CritEffect::InjuredPilot
+                | CritEffect::StunnedPilot
+        )
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             CritEffect::BlindedPilot => "Blinded Pilot",
