@@ -32,6 +32,12 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
 bomb token and detonation in a loop on a fake board so you can review the
 animations without an opponent (Esc returns to the menu).
 
+**Glossary**: press F1 (or click the "? glossary" button) on any screen,
+including mid-game, to look up ship classes, pilots, every upgrade card,
+tokens and actions, damage cards and rules terms. Left/Right switch tabs,
+Up/Down select, typing filters, Esc closes. Cards the rules engine does not
+enforce yet are marked "NOT yet automated".
+
 Downloads: **Actions → Release builds** (or a tagged GitHub Release) has zips
 for Linux and Windows containing both binaries and `assets/`.
 

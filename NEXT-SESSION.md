@@ -511,7 +511,19 @@ pins.txt + last-used menu values), starfield.rs.
   Phase::Obstacles) with drag-and-drop in the client; scenarios can
   pre-place them. Graphics: assets/obstacles/*.png (ours to include).
 
-- **In-game index / glossary** (requested 2026-09-08): an icon or
+- ~~**In-game index / glossary**~~ DONE 2026-09-09: `sf-client/src/
+  glossary.rs` overlay on every screen (F1 or the bottom-left "? glossary"
+  button; PostUpdate input so its Esc never leaks to a screen; the
+  screens' input systems run under `glossary::closed`). Tabs Ships /
+  Pilots / Upgrades / Tokens & Actions / Damage / Rules, type-to-filter
+  over names and text, Up/Down/PageUp/PageDown, detail block for the
+  selected entry, "[automated]" vs "[NOT yet automated]" from
+  `implemented()`. Data: `assets/data/glossary.ron` (Content.glossary,
+  GlossaryDb — tokens, actions, 14 damage cards, rules terms) and
+  `PilotAbility::text()` generated from the enum doc comments (keep the
+  doc comments as the card text). NOT done: card images in the overlay
+  (the squad builder shows them), mouse scrolling. Original request:
+  an icon or
   button (and a key, e.g. `?` or F1) available on every screen — menu,
   squad builder, online game, sandbox — that opens an overlay where a
   player can look up what anything does: ship classes (stats, action
