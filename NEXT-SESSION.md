@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (156 tests),
+`cargo build` clean, `cargo test --workspace` green (162 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -207,12 +207,33 @@ and Server `ws://127.0.0.1:7777`.
       token/stress/movement abilities~~ DONE 2026-09-09 (see 4.b / 4.d
       for what is live and what was skipped); ~~in-game glossary~~ DONE
       2026-09-09 (F1 / "? glossary" button, see the backlog entry —
-      unseen on screen by the user yet). NEXT (needs a word with the
-      user on the UI): a "second action / template choice" in the
-      planning UI which unlocks Push the Limit, Snap, Blue Ace, Zeta
-      Ace, BB-8, Marksmanship, Rage, Expose, Squad Leader; or the
-      remaining defender-side policies (Elusiveness, R7); or reasons
-      for unavailable weapons in the Declare Target prompt (proto 3).
+      unseen on screen by the user yet). ~~Defender policies (Elusiveness,
+      R7) and damage-card riders~~ DONE (see 4.d second batch).
+      ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
+      (unplaytested — needs a look at the keys on screen):
+      `ShipState.planned_action2` + `plan_second_action` (proto
+      `PlanSecondAction`), `action::SecondActionKind` (FreeBarAction =
+      Push the Limit with stress after; TwoActions = Darth Vader;
+      BoostAfterMove = Snap, speed 2-4 and not bumped, before the action
+      step; RepositionAfterFocus = Jake Farrell; RollOnGreenReveal =
+      BB-8, before the move) computed server-side into
+      `ShipView.extras: ActionExtras { second, turn_boost (Blue Ace:
+      BoostDir::TurnLeft/Right), far_roll (Zeta Ace:
+      PlannedAction::BarrelRollFar), card_actions }`; card actions
+      (`PlannedAction::CardAction(card)` → `ShipState.card_actions` for
+      the round: Marksmanship, Rage (focus + 2 stress + 3 rerolls),
+      Expose (+1 attack, -1 agility), R2-F2 (+1 agility)); the action
+      step runs through `perform_action` (returns dropped mine tokens);
+      MoveRecord gains `pre` (BB-8 roll) and `second`. Client keys: 0
+      arms the second slot then any action key (1 clears), -/= turn
+      boosts, [/] far rolls, K cycles card actions; HUD shows "2nd:" and
+      the move narration says "then …". Six tests. NEXT: cut v0.4.0
+      after the user has tried the keys (proto 3 means new zips for all
+      players); then reasons for unavailable weapons in the Declare
+      Target prompt; then obstacles (needs art or drawn shapes) which
+      unlock Trick Shot / Seismic Torpedo; Lorrir's bank-template roll,
+      Turr Phennir (reposition after attack), Expert Handling, Squad
+      Leader / Lando (friendly free actions) remain.
    Done 2026-09-08/09 (all pushed): server refusals now send Error +
    Close and drain (the old drop caused "connection reset by peer" that
    hid the reason) and the client shows "Connection refused: <why>";
