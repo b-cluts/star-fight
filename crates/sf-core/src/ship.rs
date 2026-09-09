@@ -170,6 +170,12 @@ pub struct ShipState {
     /// bomb card at setup; spent instead of discarding the card.
     #[serde(default)]
     pub ordnance: Vec<crate::upgrade::UpgradeId>,
+    /// Tractor beam tokens: agility -1 each, removed in the End phase.
+    #[serde(default)]
+    pub tractor: u8,
+    /// Rey (crew): focus tokens stored on the card between rounds.
+    #[serde(default)]
+    pub stored_focus: u8,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

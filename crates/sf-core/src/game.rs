@@ -451,6 +451,10 @@ pub struct GameState {
     /// Asteroid and debris tokens (placed before setup, never move).
     #[serde(default)]
     pub obstacles: Vec<Obstacle>,
+    /// Leia Organa (crew) was discarded this round: that seat's red
+    /// maneuvers are flown as white.
+    #[serde(default)]
+    pub white_reds: [bool; 2],
 }
 
 impl GameState {
@@ -518,6 +522,8 @@ impl GameState {
                     shield_lost_round: false,
                     on_asteroid: false,
                     used_round: Vec::new(),
+                    tractor: 0,
+                    stored_focus: 0,
                     ordnance: if entry.upgrades.iter().any(|u| {
                         content.upgrades.upgrade(*u).and_then(|c| c.effect)
                             == Some(UpgradeEffect::OrdnanceTokens)
@@ -558,6 +564,7 @@ impl GameState {
             bombs: Vec::new(),
             next_bomb_id: 0,
             obstacles: Vec::new(),
+            white_reds: [false, false],
         };
         for i in 0..gs_probe.ships.len() {
             let (h, sh) = (
@@ -583,6 +590,7 @@ impl GameState {
             bombs: Vec::new(),
             next_bomb_id: 0,
             obstacles: Vec::new(),
+            white_reds: [false, false],
         })
     }
 
@@ -666,7 +674,7 @@ impl GameState {
             + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit)
             + u8::from(gemmer)
             + r2f2)
-            .saturating_sub(structural + expose)
+            .saturating_sub(structural + expose + s.tractor)
     }
 
     /// Action bar with icons granted by modifications (Targeting
@@ -782,10 +790,10 @@ impl GameState {
         Some(card)
     }
 
-    /// Agent Kallus: the enemy chosen at the start of the game — the
+    /// Agent Kallus / A Score to Settle: the enemy chosen at setup — the
     /// most expensive one (lowest id on a tie), chosen once and for all.
-    fn kallus_target(&self, content: &Content, i: usize) -> Option<ShipId> {
-        if !self.has_effect(content, i, UpgradeEffect::CrewChosenEnemyFocusToHitOrEvade) {
+    fn marked_enemy(&self, content: &Content, i: usize, e: UpgradeEffect) -> Option<ShipId> {
+        if !self.has_effect(content, i, e) {
             return None;
         }
         self.ships
@@ -975,6 +983,10 @@ impl GameState {
             || (bank && self.has_effect(content, i, UpgradeEffect::BanksAreGreen))
         {
             d = Difficulty::Easy;
+        }
+        // Leia Organa (crew), discarded this round: reds are white.
+        if d == Difficulty::Hard && self.white_reds[s.owner.0 as usize] {
+            d = Difficulty::Normal;
         }
         let mut rush = None;
         if d == Difficulty::Hard
@@ -2144,6 +2156,12 @@ impl GameState {
                             | UpgradeEffect::ExposeAction
                             | UpgradeEffect::AgilityPlus1Action
                             | UpgradeEffect::SeismicTorpedoAction
+                            | UpgradeEffect::CrewFleetOfficerAction
+                            | UpgradeEffect::FreeActionForLowerSkillShip
+                            | UpgradeEffect::LockAndBoostAction
+                            | UpgradeEffect::CrewRollDefenseForTokensAction
+                            | UpgradeEffect::CrewSaboteurAction
+                            | UpgradeEffect::DiscardFacedownOnDefenseDie
                     )
                 )
             })
@@ -2310,13 +2328,87 @@ impl GameState {
                     content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_default();
                 self.ships[i].card_actions.push(card);
                 events.push(format!("{}: {name} action", self.label(content, i)));
-                // Rage: a focus token now and two stress tokens.
-                if content.upgrades.upgrade(card).and_then(|c| c.effect)
-                    == Some(UpgradeEffect::RerollUpTo3ForFocusAnd2Stress)
-                {
-                    self.ships[i].focus += 1;
-                    self.gain_stress(content, i, events);
-                    self.gain_stress(content, i, events);
+                match content.upgrades.upgrade(card).and_then(|c| c.effect) {
+                    // Rage: a focus token now and two stress tokens.
+                    Some(UpgradeEffect::RerollUpTo3ForFocusAnd2Stress) => {
+                        self.ships[i].focus += 1;
+                        self.gain_stress(content, i, events);
+                        self.gain_stress(content, i, events);
+                    }
+                    // Fleet Officer: up to two friendly ships within
+                    // Range 1-2 (this one first) gain a focus; then stress.
+                    Some(UpgradeEffect::CrewFleetOfficerAction) => {
+                        let mut picks = vec![i];
+                        picks.extend(self.friends_within(content, i, 2));
+                        for &f in picks.iter().take(2) {
+                            self.ships[f].focus += 1;
+                            events.push(format!(
+                                "{}: Fleet Officer — focus token to {}",
+                                self.label(content, i),
+                                self.label(content, f)
+                            ));
+                        }
+                        self.gain_stress(content, i, events);
+                    }
+                    // Squad Leader: a lower-skill friend at Range 1-2 takes
+                    // a free focus action.
+                    Some(UpgradeEffect::FreeActionForLowerSkillShip) => {
+                        let mine = self.effective_skill(content, &self.ships[i]);
+                        let pick = self
+                            .friends_within(content, i, 2)
+                            .into_iter()
+                            .find(|&f| self.effective_skill(content, &self.ships[f]) < mine);
+                        match pick {
+                            Some(f) if self.may_act_freely(content, f) => {
+                                self.ships[f].focus += 1;
+                                events.push(format!(
+                                    "{}: Squad Leader — {} takes a free focus action",
+                                    self.label(content, i),
+                                    self.label(content, f)
+                                ));
+                            }
+                            _ => {
+                                events.push(format!(
+                                    "{}: Squad Leader — no eligible friend",
+                                    self.label(content, i)
+                                ));
+                                return (ActionResult::Failed, Vec::new());
+                            }
+                        }
+                    }
+                    // R7-T1: a lock on an enemy at Range 1-2 whose arc this
+                    // ship sits in, then a free straight boost.
+                    Some(UpgradeEffect::LockAndBoostAction) => {
+                        let enemy = (0..self.ships.len()).find(|&e| {
+                            self.ships[e].owner != self.ships[i].owner
+                                && !self.ships[e].destroyed
+                                && matches!(self.range_between(content, i, e), Some(1 | 2))
+                        });
+                        let Some(e) = enemy else {
+                            events.push(format!(
+                                "{}: R7-T1 — no enemy at Range 1-2",
+                                self.label(content, i)
+                            ));
+                            return (ActionResult::Failed, Vec::new());
+                        };
+                        if self.ship_in_front_arc(content, e, i) {
+                            self.ships[i].lock = Some(self.ships[e].id);
+                            events.push(format!(
+                                "{}: R7-T1 — locks {}",
+                                self.label(content, i),
+                                self.label(content, e)
+                            ));
+                        }
+                        if let Ok(candidate) = maneuver::apply(
+                            pose,
+                            action::boost_maneuver(action::BoostDir::Straight),
+                        ) && clear(&self.board, candidate)
+                        {
+                            self.ships[i].pose = Some(candidate);
+                            events.push(format!("{}: R7-T1 — free boost", self.label(content, i)));
+                        }
+                    }
+                    _ => {}
                 }
                 ActionResult::Performed
             }
@@ -2325,6 +2417,155 @@ impl GameState {
             PlannedAction::CardActionAt(..) => ActionResult::Failed,
         };
         (result, Vec::new())
+    }
+
+    /// Navigator (same bearing, any speed; no red while stressed) and Stay
+    /// on Target (same speed, any bearing, flown as red): the replacement
+    /// maneuver when `man` would leave the board or end on another ship.
+    fn dial_rotation(
+        &self,
+        content: &Content,
+        i: usize,
+        dial: &[Maneuver],
+        man: &Maneuver,
+        others: &[[Vec2; 4]],
+    ) -> Option<(Maneuver, &'static str)> {
+        let navigator = self.has_effect(content, i, UpgradeEffect::CrewRotateDialSameBearing);
+        let stay = self.has_effect(content, i, UpgradeEffect::RotateDialSameSpeedRed);
+        if !navigator && !stay {
+            return None;
+        }
+        let start = self.ships[i].pose?;
+        let fp = self.class_of(content, &self.ships[i]).footprint;
+        let bad = |m: &Maneuver| {
+            maneuver::sample_path(start, *m)
+                .ok()
+                .map(|p| {
+                    let c = rules::footprint_corners(*p.last().expect("non-empty"), fp);
+                    !rules::within_board(&self.board, &c)
+                        || others.iter().any(|o| rules::obbs_overlap(&c, o))
+                })
+                .unwrap_or(true)
+        };
+        if !bad(man) {
+            return None;
+        }
+        let stressed = self.ships[i].stress > 0;
+        if navigator {
+            let mut same: Vec<&Maneuver> = dial
+                .iter()
+                .filter(|m| m.steer == man.steer && m.distance != man.distance)
+                .filter(|m| {
+                    !(stressed && self.maneuver_difficulty(content, i, m).0 == Difficulty::Hard)
+                })
+                .collect();
+            same.sort_by_key(|m| m.distance.abs_diff(man.distance));
+            if let Some(m) = same.into_iter().find(|m| !bad(m)) {
+                return Some((*m, "Navigator"));
+            }
+        }
+        if stay && !stressed {
+            let pick = dial
+                .iter()
+                .filter(|m| m.distance == man.distance && m.steer != man.steer)
+                .find(|m| !bad(m));
+            if let Some(m) = pick {
+                return Some((Maneuver { difficulty: Difficulty::Hard, ..*m }, "Stay on Target"));
+            }
+        }
+        None
+    }
+
+    /// Card actions that roll dice: Lando Calrissian, Saboteur, R5-D8.
+    fn needs_dice(content: &Content, card: UpgradeId) -> bool {
+        matches!(
+            content.upgrades.upgrade(card).and_then(|c| c.effect),
+            Some(
+                UpgradeEffect::CrewRollDefenseForTokensAction
+                    | UpgradeEffect::CrewSaboteurAction
+                    | UpgradeEffect::DiscardFacedownOnDefenseDie
+            )
+        )
+    }
+
+    /// Facedown Damage cards on ship `i`: hull lost beyond the faceup ones.
+    fn facedown_cards(&self, content: &Content, i: usize) -> u8 {
+        let s = &self.ships[i];
+        (self.max_hull(content, s) - s.hull).saturating_sub(s.crits.len() as u8)
+    }
+
+    fn dice_card_action(
+        &mut self,
+        content: &Content,
+        i: usize,
+        card: UpgradeId,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) -> ActionResult {
+        if !self.action_extras(content, &self.ships[i]).card_actions.contains(&card) {
+            return ActionResult::Failed;
+        }
+        let who = self.label(content, i);
+        match content.upgrades.upgrade(card).and_then(|c| c.effect) {
+            // Lando: two defense dice, a token per focus or evade result.
+            Some(UpgradeEffect::CrewRollDefenseForTokensAction) => {
+                let (mut f, mut e) = (0, 0);
+                for _ in 0..2 {
+                    match DefenseFace::from_d8(roll()) {
+                        DefenseFace::Focus => f += 1,
+                        DefenseFace::Evade => e += 1,
+                        DefenseFace::Blank => {}
+                    }
+                }
+                self.ships[i].focus += f;
+                self.ships[i].evade += e;
+                events.push(format!("{who}: Lando Calrissian — {f} focus, {e} evade tokens"));
+                ActionResult::Performed
+            }
+            // Saboteur: an enemy at Range 1 with facedown cards; a hit or
+            // critical turns one faceup.
+            Some(UpgradeEffect::CrewSaboteurAction) => {
+                let target = (0..self.ships.len()).find(|&e| {
+                    self.ships[e].owner != self.ships[i].owner
+                        && !self.ships[e].destroyed
+                        && self.facedown_cards(content, e) > 0
+                        && self.range_between(content, i, e) == Some(1)
+                });
+                let Some(e) = target else {
+                    events.push(format!("{who}: Saboteur — no damaged enemy at Range 1"));
+                    return ActionResult::Failed;
+                };
+                match AttackFace::from_d8(roll()) {
+                    AttackFace::Hit | AttackFace::Crit => {
+                        let effect = crit::draw(roll());
+                        events.push(format!(
+                            "{who}: Saboteur — {}'s facedown card turns faceup: {}",
+                            self.label(content, e),
+                            effect.name()
+                        ));
+                        self.apply_crit_effect(content, e, effect, roll, events);
+                    }
+                    _ => events.push(format!("{who}: Saboteur — the sabotage fails")),
+                }
+                ActionResult::Performed
+            }
+            // R5-D8: a defense die; evade or focus repairs a facedown card.
+            Some(UpgradeEffect::DiscardFacedownOnDefenseDie) => {
+                if self.facedown_cards(content, i) == 0 {
+                    events.push(format!("{who}: R5-D8 — nothing to repair"));
+                    return ActionResult::Failed;
+                }
+                match DefenseFace::from_d8(roll()) {
+                    DefenseFace::Blank => events.push(format!("{who}: R5-D8 — repair fails")),
+                    _ => {
+                        self.ships[i].hull += 1;
+                        events.push(format!("{who}: R5-D8 — a facedown damage card discarded"));
+                    }
+                }
+                ActionResult::Performed
+            }
+            _ => ActionResult::Failed,
+        }
     }
 
     /// Seismic Torpedo: discard the card to blast obstacle `obstacle`,
@@ -2752,6 +2993,15 @@ impl GameState {
             if self.ships[i].destroyed || self.ships[i].pose.is_none() {
                 continue;
             }
+            // Rey: a stored focus token comes back for the Combat phase.
+            if self.ships[i].stored_focus > 0
+                && self.has_effect(content, i, UpgradeEffect::CrewStoreFocusTokens)
+            {
+                self.ships[i].stored_focus -= 1;
+                self.ships[i].focus += 1;
+                events
+                    .push(format!("{}: Rey — stored focus token assigned", self.label(content, i)));
+            }
             // Ysanne Isard: shieldless and damaged, a free evade action.
             if self.ships[i].shields == 0
                 && self.ships[i].hull < self.max_hull(content, &self.ships[i])
@@ -2987,6 +3237,48 @@ impl GameState {
                 }
             }
         }
+        // BTL-A4 Y-Wing: a primary attack is followed by a turret attack
+        // (once per round) — at the same ship when legal, else the
+        // nearest turret target.
+        if shot.weapon.is_none()
+            && !self.ships[a_idx].destroyed
+            && self.combat.as_ref().is_some_and(|cs| cs.followup.is_none())
+            && self.use_once(content, a_idx, UpgradeEffect::TitleArcOnlyThenTurretAttack).is_some()
+        {
+            let defender = self.ships[shot.d_idx].id;
+            let options = self.attack_options(content, a_idx);
+            let turrets: Vec<&AttackOption> = options
+                .iter()
+                .filter(|o| {
+                    o.weapon.is_some_and(|w| {
+                        content.upgrades.upgrade(w).is_some_and(|c| c.slot == Slot::Turret)
+                    })
+                })
+                .collect();
+            let pick = turrets
+                .iter()
+                .find(|o| o.target == defender)
+                .copied()
+                .or_else(|| turrets.iter().copied().min_by(|a, b| a.dist.total_cmp(&b.dist)));
+            if let Some(o) = pick {
+                let d_idx = self.ships.iter().position(|s| s.id == o.target).expect("option");
+                let cs = self.combat.as_mut().expect("in combat");
+                cs.events.push(format!(
+                    "{}: BTL-A4 Y-Wing — turret attack after the primary weapon",
+                    self.ships[a_idx].callsign
+                ));
+                cs.followup = Some((
+                    a_idx,
+                    Shot {
+                        d_idx,
+                        range: o.range,
+                        weapon: o.weapon,
+                        second: false,
+                        focus_hit: false,
+                    },
+                ));
+            }
+        }
         rec
     }
 
@@ -3037,6 +3329,36 @@ impl GameState {
         );
         let mut records = Vec::new();
         let mut events: Vec<String> = Vec::new();
+        // Leia Organa (crew): discarded at the start of the Activation
+        // phase when a friendly ship revealed a red maneuver.
+        let planned_red = |gs: &Self, j: usize| -> bool {
+            let s = &gs.ships[j];
+            let Some(plan) = s.plan else { return false };
+            let class = gs.class_of(content, s);
+            let dial = &content.dials.set(class.maneuver_set).expect("validated").maneuvers;
+            gs.maneuver_difficulty(content, j, &dial[plan as usize]).0 == Difficulty::Hard
+        };
+        for k in 0..self.ships.len() {
+            if self.ships[k].destroyed
+                || self.white_reds[self.ships[k].owner.0 as usize]
+                || !self.has_effect(content, k, UpgradeEffect::CrewRedAsWhiteForAll)
+            {
+                continue;
+            }
+            let owner = self.ships[k].owner;
+            let any_red = (0..self.ships.len()).any(|j| {
+                self.ships[j].owner == owner && !self.ships[j].destroyed && planned_red(self, j)
+            });
+            if any_red
+                && let Some(card) =
+                    self.card_with_effect(content, k, UpgradeEffect::CrewRedAsWhiteForAll)
+            {
+                let e =
+                    self.discard_card(content, k, card, "red maneuvers flown as white this round");
+                events.push(e);
+                self.white_reds[owner.0 as usize] = true;
+            }
+        }
         for id in order {
             let i = self.ship_index(id).expect("ordered ids exist");
             let (fp, dial_id) = {
@@ -3089,6 +3411,18 @@ impl GameState {
                     s.pose.map(|p| rules::footprint_corners(p, self.class_of(content, s).footprint))
                 })
                 .collect();
+            // Navigator / Stay on Target: a dial that would fly off the
+            // board or bump is rotated to one that would not.
+            if let Some((alt, who)) = self.dial_rotation(content, i, dial, &man, &obstacles) {
+                events.push(format!(
+                    "{}: {who} — dial rotated to {:?} {}",
+                    self.label(content, i),
+                    alt.steer,
+                    alt.distance
+                ));
+                man = alt;
+                (difficulty, rush) = self.maneuver_difficulty(content, i, &man);
+            }
             let extras = self.action_extras(content, &self.ships[i]);
             // Turr Phennir's reposition waits for his attack.
             let mut planned2 = if extras.second == Some(SecondActionKind::RepositionAfterAttack) {
@@ -3424,6 +3758,10 @@ impl GameState {
                         self.fire_seismic_torpedo(content, i, card, ob, roll, &mut events);
                     seismic = blast;
                     (r, Vec::new())
+                } else if let PlannedAction::CardAction(card) = planned
+                    && Self::needs_dice(content, card)
+                {
+                    (self.dice_card_action(content, i, card, roll, &mut events), Vec::new())
                 } else {
                     self.perform_action(content, i, planned, fp, &obstacles, &mut events)
                 };
@@ -3669,13 +4007,22 @@ impl GameState {
                 ));
             }
         }
-        // Comm Relay: one unused evade token survives the End phase.
+        // Comm Relay: one unused evade token survives the End phase. Rey
+        // (crew) stores one unused focus token on her card.
         let keep_evade: Vec<bool> = (0..self.ships.len())
             .map(|i| self.has_effect(content, i, UpgradeEffect::KeepOneEvade))
             .collect();
-        for (ship, keep) in self.ships.iter_mut().zip(keep_evade) {
+        let rey: Vec<bool> = (0..self.ships.len())
+            .map(|i| self.has_effect(content, i, UpgradeEffect::CrewStoreFocusTokens))
+            .collect();
+        for ((k, ship), keep) in self.ships.iter_mut().enumerate().zip(keep_evade) {
+            if rey[k] && ship.focus > 0 && !ship.destroyed {
+                ship.stored_focus += 1;
+                events.push(format!("{}: Rey — a focus token is stored", ship.callsign));
+            }
             ship.focus = 0;
             ship.evade = if keep { ship.evade.min(1) } else { 0 };
+            ship.tractor = 0;
             ship.used_round.clear();
             ship.shield_lost_round = false;
             ship.on_asteroid = false;
@@ -3718,6 +4065,7 @@ impl GameState {
             }
         }
 
+        self.white_reds = [false, false];
         self.committed = [false, false];
         self.turn += 1;
         let alive = |p: u32| self.ships.iter().any(|s| s.owner == PlayerId(p) && !s.destroyed);
@@ -3763,6 +4111,8 @@ impl GameState {
         let a_fp = class.footprint;
         let a_corners = rules::footprint_corners(a_pose, a_fp);
         // (weapon, min range, max range, needs arc, requirement)
+        // BTL-A4 Y-Wing: turret cards need the arc too.
+        let arc_only = self.has_effect(content, a_idx, UpgradeEffect::TitleArcOnlyThenTurretAttack);
         let mut weapons: Vec<(Option<UpgradeId>, u8, u8, bool, AttackRequirement)> =
             vec![(None, 1, 3, !class.turret_primary, AttackRequirement::Free)];
         for &u in &self.ships[a_idx].upgrades {
@@ -3774,7 +4124,7 @@ impl GameState {
                     Some(u),
                     sw.range_min,
                     sw.range_max,
-                    card.slot != Slot::Turret,
+                    card.slot != Slot::Turret || arc_only,
                     sw.requires,
                 ));
             }
@@ -3867,6 +4217,21 @@ impl GameState {
                 self.label(content, a_idx)
             ));
             self.gain_stress(content, a_idx, events);
+        }
+        // R3-A2: an unstressed attacker takes a stress to stress a
+        // defender inside its firing arc.
+        if !second
+            && self.ships[a_idx].stress == 0
+            && self.has_effect(content, a_idx, UpgradeEffect::StressDefenderIfInArc)
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+        {
+            events.push(format!(
+                "{}: R3-A2 — takes a stress, {} is stressed",
+                self.label(content, a_idx),
+                self.label(content, d_idx)
+            ));
+            self.gain_stress(content, a_idx, events);
+            self.gain_stress(content, d_idx, events);
         }
 
         // Secondary weapon: its own dice, no range bonuses either way,
@@ -4140,12 +4505,24 @@ impl GameState {
                 ));
             }
             // Agent Kallus: one focus result to a hit against his mark.
-            if self.kallus_target(content, a_idx) == Some(defender)
+            let kallus = UpgradeEffect::CrewChosenEnemyFocusToHitOrEvade;
+            if self.marked_enemy(content, a_idx, kallus) == Some(defender)
                 && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus)
             {
                 *f = AttackFace::Hit;
                 events.push(format!(
                     "{}: Agent Kallus — focus result to hit",
+                    self.label(content, a_idx)
+                ));
+            }
+            // A Score to Settle: one focus result to a critical hit
+            // against the marked enemy.
+            if self.marked_enemy(content, a_idx, UpgradeEffect::ScoreToSettle) == Some(defender)
+                && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus)
+            {
+                *f = AttackFace::Crit;
+                events.push(format!(
+                    "{}: A Score to Settle — focus result to critical hit",
                     self.label(content, a_idx)
                 ));
             }
@@ -4390,7 +4767,11 @@ impl GameState {
             // Agent Kallus: one focus result to an evade against his mark.
             let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
             if evading < incoming
-                && self.kallus_target(content, d_idx) == Some(attacker)
+                && self.marked_enemy(
+                    content,
+                    d_idx,
+                    UpgradeEffect::CrewChosenEnemyFocusToHitOrEvade,
+                ) == Some(attacker)
                 && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Focus)
             {
                 *f = DefenseFace::Evade;
@@ -4547,6 +4928,11 @@ impl GameState {
                 Some(UpgradeEffect::TurretTwinLaserTwiceOneDamage) => {
                     (hits, crits) = (1, 0);
                     events.push(format!("{who}: twin laser — 1 damage"));
+                }
+                Some(UpgradeEffect::CannonTractorToken) => {
+                    (hits, crits) = (0, 0);
+                    self.ships[d_idx].tractor += 1;
+                    events.push(format!("{who}: tractor beam — tractored (agility -1)"));
                 }
                 _ => {}
             }
@@ -6937,6 +7323,132 @@ mod tests {
         gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(Side::Left)).unwrap();
         let rec = resolve(&c, &mut gs, vec![7; 16]);
         assert_eq!(gs.ships[1].lock, None, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn tractor_beam_tractors_instead_of_damaging() {
+        let c = content();
+        let beam = UpgradeId(195);
+        let mut gs = talent_duel(&c, beam);
+        // X-Wing first: 3 beam dice all hits, TIE defends 4 blanks.
+        let mut rolls = scripted(vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, prefer(beam));
+        let shot = rebel_shot(&rec);
+        assert_eq!(shot.weapon, Some(beam));
+        assert_eq!((shot.hits, shot.crits), (0, 0));
+        assert_eq!(gs.ships[0].hull, 3, "no damage");
+        // The tractor token is gone with the End phase; agility was 2 meanwhile.
+        assert!(rec.events.iter().any(|e| e.contains("tractored")), "{:?}", rec.events);
+        assert_eq!(gs.ships[0].tractor, 0);
+    }
+
+    #[test]
+    fn btl_a4_title_fires_the_turret_after_the_primary_weapon() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[("goldsquadronpilot", Pose::new(10.0, 17.5, -FRAC_PI_2), 4)],
+        );
+        // Staged by hand so the turret (Range 1-2) reaches the TIE.
+        gs.ships[1].pose = Some(Pose::new(10.0, 14.5, -FRAC_PI_2));
+        gs.ships[1].upgrades.push(UpgradeId(92));
+        gs.ships[1].upgrades.push(UpgradeId(10));
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        let shots: Vec<&AttackRecord> =
+            rec.attacks.iter().filter(|a| a.attacker == ShipId(1)).collect();
+        assert_eq!(shots.len(), 2, "{:?}", rec.events);
+        assert_eq!(shots[0].weapon, None);
+        assert_eq!(shots[1].weapon, Some(UpgradeId(10)));
+    }
+
+    #[test]
+    fn navigator_rotates_a_dial_that_would_leave_the_board() {
+        let c = content();
+        // Straight 4 south from y=3.5 would fly off; straight 3 stays on.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(10.0, 3.5, -FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(UpgradeId(159));
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.maneuver.distance, 3, "{:?}", rec.events);
+        assert!(!mv.destroyed);
+        assert!(rec.events.iter().any(|e| e.contains("Navigator")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn leia_is_discarded_to_fly_a_friends_red_maneuver_as_white() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("obsidiansquadronpilot", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[
+                ("redsquadronveteran", Pose::new(6.0, 17.5, -FRAC_PI_2), 4),
+                ("bluesquadronnovice", Pose::new(14.0, 17.5, -FRAC_PI_2), 1),
+            ],
+        );
+        let leia = UpgradeId(153);
+        gs.ships[2].upgrades.push(leia);
+        let k4 =
+            dial_index(&c, XWING, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 4);
+        gs.plan_maneuver(&c, P1, ShipId(1), k4).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        assert_eq!(gs.ships[1].stress, 0, "{:?}", rec.events);
+        assert!(!gs.ships[2].upgrades.contains(&leia), "Leia discarded");
+        assert!(!gs.white_reds[1], "cleared with the End phase");
+    }
+
+    #[test]
+    fn fleet_officer_lando_and_r5d8_card_actions() {
+        let c = content();
+        // Fleet Officer: two TIEs abreast; the officer's ship and its
+        // wingman get a focus, the officer's ship a stress.
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("obsidiansquadronpilot", Pose::new(9.0, 2.5, FRAC_PI_2), 2),
+                ("academypilot", Pose::new(11.0, 2.5, FRAC_PI_2), 2),
+            ],
+            &[("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.ships[0].upgrades.push(UpgradeId(174));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::CardAction(UpgradeId(174))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        assert_eq!(gs.ships[0].stress, 1, "{:?}", rec.events);
+        assert!(
+            rec.events.iter().any(|e| e.contains("focus token to Obsidian-2")),
+            "{:?}",
+            rec.events
+        );
+
+        // Lando: two defense dice [Focus, Evade] → one token each.
+        let mut gs = talent_duel(&c, UpgradeId(166));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(166))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![4, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert!(rec.events.iter().any(|e| e.contains("1 focus, 1 evade")), "{:?}", rec.events);
+
+        // R5-D8: one facedown card, an evade result repairs it.
+        let mut gs = talent_duel(&c, UpgradeId(49));
+        gs.ships[1].hull = 2;
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::CardAction(UpgradeId(49))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(gs.ships[1].hull, 3, "{:?}", rec.events);
+    }
+
+    #[test]
+    fn rey_stores_an_unspent_focus_for_the_next_round() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(167));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        assert_eq!(gs.ships[1].stored_focus, 1, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].focus, 0);
     }
 
     #[test]

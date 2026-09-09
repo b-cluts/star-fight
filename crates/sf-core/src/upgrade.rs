@@ -325,6 +325,22 @@ impl UpgradeEffect {
                 | TorpedoStripShield
                 | SeismicTorpedoAction
                 | BarrelRollActionDiscardLock
+                | TwoDifferentModifications
+                | BarGainsSystemCheaper
+                | StressDefenderIfInArc
+                | ScoreToSettle
+                | CannonTractorToken
+                | TitleArcOnlyThenTurretAttack
+                | CrewStoreFocusTokens
+                | CrewRedAsWhiteForAll
+                | CrewRotateDialSameBearing
+                | RotateDialSameSpeedRed
+                | CrewFleetOfficerAction
+                | FreeActionForLowerSkillShip
+                | LockAndBoostAction
+                | CrewRollDefenseForTokensAction
+                | CrewSaboteurAction
+                | DiscardFacedownOnDefenseDie
                 | OrdnanceTokens
                 | ResolveStressAfterAction
                 | StressAllowsRepositionUnder3

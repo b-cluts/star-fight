@@ -139,13 +139,16 @@ impl Squad {
 
 pub fn ship_cost(content: &Content, ship: &SquadShip) -> u32 {
     let pilot = content.pilots.pilot(ship.pilot).map(|p| p.cost as u32).unwrap_or(0);
-    let ups: u32 = ship
-        .upgrades
-        .iter()
-        .filter_map(|u| content.upgrades.upgrade(*u))
-        .map(|u| u.cost as u32)
-        .sum();
-    pilot + ups
+    let cards: Vec<_> = ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)).collect();
+    let ups: u32 = cards.iter().map(|u| u.cost as u32).sum();
+    // TIE/x1: the first System card costs 4 less (to a minimum of 0).
+    let x1 = cards.iter().any(|u| u.effect == Some(UpgradeEffect::BarGainsSystemCheaper));
+    let rebate = if x1 {
+        cards.iter().find(|u| u.slot == Slot::System).map(|u| (u.cost as u32).min(4)).unwrap_or(0)
+    } else {
+        0
+    };
+    pilot + ups - rebate
 }
 
 /// Every problem with a squad, or its point total.
@@ -204,8 +207,19 @@ pub fn validate_squad(
         let cards: Vec<_> =
             ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)).collect();
         for u in &cards {
-            if u.effect == Some(UpgradeEffect::BarGainsTalent) {
-                *slots.entry(Slot::Talent).or_default() += 1;
+            match u.effect {
+                Some(UpgradeEffect::BarGainsTalent) => {
+                    *slots.entry(Slot::Talent).or_default() += 1;
+                }
+                // TIE/x1: a System slot. Royal Guard TIE: a second
+                // Modification slot.
+                Some(UpgradeEffect::BarGainsSystemCheaper) => {
+                    *slots.entry(Slot::System).or_default() += 1;
+                }
+                Some(UpgradeEffect::TwoDifferentModifications) => {
+                    *slots.entry(Slot::Modification).or_default() += 1;
+                }
+                _ => {}
             }
         }
         // Action icons including ones granted by modifications.
@@ -315,6 +329,43 @@ mod tests {
     }
     fn errs(r: Result<SquadSummary, Vec<SquadError>>) -> Vec<SquadError> {
         r.err().unwrap_or_default()
+    }
+
+    #[test]
+    fn royal_guard_tie_adds_a_modification_slot_and_tie_x1_a_cheaper_system() {
+        let c = content();
+        let rules = SquadRules::default();
+        let two_mods = Squad {
+            name: "i".into(),
+            faction: Faction::Empire,
+            ships: vec![ship(
+                &c,
+                "turrphennir",
+                &["royalguardtie", "stealthdevice", "hullupgrade"],
+            )],
+        };
+        assert!(
+            validate_squad(&two_mods, &c, &rules).is_ok(),
+            "{:?}",
+            validate_squad(&two_mods, &c, &rules)
+        );
+        let no_title = Squad {
+            name: "i".into(),
+            faction: Faction::Empire,
+            ships: vec![ship(&c, "turrphennir", &["stealthdevice", "hullupgrade"])],
+        };
+        assert!(
+            errs(validate_squad(&no_title, &c, &rules))
+                .iter()
+                .any(|e| matches!(e, SquadError::NoSlot { .. }))
+        );
+        // TIE/x1: Fire-Control System (2 points) is free, and it fits the
+        // granted System slot.
+        let x1 = ship(&c, "darthvader", &["tiex1", "firecontrolsystem"]);
+        let vader_cost = c.pilots.pilot(pilot(&c, "darthvader")).unwrap().cost as u32;
+        assert_eq!(ship_cost(&c, &x1), vader_cost);
+        let squad = Squad { name: "i".into(), faction: Faction::Empire, ships: vec![x1] };
+        assert!(validate_squad(&squad, &c, &rules).is_ok());
     }
 
     #[test]
