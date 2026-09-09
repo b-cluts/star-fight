@@ -436,6 +436,8 @@ impl PilotAbility {
                 | PilotAbility::FlipCritFacedownImmediately
                 | PilotAbility::FocusOnStress
                 | PilotAbility::FreeBoostAfterSpeed2To4
+                | PilotAbility::FreeRepositionAfterAttack
+                | PilotAbility::BarrelRollWithBank1ForStress
                 | PilotAbility::BoostWithTurnTemplate
                 | PilotAbility::BarrelRollWithStraight2
                 | PilotAbility::FreeRepositionAfterFocus

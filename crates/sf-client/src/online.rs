@@ -434,6 +434,7 @@ fn demo_queue(game: &Game, snap: &Snap) -> Anim {
             hull_lost: if hull { 1 } else { 0 },
             crits_to_hull: 0,
             defender_destroyed: false,
+            reposition: None,
         };
         a.push(AnimItem::Attack { rec, line: format!("DEMO: {label}") });
     }
@@ -704,6 +705,13 @@ fn attack_line(online: &Online, game: &Game, a: &AttackRecord) -> String {
     if a.defender_destroyed {
         line.push_str(" — DESTROYED");
     }
+    if let Some(r) = a.reposition {
+        let outcome = if r.result == ActionResult::Performed { "" } else { " (failed)" };
+        line.push_str(&format!(
+            " — then {}{outcome}",
+            action_name(game, online.snap.as_ref(), r.action)
+        ));
+    }
     line
 }
 
@@ -957,6 +965,23 @@ fn animate(
                         for (ship, _, _, mut vis) in &mut ships_q {
                             if ship.0 == rec.defender.0 {
                                 *vis = Visibility::Hidden;
+                            }
+                        }
+                    }
+                    // Turr Phennir: the attacker hops to its new spot.
+                    if let Some(r) = rec.reposition
+                        && r.result == ActionResult::Performed
+                    {
+                        a.end_poses.insert(rec.attacker.0, r.to);
+                        if let Some(view) = snapshot.ships.iter().find(|s| s.id.0 == rec.attacker.0)
+                        {
+                            let class = &game.ships.classes[game.class_index(view.class)];
+                            for (ship, mut sprite, mut tf, _) in &mut ships_q {
+                                if ship.0 == rec.attacker.0 {
+                                    let (size, t) = render::ship_visual(class, r.to, &game, 1.5);
+                                    sprite.custom_size = Some(size);
+                                    *tf = t;
+                                }
                             }
                         }
                     }
@@ -1252,14 +1277,27 @@ fn planning_input(
                 SecondActionKind::RollOnGreenReveal
                     | SecondActionKind::BoostAfterMove
                     | SecondActionKind::RepositionAfterFocus
+                    | SecondActionKind::RepositionAfterAttack
             )
         );
-    let can_roll = bar.contains(&ActionKind::BarrelRoll) || free_repo;
+    // Expert Handling rolls without the icon (for a stress).
+    let can_roll = bar.contains(&ActionKind::BarrelRoll) || free_repo || extras.expert_roll;
     if keys.just_pressed(KeyCode::Digit4) && can_roll {
         plan_action(&mut online, PlannedAction::BarrelRoll(Side::Left));
     }
     if keys.just_pressed(KeyCode::Digit5) && can_roll {
         plan_action(&mut online, PlannedAction::BarrelRoll(Side::Right));
+    }
+    // Lieutenant Lorrir: ; and ' roll with the bank templates bending
+    // forward; with Shift held they bend backward.
+    if extras.bank_roll {
+        let forward = !(keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+        if keys.just_pressed(KeyCode::Semicolon) {
+            plan_action(&mut online, PlannedAction::BarrelRollBank(Side::Left, forward));
+        }
+        if keys.just_pressed(KeyCode::Quote) {
+            plan_action(&mut online, PlannedAction::BarrelRollBank(Side::Right, forward));
+        }
     }
     if keys.just_pressed(KeyCode::Digit6) && bar.contains(&ActionKind::TargetLock) {
         online.lock_pick = true;
@@ -1647,6 +1685,11 @@ fn action_name(game: &Game, snap: Option<&Snap>, a: PlannedAction) -> String {
         PlannedAction::BarrelRollFar(Side::Right) => "Far Roll R".into(),
         PlannedAction::CardAction(card) => format!("{} action", card_name(game, card)),
         PlannedAction::CardActionAt(card, _) => format!("{} at obstacle", card_name(game, card)),
+        PlannedAction::BarrelRollBank(side, forward) => format!(
+            "Bank roll {} {}",
+            if side == Side::Left { "L" } else { "R" },
+            if forward { "fwd" } else { "aft" }
+        ),
     }
 }
 
@@ -1658,6 +1701,7 @@ fn second_action_label(kind: SecondActionKind) -> &'static str {
         SecondActionKind::BoostAfterMove => "Snap: free boost after a speed 2-4 move",
         SecondActionKind::RepositionAfterFocus => "Jake Farrell: boost/roll after a focus",
         SecondActionKind::RollOnGreenReveal => "BB-8: barrel roll before a green move",
+        SecondActionKind::RepositionAfterAttack => "Turr Phennir: boost/roll after attacking",
     }
 }
 

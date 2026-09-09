@@ -324,6 +324,7 @@ impl UpgradeEffect {
                 | TorpedoStressIfHullLow
                 | TorpedoStripShield
                 | SeismicTorpedoAction
+                | BarrelRollActionDiscardLock
                 | TorpedoIonSplash
                 | MissileSplashRange1
                 | MissileFriendsLockOnHit

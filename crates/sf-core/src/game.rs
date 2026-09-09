@@ -254,6 +254,18 @@ pub struct AttackRecord {
     /// Crits that reached the hull (future: draw modifier effects).
     pub crits_to_hull: u8,
     pub defender_destroyed: bool,
+    /// Turr Phennir: the free boost or barrel roll taken after the attack.
+    #[serde(default)]
+    pub reposition: Option<Reposition>,
+}
+
+/// A free reposition taken during the Combat phase, for the animation.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Reposition {
+    pub action: PlannedAction,
+    pub result: ActionResult,
+    /// The ship's pose afterwards (unchanged if the action failed).
+    pub to: Pose,
 }
 
 /// Everything that happened when a turn resolved.
@@ -1615,8 +1627,10 @@ impl GameState {
         if self.ships[i].destroyed {
             return Err(Rejection::ShipDestroyed);
         }
+        let extras = self.action_extras(content, &self.ships[i]);
         if let Some(kind) = planned.kind()
             && !self.action_bar(content, &self.ships[i]).contains(&kind)
+            && !(kind == ActionKind::BarrelRoll && extras.expert_roll)
         {
             return Err(Rejection::ActionNotOnBar);
         }
@@ -1666,6 +1680,9 @@ impl GameState {
             PlannedAction::BarrelRollFar(_) if !extras.far_roll => {
                 Err(Rejection::TemplateNotAllowed)
             }
+            PlannedAction::BarrelRollBank(..) if !extras.bank_roll => {
+                Err(Rejection::TemplateNotAllowed)
+            }
             _ => Ok(()),
         }
     }
@@ -1703,6 +1720,7 @@ impl GameState {
             PlannedAction::Boost(_)
                 | PlannedAction::BarrelRoll(_)
                 | PlannedAction::BarrelRollFar(_)
+                | PlannedAction::BarrelRollBank(..)
         );
         let allowed = match kind {
             SecondActionKind::FreeBarAction => {
@@ -1713,10 +1731,15 @@ impl GameState {
             }
             SecondActionKind::TwoActions => planned != PlannedAction::Pass,
             SecondActionKind::BoostAfterMove => matches!(planned, PlannedAction::Boost(_)),
-            SecondActionKind::RepositionAfterFocus => reposition,
-            SecondActionKind::RollOnGreenReveal => {
-                matches!(planned, PlannedAction::BarrelRoll(_) | PlannedAction::BarrelRollFar(_))
+            SecondActionKind::RepositionAfterFocus | SecondActionKind::RepositionAfterAttack => {
+                reposition
             }
+            SecondActionKind::RollOnGreenReveal => matches!(
+                planned,
+                PlannedAction::BarrelRoll(_)
+                    | PlannedAction::BarrelRollFar(_)
+                    | PlannedAction::BarrelRollBank(..)
+            ),
         };
         if !allowed {
             return Err(Rejection::SecondActionNotAllowed);
@@ -1755,6 +1778,8 @@ impl GameState {
             Some(SecondActionKind::RepositionAfterFocus)
         } else if self.count_effect(content, s, UpgradeEffect::FreeBarrelRollOnGreen) > 0 {
             Some(SecondActionKind::RollOnGreenReveal)
+        } else if ability == Some(PilotAbility::FreeRepositionAfterAttack) {
+            Some(SecondActionKind::RepositionAfterAttack)
         } else {
             None
         };
@@ -1780,6 +1805,9 @@ impl GameState {
             turn_boost: ability == Some(PilotAbility::BoostWithTurnTemplate),
             far_roll: ability == Some(PilotAbility::BarrelRollWithStraight2),
             card_actions,
+            bank_roll: ability == Some(PilotAbility::BarrelRollWithBank1ForStress),
+            expert_roll: self.count_effect(content, s, UpgradeEffect::BarrelRollActionDiscardLock)
+                > 0,
         }
     }
 
@@ -1819,12 +1847,28 @@ impl GameState {
                 self.ships[i].evade += 1;
                 ActionResult::Performed
             }
-            PlannedAction::BarrelRoll(side) | PlannedAction::BarrelRollFar(side) => {
-                let template =
-                    if matches!(planned, PlannedAction::BarrelRollFar(_)) { 2.0 } else { 1.0 };
-                let candidate = action::barrel_roll_pose_with(pose, fp, side, template);
+            PlannedAction::BarrelRoll(side)
+            | PlannedAction::BarrelRollFar(side)
+            | PlannedAction::BarrelRollBank(side, _) => {
+                let candidate = match planned {
+                    PlannedAction::BarrelRollFar(_) => {
+                        action::barrel_roll_pose_with(pose, fp, side, 2.0)
+                    }
+                    PlannedAction::BarrelRollBank(_, forward) => {
+                        action::barrel_roll_bank_pose(pose, fp, side, forward)
+                    }
+                    _ => action::barrel_roll_pose_with(pose, fp, side, 1.0),
+                };
                 if clear(&self.board, candidate) {
                     self.ships[i].pose = Some(candidate);
+                    if matches!(planned, PlannedAction::BarrelRollBank(..)) {
+                        events.push(format!(
+                            "{}: Lieutenant Lorrir — bank template roll, 1 stress",
+                            self.label(content, i)
+                        ));
+                        self.gain_stress(content, i, events);
+                    }
+                    self.after_expert_roll(content, i, events);
                     ActionResult::Performed
                 } else {
                     ActionResult::Failed
@@ -1967,6 +2011,33 @@ impl GameState {
         self.obstacles.retain(|o| o.id != obstacle);
         events.push(format!("The {} breaks up and is removed", target.kind.name()));
         (ActionResult::Performed, Some(SeismicBlast { obstacle, detonation }))
+    }
+
+    /// Expert Handling after a barrel roll: a stress token when the bar
+    /// has no barrel roll icon, then one enemy target lock on this ship
+    /// is removed.
+    fn after_expert_roll(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        if self.count_effect(content, &self.ships[i], UpgradeEffect::BarrelRollActionDiscardLock)
+            == 0
+        {
+            return;
+        }
+        let label = self.label(content, i);
+        if !self.action_bar(content, &self.ships[i]).contains(&ActionKind::BarrelRoll) {
+            events.push(format!("{label}: Expert Handling — rolled without the icon, 1 stress"));
+            self.gain_stress(content, i, events);
+        }
+        let me = self.ships[i].id;
+        let owner = self.ships[i].owner;
+        if let Some(e) = (0..self.ships.len())
+            .find(|&e| self.ships[e].owner != owner && self.ships[e].lock == Some(me))
+        {
+            self.ships[e].lock = None;
+            events.push(format!(
+                "{label}: Expert Handling — {}'s target lock removed",
+                self.label(content, e)
+            ));
+        }
     }
 
     /// May ship `i` perform a free action right now (not stressed, no
@@ -2532,7 +2603,12 @@ impl GameState {
                 })
                 .collect();
             let extras = self.action_extras(content, &self.ships[i]);
-            let mut planned2 = self.ships[i].planned_action2.take();
+            // Turr Phennir's reposition waits for his attack.
+            let mut planned2 = if extras.second == Some(SecondActionKind::RepositionAfterAttack) {
+                None
+            } else {
+                self.ships[i].planned_action2.take()
+            };
             // BB-8: a free barrel roll on a green reveal, before moving.
             let mut pre = None;
             if extras.second == Some(SecondActionKind::RollOnGreenReveal)
@@ -3679,6 +3755,33 @@ impl GameState {
             self.ships[a_idx].upgrades.retain(|u| Some(*u) != weapon);
             events.push(format!("{}: {name} discarded (fired)", self.label(content, a_idx)));
         }
+        // Turr Phennir: a free boost or barrel roll after the attack.
+        let mut reposition = None;
+        if (!twice || second)
+            && self.ability(content, &self.ships[a_idx])
+                == Some(PilotAbility::FreeRepositionAfterAttack)
+            && let Some(a) = self.ships[a_idx].planned_action2.take()
+            && self.may_act_freely(content, a_idx)
+        {
+            let fp = self.class_of(content, &self.ships[a_idx]).footprint;
+            let others: Vec<[Vec2; 4]> = self
+                .ships
+                .iter()
+                .enumerate()
+                .filter(|(k, s)| *k != a_idx && !s.destroyed)
+                .filter_map(|(_, s)| {
+                    s.pose.map(|p| rules::footprint_corners(p, self.class_of(content, s).footprint))
+                })
+                .collect();
+            let (result, _) = self.perform_action(content, a_idx, a, fp, &others, events);
+            events.push(format!(
+                "{}: Turr Phennir — free reposition after attacking{}",
+                self.label(content, a_idx),
+                if result == ActionResult::Performed { "" } else { " FAILED" }
+            ));
+            let to = self.ships[a_idx].pose.expect("attacker stays on the board");
+            reposition = Some(Reposition { action: a, result, to });
+        }
         AttackRecord {
             attacker,
             defender,
@@ -3698,6 +3801,7 @@ impl GameState {
             hull_lost,
             crits_to_hull,
             defender_destroyed: self.ships[d_idx].destroyed,
+            reposition,
         }
     }
 
@@ -6533,6 +6637,89 @@ mod tests {
         assert_eq!(gs.obstacles.len(), 1);
         assert!(gs.ships[0].upgrades.contains(&torpedo), "card kept");
         assert!(rec.events.iter().any(|e| e.contains("not at Range 1-2")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn lorrir_rolls_with_a_bank_template_for_a_stress() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("lieutenantlorrir", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRollBank(Side::Left, true)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        let p = gs.ships[0].pose.unwrap();
+        // Rolled to the left (-x), ahead of the straight-2 end (y=5), nose
+        // turned 45° to the right; one stress for the template.
+        assert!(p.anchor.x < 9.0, "{p:?}");
+        assert!(p.anchor.y > 5.0, "{p:?}");
+        assert!((p.heading - std::f64::consts::FRAC_PI_4).abs() < 1e-9, "{p:?}");
+        assert_eq!(gs.ships[0].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("bank template roll")), "{:?}", rec.events);
+
+        // Other pilots cannot use the bank templates.
+        let mut gs = skirmish(
+            &c,
+            &[("turrphennir", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        assert_eq!(
+            gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRollBank(Side::Left, true)),
+            Err(Rejection::TemplateNotAllowed)
+        );
+    }
+
+    #[test]
+    fn turr_phennir_boosts_after_his_attack() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("turrphennir", Pose::new(10.0, 3.0, FRAC_PI_2), 2)],
+            &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
+        );
+        // Stage the X-Wing mid-board: at Range 2 ahead of Turr after his
+        // straight 2 and its straight 1.
+        gs.ships[1].pose = Some(Pose::new(10.0, 9.0, -FRAC_PI_2));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Focus).unwrap();
+        gs.plan_second_action(&c, P0, ShipId(0), Some(PlannedAction::Boost(BoostDir::Straight)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 24]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert!(mv.second.is_none(), "the reposition waits for the attack");
+        assert!((mv.end.anchor.y - 5.0).abs() < 1e-9, "{:?}", mv.end);
+        let atk = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).expect("Turr shoots first");
+        let r = atk.reposition.expect("free boost recorded");
+        assert_eq!(r.result, ActionResult::Performed);
+        assert!((r.to.anchor.y - 6.0).abs() < 1e-9, "{r:?}");
+        assert!((gs.ships[0].pose.unwrap().anchor.y - 6.0).abs() < 1e-9);
+        assert!(rec.events.iter().any(|e| e.contains("Turr Phennir")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn expert_handling_rolls_without_the_icon_and_strips_a_lock() {
+        let c = content();
+        let expert = UpgradeId(122);
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        // The T-70 has no barrel roll on its bar.
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::BarrelRoll(Side::Left)),
+            Err(Rejection::ActionNotOnBar)
+        );
+        gs.ships[1].upgrades.push(expert);
+        gs.ships[0].lock = Some(ShipId(1));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::BarrelRoll(Side::Left)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        // South-facing: "left" is +x; one template plus the base width.
+        let p = gs.ships[1].pose.unwrap();
+        assert!((p.anchor.x - 12.0).abs() < 1e-9, "{p:?}");
+        assert_eq!(gs.ships[1].stress, 1, "no icon: stress");
+        assert_eq!(gs.ships[0].lock, None, "the TIE's lock is removed");
+        assert!(rec.events.iter().any(|e| e.contains("target lock removed")), "{:?}", rec.events);
     }
 
     #[test]

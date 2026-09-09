@@ -29,7 +29,7 @@
         (category: Actions, name: "Target lock (action)",
          text: "Lock an enemy ship within Range 1-3 after your move (key 6, then click the enemy). If the chosen ship is out of range after moving, the action fails and the round's event log says so."),
         (category: Actions, name: "Barrel roll (action)",
-         text: "Shift sideways by one straight-1 template plus your base width, keeping your heading (keys 4 / 5 for left / right). Fails if it would overlap a ship or leave the board."),
+         text: "Shift sideways by one straight-1 template plus your base width, keeping your heading (keys 4 / 5 for left / right). Fails if it would overlap a ship or leave the board. Zeta Ace may use the straight-2 template ([ / ]); Lieutenant Lorrir may use the bank-1 templates for a stress token (; / ' bending forward, with Shift bending backward), which turns the ship 45 degrees. Expert Handling lets a ship without the icon roll (for a stress) and then removes one enemy target lock from it."),
         (category: Actions, name: "Boost (action)",
          text: "Fly a straight-1 or bank-1 template forward without it counting as a maneuver (keys 7 / 8 / 9 for straight / bank left / bank right). Fails if it would overlap a ship or leave the board."),
         (category: Actions, name: "Seismic Torpedo (card action)",
