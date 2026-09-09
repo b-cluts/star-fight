@@ -88,6 +88,8 @@
          text: "Ships move through each other freely; only the final position matters. If it would overlap another ship, the mover backs up along its template to the last clear spot, and forfeits its action. Ships in contact cannot attack each other."),
         (category: Rules, name: "Fleeing the board",
          text: "A ship whose base ends a maneuver or action partly off the board is destroyed."),
+        (category: Rules, name: "Obstacles: asteroids and debris",
+         text: "Six asteroid tokens are scattered before setup (the server's --asteroids setting; 0 for open space), each beyond Range 1 of the edges and of each other. Ships cannot deploy, boost or barrel roll onto them. A ship whose base or template overlaps an asteroid while moving loses its action and rolls one attack die: a hit costs 1 damage, a critical a faceup damage card; a ship that ends its move on an asteroid cannot attack that round. Debris clouds instead give a stress token, and only a critical result hurts. An attack whose range line crosses an obstacle is obstructed: the defender rolls one extra die (Trick Shot gives the attacker one too)."),
         (category: Rules, name: "Attack dice",
          text: "Attack dice show hit, critical hit, focus (eye) or blank. Defense dice show evade, focus or blank. Evades cancel hits first, then criticals. Cards and pilot abilities modify results before tokens are spent; see the Pilots and Upgrades tabs."),
         (category: Rules, name: "Secondary weapons",

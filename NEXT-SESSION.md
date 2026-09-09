@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (162 tests),
+`cargo build` clean, `cargo test --workspace` green (171 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -233,8 +233,28 @@ and Server `ws://127.0.0.1:7777`.
       prompt~~ DONE 2026-09-09 (`weapons::unavailable_reasons`,
       `PendingAttack.unavailable`, `ChooseTarget.unavailable`, shown as
       "not available now: Proton Torpedoes (needs a target lock on
-      Red-2)" under the prompt); then obstacles (needs art or drawn shapes) which
-      unlock Trick Shot / Seismic Torpedo; Lorrir's bank-template roll,
+      Red-2)" under the prompt); ~~obstacles~~ DONE 2026-09-09
+      (`sf-core/src/obstacle.rs`: convex polygon tokens from four
+      hand-drawn `SHAPES`, SAT overlap, segment-vs-polygon obstruction,
+      `scatter()` random placement with the p.20 spacing; `GameState.
+      obstacles` set by `place_obstacles` — the server scatters
+      `--asteroids N` (default 6) asteroids at game start, tests push
+      `Obstacle`s by hand; ships cannot deploy / boost / roll onto them;
+      crossing an asteroid = `ActionResult::SkippedObstacle` + one die
+      (hit 1 damage, crit faceup card), ending on one sets
+      `ShipState.on_asteroid` (no attack options, `WeaponState::
+      Grounded`, cleared in finish_turn); debris = stress + crit-only
+      die; obstruction = `combat::closest_points` segment crossing any
+      token → +1 defense die, `AttackRecord.obstructed`, Trick Shot +1
+      attack die; Snapshot carries `obstacles`; client draws asteroids
+      as craggy outlines and debris as dotted clouds (gizmos — swap for
+      sprites when the user finds art), red placement tint on a token,
+      "OBSTACLE!" in the move line, "(obstructed)" in the attack line.
+      NOT done: player-placed obstacles (FE alternates placement; a
+      lobby/setup UI), debris in the default scatter (kinds are
+      supported), bombs dropped onto obstacles, Seismic Torpedo (removes
+      an obstacle — easy now: `GameState.obstacles.retain`). Then
+      Lorrir's bank-template roll,
       Turr Phennir (reposition after attack), Expert Handling, Squad
       Leader / Lando (friendly free actions) remain.
    Done 2026-09-08/09 (all pushed): server refusals now send Error +

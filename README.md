@@ -12,7 +12,8 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
 1. Host: run `sf-server` on a Linux box (or anywhere). It prints a
    certificate fingerprint, a password and a join string like
    `starfight://host:7777/#<fingerprint>` — send both to the players and open
-   port 7777 (TCP).
+   port 7777 (TCP). Six asteroids are scattered on every board; pass
+   `--asteroids 0` for open space (or another count).
 2. Players: run `sf-client` from the folder that contains `assets/`. In the
    menu, paste the join string into **Server** (Ctrl+V), type the password
    (generated ones look like `abcd-efgh-jkmn`, avoid look-alike characters,
