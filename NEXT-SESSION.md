@@ -207,7 +207,30 @@ and Server `ws://127.0.0.1:7777`.
       token/stress/movement abilities~~ DONE 2026-09-09 (see 4.b / 4.d
       for what is live and what was skipped); ~~in-game glossary~~ DONE
       2026-09-09 (F1 / "? glossary" button, see the backlog entry —
-      unseen on screen by the user yet). ~~Defender policies (Elusiveness,
+      unseen on screen by the user yet).
+      >>> RESUME HERE (after the 2026-09-09 compaction): 1. Seismic
+      Torpedo (Torpedo slot, id 4? check upgrades.ron xws
+      "seismictorpedo": "Action: choose an obstacle at Range 1-2; each
+      ship at Range 1 of it suffers 1 damage; discard the card and
+      remove the obstacle" — needs a planned target: add
+      `PlannedAction::CardActionAt(UpgradeId, u32 obstacle id)`, a
+      planning key (e.g. T then click the obstacle) and the client's
+      obstacle hit-test with `obstacle::point_in_convex`; removal =
+      `obstacles.retain`; animate the token vanishing). 2. Lieutenant
+      Lorrir (barrel roll with the bank-1 templates for a stress:
+      `PlannedAction::BarrelRollBank(Side, forward: bool)` — geometry:
+      bank template alongside the base, ship placed at its far end;
+      approximate as the straight-1 roll plus a ±0.5-unit fore/aft
+      slide and a 45° heading change? Better: apply `maneuver::apply`
+      of a bank-1 from a pose rotated 90° at the base side, like
+      barrel_roll_pose does for the straight), Turr Phennir (free boost
+      or roll after attacking: `SecondActionKind::RepositionAfterAttack`
+      executed in perform_attack_on's after-attack step, records on
+      AttackRecord for the animation), Expert Handling (barrel roll as a
+      card action with stress if no icon, then remove an enemy lock).
+      3. Then v0.4.0 once the user has tried the setup screen, the
+      second-action keys and the black hole pull on screen.
+      Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
       (unplaytested — needs a look at the keys on screen):
@@ -250,10 +273,10 @@ and Server `ws://127.0.0.1:7777`.
       as craggy outlines and debris as dotted clouds (gizmos — swap for
       sprites when the user finds art), red placement tint on a token,
       "OBSTACLE!" in the move line, "(obstructed)" in the attack line.
-      NOT done: player-placed obstacles (FE alternates placement; a
-      lobby/setup UI), debris in the default scatter (kinds are
-      supported), bombs dropped onto obstacles, Seismic Torpedo (removes
-      an obstacle — easy now: `GameState.obstacles.retain`).
+      NOT done: bombs dropped onto obstacles, Seismic Torpedo (removes
+      an obstacle — easy now: `GameState.obstacles.retain`). Player-
+      placed obstacles: the user DOES NOT want them (2026-09-09) — the
+      random scatter from the setup screen stays.
       ~~Game setup screen~~ DONE 2026-09-09 (user request: the host
       answers questions / picks a scenario): `sf-core/src/scenario.rs`
       (`Scenario` presets from `assets/data/scenarios.ron` via
