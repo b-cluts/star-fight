@@ -149,6 +149,8 @@ pub struct Online {
     pub waiting_on: Option<u32>,
     /// Placement: callsign being typed for (ship, buffer).
     pub rename: Option<(u32, String)>,
+    /// Effects demo: a scripted, looping turn on a fake snapshot.
+    pub demo: bool,
 }
 
 /// Callsign of a ship in the current snapshot ("ship" if unknown).
@@ -188,6 +190,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Online>().add_systems(OnExit(Screen::Online), exit_online).add_systems(
         Update,
         (
+            fx_demo,
             poll_net,
             sync_ships,
             animate,
@@ -202,6 +205,209 @@ pub fn plugin(app: &mut App) {
             .chain()
             .run_if(in_state(Screen::Online)),
     );
+}
+
+/// Enter the effects demo: every weapon impact style, missile flight,
+/// bomb token and detonation, played on a fake board in a loop with the
+/// same animation code the game uses. Esc leaves.
+pub fn start_demo(online: &mut Online, game: &Game) {
+    *online = Online::default();
+    online.demo = true;
+    online.seat = Some(0);
+    online.sel = Some(0);
+    online.snap = Some(demo_snap(game));
+    online.status = "EFFECTS DEMO — loops until Esc; the HUD names each effect".into();
+}
+
+/// Refill the playback queue whenever the demo turn has finished.
+fn fx_demo(mut online: ResMut<Online>, game: Res<Game>) {
+    if !online.demo || online.anim.is_some() {
+        return;
+    }
+    let anim = online.snap.as_ref().map(|snap| demo_queue(&game, snap));
+    online.anim = anim;
+}
+
+fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> ShipView {
+    ShipView {
+        id: ShipId(id),
+        owner: sf_core::ship::PlayerId(owner),
+        class: sf_core::ship::ShipClassId(class),
+        callsign: callsign.into(),
+        pilot: "Demo Pilot".into(),
+        skill: 3,
+        upgrades: Vec::new(),
+        upgrade_ids: Vec::new(),
+        max_hull: 5,
+        max_shields: 3,
+        agility: 2,
+        actions: Vec::new(),
+        pose: Some(pose),
+        hull: 5,
+        shields: 3,
+        stress: 0,
+        focus: 0,
+        evade: 0,
+        ion: 0,
+        lock: None,
+        crits: Vec::new(),
+        destroyed: false,
+        plan: None,
+        planned_action: None,
+        bomb: None,
+    }
+}
+
+/// Two Imperial ships along the south row, two Rebel ships along the
+/// north row, and one token of every bomb kind between them — placed so
+/// the nearer ships sit exactly at Range 1 of the tokens.
+fn demo_snap(game: &Game) -> Snap {
+    let north = FRAC_PI_2;
+    let south = -FRAC_PI_2;
+    let ships = vec![
+        demo_view(0, 0, 7, "Onyx-1", Pose::new(6.0, 7.0, north)),
+        demo_view(1, 0, 1, "Onyx-2", Pose::new(14.0, 7.0, north)),
+        demo_view(2, 1, 2, "Red-1", Pose::new(6.0, 13.0, south)),
+        demo_view(3, 1, 6, "Gold-1", Pose::new(14.0, 13.0, south)),
+    ];
+    let kinds = [
+        BombKind::Proton,
+        BombKind::Seismic,
+        BombKind::Ion,
+        BombKind::Thermal,
+        BombKind::ProximityMine,
+        BombKind::ClusterMine,
+        BombKind::ConnerNet,
+    ];
+    let card = |kind: BombKind| {
+        game.content
+            .upgrades
+            .upgrades
+            .iter()
+            .find(|u| u.effect.and_then(BombKind::from_effect) == Some(kind))
+            .map(|u| u.id)
+            .unwrap_or(UpgradeId(0))
+    };
+    let bombs = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, &kind)| BombToken {
+            id: i as u32,
+            kind,
+            card: card(kind),
+            pose: Pose::new(4.0 + i as f64 * 2.0, 10.5, north),
+            owner: sf_core::ship::PlayerId((i % 2) as u32),
+        })
+        .collect();
+    Snap {
+        phase: Phase::Combat,
+        turn: 1,
+        ships,
+        committed: [true, true],
+        initiative: 0,
+        totals: [100, 100],
+        bombs,
+    }
+}
+
+fn demo_queue(game: &Game, snap: &Snap) -> Anim {
+    use sf_core::dice::AttackFace;
+    let mut a = Anim::new(snap.bombs.clone());
+    for v in &snap.ships {
+        if let Some(p) = v.pose {
+            a.end_poses.insert(v.id.0, p);
+        }
+    }
+    let card =
+        |xws: &str| game.content.upgrades.upgrades.iter().find(|u| u.xws == xws).map(|u| u.id);
+    // (label, attacker, defender, weapon, hits, hull damage)
+    let shots: Vec<(&str, u32, u32, Option<UpgradeId>, bool, bool)> = vec![
+        ("primary weapon — shields soak it (blue flash)", 0, 2, None, true, false),
+        ("primary weapon — hull damage (orange flash)", 2, 0, None, true, true),
+        ("primary weapon — miss (bolts fly past)", 1, 3, None, false, false),
+        ("YT-1300 turret primary — fires from the base center", 3, 1, None, true, false),
+        ("Proton Torpedoes — warhead, Blast impact", 0, 2, card("protontorpedoes"), true, true),
+        (
+            "Concussion Missiles — warhead, Blast impact",
+            1,
+            3,
+            card("concussionmissiles"),
+            true,
+            false,
+        ),
+        ("Cluster Missiles — Fragments impact", 0, 2, card("clustermissiles"), true, true),
+        ("Flechette Torpedoes — Fragments impact", 2, 0, card("flechettetorpedoes"), true, true),
+        ("Ion Pulse Missiles — Sparks impact", 1, 3, card("ionpulsemissiles"), true, false),
+        (
+            "Ion Cannon Turret — Sparks, from the base center",
+            3,
+            1,
+            card("ioncannonturret"),
+            true,
+            false,
+        ),
+        (
+            "Heavy Laser Cannon — cannon bolts, Flash impact",
+            2,
+            0,
+            card("heavylasercannon"),
+            true,
+            true,
+        ),
+        ("Proton Torpedoes — warhead misses", 0, 2, card("protontorpedoes"), false, false),
+    ];
+    for (label, atk, def, weapon, hit, hull) in shots {
+        let rec = AttackRecord {
+            attacker: ShipId(atk),
+            defender: ShipId(def),
+            range: 2,
+            weapon,
+            attack_faces: vec![AttackFace::Hit; 3],
+            defense_faces: Vec::new(),
+            lock_spent: false,
+            attacker_focus_spent: false,
+            defender_focus_spent: false,
+            evade_spent: false,
+            defender_in_bullseye: false,
+            hits: if hit { 2 } else { 0 },
+            crits: 0,
+            shields_lost: if hit && !hull { 2 } else { 0 },
+            hull_lost: if hull { 1 } else { 0 },
+            crits_to_hull: 0,
+            defender_destroyed: false,
+        };
+        a.push(AnimItem::Attack { rec, line: format!("DEMO: {label}") });
+    }
+    // Every token goes off, catching whichever demo ships sit within
+    // Range 1 of it (the real rule), with that kind's typical result.
+    for t in &snap.bombs {
+        let tc = t.corners();
+        let hits = snap
+            .ships
+            .iter()
+            .filter(|v| {
+                v.pose.is_some_and(|p| {
+                    let fp = game.ships.classes[game.class_index(v.class)].footprint;
+                    sf_core::combat::base_distance(&tc, &rules::footprint_corners(p, fp))
+                        <= sf_core::combat::RANGE_BAND_UNITS
+                })
+            })
+            .map(|v| {
+                let (damage, crits, ion, stress) = match t.kind {
+                    BombKind::Proton => (0, 1, 0, 0),
+                    BombKind::Seismic | BombKind::ClusterMine => (1, 0, 0, 0),
+                    BombKind::Ion => (0, 0, 2, 0),
+                    BombKind::Thermal => (1, 0, 0, 1),
+                    BombKind::ProximityMine => (2, 0, 0, 0),
+                    BombKind::ConnerNet => (1, 0, 2, 0),
+                };
+                sf_core::bombs::BombHit { ship: v.id, damage, crits, ion, stress, destroyed: false }
+            })
+            .collect();
+        a.push(AnimItem::Detonation(Detonation { token: *t, hits }));
+    }
+    a.push(AnimItem::TurnEnd);
+    a
 }
 
 fn exit_online(
@@ -1408,7 +1614,7 @@ fn leave_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut next: ResMut<NextState<Screen>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) && online.over.is_some() {
+    if keys.just_pressed(KeyCode::Escape) && (online.over.is_some() || online.demo) {
         next.set(Screen::Menu);
     }
 }

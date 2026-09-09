@@ -63,6 +63,7 @@ pub enum MenuAction {
     Create,
     Join,
     Sandbox,
+    Demo,
     Squad,
     PrevSquad,
     NextSquad,
@@ -155,6 +156,7 @@ fn spawn_menu(
                         (MenuAction::Create, "Create Game"),
                         (MenuAction::Join, "Join Game"),
                         (MenuAction::Sandbox, "Offline Sandbox"),
+                        (MenuAction::Demo, "Effects Demo"),
                         (MenuAction::Squad, "Squad Builder"),
                     ] {
                         row.spawn((
@@ -354,6 +356,10 @@ fn buttons(
         let Some(action) = action else { continue };
         match action {
             MenuAction::Sandbox => next.set(Screen::Sandbox),
+            MenuAction::Demo => {
+                crate::online::start_demo(&mut online, &game);
+                next.set(Screen::Online);
+            }
             MenuAction::Squad => next.set(Screen::Squad),
             MenuAction::PrevSquad => form.error = builder.cycle_saved(&game, -1),
             MenuAction::NextSquad => form.error = builder.cycle_saved(&game, 1),
