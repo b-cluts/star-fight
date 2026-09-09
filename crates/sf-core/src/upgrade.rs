@@ -345,6 +345,16 @@ impl UpgradeEffect {
                 | FocusOrEvadeOnStress
                 | DiscardPilotCritImmediately
                 | CrewFocusAfterStressRemoved
+                | ForceRerollForStress
+                | ForceRerollWithLock
+                | SufferCritForFriendly
+                | CrewRecoverShieldEndPhase
+                | CrewDiscardDamageRecoverShield
+                | CrewDiscardToFlipCritFacedown
+                | DiscardAstromechToCancelDamage
+                | FlipShipCritFacedown
+                | RecoverShieldOnGreen
+                | RecoverShieldSpendFocus
         )
     }
 }

@@ -876,6 +876,55 @@ impl GameState {
         }
     }
 
+    /// After the attacker has modified its dice, the defender may force
+    /// rerolls: Elusiveness (take a stress while unstressed to reroll the
+    /// attacker's best die) and R7 Astromech (spend a target lock on the
+    /// attacker to reroll every hit and critical). The rerolled results
+    /// stand. Used whenever at least one hit or critical is showing.
+    fn defender_forces_rerolls(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        faces: &mut [AttackFace],
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        let landing = |faces: &[AttackFace]| {
+            faces.iter().any(|f| matches!(f, AttackFace::Hit | AttackFace::Crit))
+        };
+        if landing(faces)
+            && self.ships[d_idx].stress == 0
+            && self.has_effect(content, d_idx, UpgradeEffect::ForceRerollForStress)
+        {
+            let best = faces
+                .iter()
+                .position(|f| *f == AttackFace::Crit)
+                .or_else(|| faces.iter().position(|f| *f == AttackFace::Hit))
+                .expect("a hit or crit is showing");
+            faces[best] = AttackFace::from_d8(roll());
+            events.push(format!(
+                "{}: Elusiveness — takes a stress, attacker rerolls a die",
+                self.label(content, d_idx)
+            ));
+            self.gain_stress(content, d_idx, events);
+        }
+        if landing(faces)
+            && self.ships[d_idx].lock == Some(self.ships[a_idx].id)
+            && self.has_effect(content, d_idx, UpgradeEffect::ForceRerollWithLock)
+        {
+            self.ships[d_idx].lock = None;
+            let n =
+                reroll_matching(faces, &[AttackFace::Crit, AttackFace::Hit], u8::MAX, &mut || {
+                    AttackFace::from_d8(roll())
+                });
+            events.push(format!(
+                "{}: R7 Astromech — lock spent, attacker rerolls {n} dice",
+                self.label(content, d_idx)
+            ));
+        }
+    }
+
     /// Opportunist: +1 attack die for a stress token when the defender
     /// holds no focus or evade token and the attacker is unstressed.
     /// Always taken.
@@ -1304,6 +1353,40 @@ impl GameState {
                 "{}: Determination — Pilot card discarded, no effect",
                 self.label(content, i)
             ));
+            return (0, 0);
+        }
+        // Chewbacca (crew): the card is discarded outright and a shield
+        // comes back; then the crew card goes. Moff Jerjerrod: discarded
+        // to flip the card facedown. Integrated Astromech: the astromech
+        // is discarded to discard the card.
+        if let Some(card) =
+            self.card_with_effect(content, i, UpgradeEffect::CrewDiscardDamageRecoverShield)
+        {
+            self.ships[i].hull += 1;
+            if self.ships[i].shields < self.max_shields(content, &self.ships[i]) {
+                self.ships[i].shields += 1;
+            }
+            let e = self.discard_card(content, i, card, "damage card discarded, shield recovered");
+            events.push(e);
+            return (0, 0);
+        }
+        if let Some(card) =
+            self.card_with_effect(content, i, UpgradeEffect::CrewDiscardToFlipCritFacedown)
+        {
+            let e = self.discard_card(content, i, card, "damage card flipped facedown");
+            events.push(e);
+            return (0, 0);
+        }
+        if self.has_effect(content, i, UpgradeEffect::DiscardAstromechToCancelDamage)
+            && let Some(astro) =
+                self.ships[i].upgrades.iter().copied().find(|u| {
+                    content.upgrades.upgrade(*u).is_some_and(|c| c.slot == Slot::Astromech)
+                })
+        {
+            self.ships[i].hull += 1;
+            let e =
+                self.discard_card(content, i, astro, "Integrated Astromech: damage card discarded");
+            events.push(e);
             return (0, 0);
         }
         let mut extra = (0u8, 0u8);
@@ -1805,8 +1888,8 @@ impl GameState {
             }
             if cs.current.is_empty() {
                 if cs.groups.is_empty() {
-                    let cs = self.combat.take().expect("checked above");
-                    self.finish_turn();
+                    let mut cs = self.combat.take().expect("checked above");
+                    self.finish_turn(content, roll, &mut cs.events);
                     return Ok(CombatStep::Done(TurnRecords {
                         moves: cs.moves,
                         detonations: cs.detonations,
@@ -2053,6 +2136,15 @@ impl GameState {
                 Difficulty::Hard => self.gain_stress(content, i, &mut events),
                 Difficulty::Easy => {
                     self.lose_stress(content, i, &mut events);
+                    // R2-D2 (astromech): a shield back after a green maneuver.
+                    if !self.ships[i].destroyed
+                        && self.has_effect(content, i, UpgradeEffect::RecoverShieldOnGreen)
+                        && self.ships[i].shields < self.max_shields(content, &self.ships[i])
+                    {
+                        self.ships[i].shields += 1;
+                        events
+                            .push(format!("{}: R2-D2 — shield recovered", self.label(content, i)));
+                    }
                 }
                 Difficulty::Normal => {}
             }
@@ -2274,11 +2366,46 @@ impl GameState {
     }
 
     /// End phase and turn bookkeeping once combat is complete.
-    fn finish_turn(&mut self) {
+    fn finish_turn(
+        &mut self,
+        content: &Content,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        // End of the Combat phase: R5-P9 trades a focus token for a shield.
+        for i in 0..self.ships.len() {
+            let s = &self.ships[i];
+            if !s.destroyed
+                && s.focus > 0
+                && s.shields < self.max_shields(content, s)
+                && self.has_effect(content, i, UpgradeEffect::RecoverShieldSpendFocus)
+            {
+                self.ships[i].focus -= 1;
+                self.ships[i].shields += 1;
+                events.push(format!(
+                    "{}: R5-P9 — focus spent, shield recovered",
+                    self.label(content, i)
+                ));
+            }
+        }
         // End phase: unspent focus and evade tokens are removed from all
         // ships; target locks persist, except locks on ships that are now
         // destroyed. Timed crits (Weapons Failure) tick down here.
         let dead: Vec<ShipId> = self.ships.iter().filter(|s| s.destroyed).map(|s| s.id).collect();
+        for i in 0..self.ships.len() {
+            // R5 Astromech: one Ship-trait faceup card is flipped facedown.
+            if !self.ships[i].destroyed
+                && self.has_effect(content, i, UpgradeEffect::FlipShipCritFacedown)
+                && let Some(k) = self.ships[i].crits.iter().position(|c| !c.is_pilot_trait())
+            {
+                let c = self.ships[i].crits.remove(k);
+                events.push(format!(
+                    "{}: R5 Astromech — {} repaired (flipped facedown)",
+                    self.label(content, i),
+                    c.name()
+                ));
+            }
+        }
         for ship in &mut self.ships {
             ship.focus = 0;
             ship.evade = 0;
@@ -2294,6 +2421,30 @@ impl GameState {
                 }
             }
             ship.crits.retain(|c| !matches!(c, CritEffect::WeaponsFailure { rounds: 0 }));
+        }
+        // End of the End phase: R2-D2 (crew) brings a shield back on a
+        // shieldless ship, at the risk of a facedown card turning faceup.
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.ships[i].shields > 0
+                || !self.has_effect(content, i, UpgradeEffect::CrewRecoverShieldEndPhase)
+            {
+                continue;
+            }
+            self.ships[i].shields = 1;
+            let who = self.label(content, i);
+            if AttackFace::from_d8(roll()) == AttackFace::Hit
+                && self.ships[i].hull < self.max_hull(content, &self.ships[i])
+            {
+                let effect = crit::draw(roll());
+                events.push(format!(
+                    "{who}: R2-D2 — shield recovered, but a facedown card turns faceup: {}",
+                    effect.name()
+                ));
+                self.apply_crit_effect(content, i, effect, roll, events);
+            } else {
+                events.push(format!("{who}: R2-D2 — shield recovered"));
+            }
         }
 
         self.committed = [false, false];
@@ -2597,6 +2748,9 @@ impl GameState {
         if attacker_focus_spent {
             self.friend_spent_focus(content, a_idx, events);
         }
+        if defender_may_modify {
+            self.defender_forces_rerolls(content, a_idx, d_idx, &mut attack_faces, roll, events);
+        }
         let raw_hits = attack_faces.iter().filter(|f| **f == AttackFace::Hit).count() as u8;
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
 
@@ -2775,6 +2929,28 @@ impl GameState {
                     events.push(format!("{who}: twin laser — 1 damage"));
                 }
                 _ => {}
+            }
+        }
+
+        // Draw Their Fire: a friend at Range 1 takes one critical hit that
+        // would otherwise reach the defender's hull.
+        if crits > 0
+            && self.ships[d_idx].shields == 0
+            && let Some(f) = self
+                .friends_at_range1(content, d_idx)
+                .into_iter()
+                .find(|&f| self.has_effect(content, f, UpgradeEffect::SufferCritForFriendly))
+        {
+            crits -= 1;
+            events.push(format!(
+                "{}: Draw Their Fire — takes a critical hit for {}",
+                self.label(content, f),
+                self.label(content, d_idx)
+            ));
+            if self.damage_point(f) == DamagePoint::Hull && !self.ships[f].destroyed {
+                let effect = crit::draw(roll());
+                events.push(format!("{}: critical — {}", self.label(content, f), effect.name()));
+                self.apply_crit_effect(content, f, effect, roll, events);
             }
         }
 
@@ -5212,5 +5388,132 @@ mod tests {
         assert!(gs.ships[1].crits.is_empty(), "Pilot card discarded");
         gs.apply_crit_effect(&c, 1, CritEffect::ConsoleFire, &mut rolls, &mut ev);
         assert_eq!(gs.ships[1].crits, vec![CritEffect::ConsoleFire], "Ship cards still attach");
+    }
+
+    // ---------------- Defender rerolls and damage-card riders ----------------
+
+    #[test]
+    fn elusiveness_takes_a_stress_to_reroll_the_attackers_best_die() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(113));
+        // X-Wing blanks, TIE blanks, TIE [Hit, Crit] → the crit is rerolled blank.
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 0, 3, 7, 7, 7, 7, 7, 7]);
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (1, 0));
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Elusiveness")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn r7_astromech_spends_its_lock_to_reroll_every_hit() {
+        let c = content();
+        // Mauler Mithel (PS7) fires first into an X-Wing that has him locked.
+        let mut gs = duel(&c, "maulermithel", "redsquadronveteran");
+        gs.ships[1].upgrades.push(UpgradeId(53));
+        gs.ships[1].lock = Some(ShipId(0));
+        let rec = resolve(&c, &mut gs, vec![0, 3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.hits, shot.crits), (0, 0));
+        assert_eq!(gs.ships[1].lock, None);
+        assert!(rec.events.iter().any(|e| e.contains("R7 Astromech")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn draw_their_fire_takes_a_crit_meant_for_a_friend() {
+        let c = content();
+        let mut gs = skirmish(
+            &c,
+            &[("maulermithel", Pose::new(10.0, 2.5, FRAC_PI_2), 5)],
+            &[
+                ("redsquadronveteran", Pose::new(10.0, 17.5, -FRAC_PI_2), 4),
+                ("bluesquadronnovice", Pose::new(11.5, 17.5, -FRAC_PI_2), 4),
+            ],
+        );
+        gs.ships[1].upgrades.push(UpgradeId(121));
+        gs.ships[2].shields = 0;
+        gs.ships[0].lock = Some(ShipId(2)); // fires at the novice
+        // [Crit, Crit] vs blanks; the veteran absorbs one on its shields,
+        // the other reaches the novice's hull (crit::draw(9) = Stunned Pilot).
+        let rec = resolve(&c, &mut gs, vec![3, 3, 7, 7, 7, 9, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(gs.ships[1].shields, 2);
+        assert_eq!(gs.ships[2].hull, 2);
+        assert!(rec.events.iter().any(|e| e.contains("Draw Their Fire")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn crew_and_astromech_riders_neutralise_faceup_cards() {
+        let c = content();
+        let mut ev = Vec::new();
+        let mut rolls = scripted(vec![7]);
+        // Chewbacca (crew): card discarded, hull point back, one shield back.
+        let mut gs = talent_duel(&c, UpgradeId(150));
+        gs.ships[1].hull = 2;
+        gs.ships[1].shields = 1;
+        gs.apply_crit_effect(&c, 1, CritEffect::DirectHit, &mut rolls, &mut ev);
+        assert_eq!((gs.ships[1].hull, gs.ships[1].shields), (3, 2));
+        assert!(gs.ships[1].crits.is_empty());
+        assert!(!gs.ships[1].upgrades.contains(&UpgradeId(150)));
+
+        // Moff Jerjerrod: discarded to flip the card facedown.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.ships[0].upgrades.push(UpgradeId(173));
+        gs.apply_crit_effect(&c, 0, CritEffect::DamagedEngine, &mut rolls, &mut ev);
+        assert!(gs.ships[0].crits.is_empty());
+        assert!(!gs.ships[0].upgrades.contains(&UpgradeId(173)));
+
+        // Integrated Astromech: the R2 Astromech goes instead of the card.
+        let mut gs = talent_duel(&c, UpgradeId(76));
+        gs.ships[1].upgrades.push(UpgradeId(41));
+        gs.ships[1].hull = 2;
+        gs.apply_crit_effect(&c, 1, CritEffect::DirectHit, &mut rolls, &mut ev);
+        assert_eq!(gs.ships[1].hull, 3);
+        assert!(gs.ships[1].crits.is_empty());
+        assert!(!gs.ships[1].upgrades.contains(&UpgradeId(41)));
+        assert!(gs.ships[1].upgrades.contains(&UpgradeId(76)));
+    }
+
+    #[test]
+    fn end_phase_repairs_r5p9_r5_and_r2d2_crew() {
+        let c = content();
+        // R5-P9: the unspent focus buys a shield at the end of Combat.
+        let mut gs = talent_duel(&c, UpgradeId(51));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        gs.ships[1].shields = 2;
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(gs.ships[1].shields, 3);
+        assert!(rec.events.iter().any(|e| e.contains("R5-P9")), "{:?}", rec.events);
+
+        // R5 Astromech: a Ship card is repaired in the End phase, a Pilot card stays.
+        let mut gs = talent_duel(&c, UpgradeId(48));
+        gs.ships[1].crits.push(CritEffect::StunnedPilot);
+        gs.ships[1].crits.push(CritEffect::DamagedEngine);
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(gs.ships[1].crits, vec![CritEffect::StunnedPilot]);
+        assert!(rec.events.iter().any(|e| e.contains("R5 Astromech")), "{:?}", rec.events);
+
+        // R2-D2 (crew): shield back at the end of the End phase; the hit
+        // rolled afterwards turns a facedown card faceup (Stunned Pilot).
+        let mut gs = talent_duel(&c, UpgradeId(155));
+        gs.ships[1].shields = 0;
+        gs.ships[1].hull = 2;
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 9]);
+        assert_eq!(gs.ships[1].shields, 1);
+        assert_eq!(gs.ships[1].hull, 2);
+        assert!(gs.ships[1].crits.contains(&CritEffect::StunnedPilot));
+        assert!(rec.events.iter().any(|e| e.contains("R2-D2")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn r2d2_astromech_recovers_a_shield_after_a_green_maneuver() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(42));
+        gs.ships[1].shields = 1;
+        let green = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.difficulty == Difficulty::Easy
+        });
+        gs.plan_maneuver(&c, P1, ShipId(1), green).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(gs.ships[1].shields, 2);
+        assert!(rec.events.iter().any(|e| e.contains("R2-D2")), "{:?}", rec.events);
     }
 }
