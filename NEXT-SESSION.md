@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (131 tests),
+`cargo build` clean, `cargo test --workspace` green (141 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -195,15 +195,17 @@ and Server `ws://127.0.0.1:7777`.
       (its square footprint). Not modelled: bombs vs obstacles, Bomblet Generator /
       Extra Munitions / Cad Bane / Sabine crew riders, Cluster Mine
       placement when the three tokens would overlap ships.
-   c. CUT v0.3.0 once the user has seen bombs + weapon HUD on screen
-      (they asked for the release after a and b; the tag was held back
-      only because the bomb animation is unplaytested): bump `version` in the workspace Cargo.toml, run
-      `cargo check` (lockfile), commit "Version 0.3.0", `git tag -a
-      v0.3.0 -m "..."`, push main and the tag; the release workflow
-      builds the zips. Main is on PROTOCOL 2 (3 if the prompt carries
-      unavailable weapons) — v0.2.0 clients are refused by a newer
-      server, so the user and friend must run the same zip.
-   d. Then the effects roadmap at 4.b (talents), then the glossary.
+   c. ~~Cut v0.3.0~~ DONE 2026-09-09 (tag v0.3.0, release zips built:
+      Linux 26 MB, Windows 19 MB). The user's players will report on
+      animation SPEED — `ATTACK_DUR` and `DETONATION_DUR` in online.rs
+      are the knobs (a menu speed setting is ~1 h if they want it).
+      Cutting a release: bump `version` in the workspace Cargo.toml,
+      `cargo check` (lockfile), commit "Version x.y.z", `git tag -a
+      vx.y.z -m "..."`, push main and the tag. Bump PROTOCOL_VERSION
+      whenever a released client would misread the new messages.
+   d. ~~Talent cards (4.b)~~ DONE 2026-09-09, see 4.b for the list and
+      what was skipped. NEXT: token/movement pilot abilities (4.d in
+      the roadmap), then the in-game glossary (backlog entry below).
       Also open from a: reasons for unavailable weapons in the prompt.
    Done 2026-09-08/09 (all pushed): server refusals now send Error +
    Close and drain (the old drop caused "connection reset by peer" that
@@ -252,10 +254,29 @@ and Server `ws://127.0.0.1:7777`.
       rerolls Howlrunner + Jess (`friendly_rerolls`, `reroll_attack_dice`
       / `reroll_defense_dice`: blanks first, eyes if no focus token;
       `skirmish()` test helper for multi-ship sides). All pilot dice
-      abilities are live. NEXT: EPTs Wired,
-      Predator, Lone Wolf, Crack Shot, Juke, Expertise, Calculation,
-      Opportunist, Outmaneuver, Trick Shot; tech Weapons Guidance /
-      Sensor Cluster; astromech R3/R7.
+      abilities are live. TALENTS DONE 2026-09-09 (each with a
+      scripted-dice test, `talent_duel` helper = Red Squadron Veteran
+      PS4 vs Obsidian Squadron Pilot PS3 at Range 3): Predator (1 reroll,
+      2 vs PS≤2), Lone Wolf (1 blank when no friend within Range 2,
+      attack and defense), Wired (all eyes while stressed with no focus
+      token, both sides), Expertise (eyes→hits free while unstressed),
+      Calculation (focus buys a crit when exactly one eye shows, else
+      the plain spend), Opportunist (always takes the stress for +1 die
+      vs a tokenless defender), Outmaneuver (defender agility -1 when it
+      cannot see the attacker), Crack Shot (cancels 1 evade when that
+      lets a result land, card discarded), Juke (evade token → one
+      defender evade becomes a focus, same "worth it" test), Sensor
+      Cluster (focus → blank to evade when no eyes). Hooks:
+      `talent_attack_rerolls` / `talent_defense_rerolls` /
+      `opportunist_die` / `has_effect` / free fn `reroll_matching`.
+      SKIPPED: Trick Shot (no obstacles yet), Weapons Guidance (dominated
+      by the normal focus spend), R3/R7 astromechs, Autothrusters
+      (BlankToEvadeAtRange3OrOutsideArc — easy next), Marksmanship /
+      Rage / Expose / Squad Leader (action-based: need a "card action"
+      in the planning UI like DropMine), Swarm Tactics / Decoy / Wingman
+      (start-of-Combat friendly effects), Elusiveness / R7 (force the
+      attacker to reroll: needs a defender-side reroll policy).
+      NEXT: token/movement pilot abilities, then the glossary.
    c. ~~Secondary weapons~~ DONE (session 5, 2026-09-05): game.rs
       `attack_options()` lists (weapon, target) pairs — primary in arc
       (all round for `turret_primary`), each equipped Torpedo/Missile/
