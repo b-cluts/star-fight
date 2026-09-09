@@ -9,7 +9,7 @@ use crate::game::ShipView;
 use crate::obstacle::{self, Obstacle};
 use crate::rules;
 use crate::ship::ShipId;
-use crate::upgrade::{AttackRequirement, Slot, UpgradeId};
+use crate::upgrade::{AttackRequirement, Slot, UpgradeEffect, UpgradeId};
 
 /// What one weapon could do from the current positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,10 +121,19 @@ pub fn weapon_status(
                     (Some(&&(t, band, _, _, obstructed)), AttackRequirement::Free) => {
                         WeaponState::Ready { target: t, range: band, obstructed }
                     }
-                    (Some(&&(t, ..)), AttackRequirement::TargetLock) => {
+                    (Some(&&(t, band, _, _, obstructed)), AttackRequirement::TargetLock) => {
+                        // Deadeye: a focus token stands in for the lock.
+                        let deadeye = me.focus > 0
+                            && me.upgrade_ids.iter().any(|u| {
+                                content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                                    == Some(UpgradeEffect::LockBecomesFocus)
+                            });
                         match candidates.iter().find(|c| Some(c.0) == me.lock) {
                             Some(&&(locked, band, _, _, obstructed)) => {
                                 WeaponState::Ready { target: locked, range: band, obstructed }
+                            }
+                            None if deadeye => {
+                                WeaponState::Ready { target: t, range: band, obstructed }
                             }
                             None => WeaponState::NeedsLock { target: t },
                         }

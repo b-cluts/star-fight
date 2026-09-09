@@ -166,6 +166,10 @@ pub struct ShipState {
     /// Cards whose once-per-round effect has been used this round.
     #[serde(default)]
     pub used_round: Vec<crate::upgrade::UpgradeId>,
+    /// Extra Munitions: ordnance tokens, one per torpedo, missile and
+    /// bomb card at setup; spent instead of discarding the card.
+    #[serde(default)]
+    pub ordnance: Vec<crate::upgrade::UpgradeId>,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

@@ -328,6 +328,8 @@ struct Shot {
     range: u8,
     weapon: Option<UpgradeId>,
     second: bool,
+    /// Luke Skywalker (crew): one focus result becomes a hit for free.
+    focus_hit: bool,
 }
 
 /// An attack whose owner must Declare Target (core rules p.10): more than
@@ -516,6 +518,23 @@ impl GameState {
                     shield_lost_round: false,
                     on_asteroid: false,
                     used_round: Vec::new(),
+                    ordnance: if entry.upgrades.iter().any(|u| {
+                        content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                            == Some(UpgradeEffect::OrdnanceTokens)
+                    }) {
+                        entry
+                            .upgrades
+                            .iter()
+                            .copied()
+                            .filter(|u| {
+                                content.upgrades.upgrade(*u).is_some_and(|c| {
+                                    matches!(c.slot, Slot::Torpedo | Slot::Missile | Slot::Bomb)
+                                })
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
                     focus: 0,
                     evade: 0,
                     ion: 0,
@@ -824,6 +843,88 @@ impl GameState {
             ));
         }
         friends.len() as u8
+    }
+
+    /// Extra Munitions: spend an ordnance token on `card` instead of
+    /// discarding it. True when a token was spent (the card stays).
+    fn spend_ordnance(
+        &mut self,
+        content: &Content,
+        i: usize,
+        card: UpgradeId,
+        events: &mut Vec<String>,
+    ) -> bool {
+        let Some(k) = self.ships[i].ordnance.iter().position(|u| *u == card) else {
+            return false;
+        };
+        self.ships[i].ordnance.remove(k);
+        let name = content.upgrades.upgrade(card).map(|c| c.name.clone()).unwrap_or_default();
+        events.push(format!(
+            "{}: Extra Munitions — ordnance token spent, {name} kept",
+            self.label(content, i)
+        ));
+        true
+    }
+
+    /// Acquire a lock for ship `i` on the nearest enemy within Range 1-3
+    /// when it holds none. True when a lock was taken.
+    fn auto_lock(
+        &mut self,
+        content: &Content,
+        i: usize,
+        why: &str,
+        events: &mut Vec<String>,
+    ) -> bool {
+        if self.ships[i].lock.is_some() || self.ships[i].destroyed {
+            return false;
+        }
+        let Some(p) = self.ships[i].pose else { return false };
+        let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
+        let target = (0..self.ships.len())
+            .filter(|&e| self.ships[e].owner != self.ships[i].owner && !self.ships[e].destroyed)
+            .filter_map(|e| {
+                let q = self.ships[e].pose?;
+                let theirs =
+                    rules::footprint_corners(q, self.class_of(content, &self.ships[e]).footprint);
+                let d = combat::base_distance(&mine, &theirs);
+                (d <= 3.0 * combat::RANGE_BAND_UNITS).then_some((e, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(e, _)| e);
+        let Some(e) = target else { return false };
+        self.ships[i].lock = Some(self.ships[e].id);
+        events.push(format!(
+            "{}: {why} — locks {}",
+            self.label(content, i),
+            self.label(content, e)
+        ));
+        true
+    }
+
+    /// Black One: after a boost or barrel roll, one enemy lock on a
+    /// friendly ship at Range 1 (this one first) is removed.
+    fn after_reposition_cards(&mut self, content: &Content, i: usize, events: &mut Vec<String>) {
+        if !self.has_effect(content, i, UpgradeEffect::RemoveEnemyLockAfterReposition) {
+            return;
+        }
+        let owner = self.ships[i].owner;
+        let mut friends = vec![i];
+        friends.extend(self.friends_at_range1(content, i));
+        for f in friends {
+            let fid = self.ships[f].id;
+            if let Some(e) = (0..self.ships.len())
+                .find(|&e| self.ships[e].owner != owner && self.ships[e].lock == Some(fid))
+            {
+                self.ships[e].lock = None;
+                events.push(format!(
+                    "{}: Black One — {}'s lock on {} removed",
+                    self.label(content, i),
+                    self.label(content, e),
+                    self.label(content, f)
+                ));
+                return;
+            }
+        }
     }
 
     fn discard_card(&mut self, content: &Content, i: usize, card: UpgradeId, why: &str) -> String {
@@ -2077,7 +2178,13 @@ impl GameState {
         events: &mut Vec<String>,
     ) -> (ActionResult, Vec<BombToken>) {
         let pose = self.ships[i].pose.expect("acting ships are on the board");
-        let tokens: Vec<Vec<Vec2>> = self.obstacles.iter().map(|o| o.polygon()).collect();
+        // Collision Detector: repositions may end on obstacles.
+        let tokens: Vec<Vec<Vec2>> =
+            if self.has_effect(content, i, UpgradeEffect::SystemOverlapObstaclesOnReposition) {
+                Vec::new()
+            } else {
+                self.obstacles.iter().map(|o| o.polygon()).collect()
+            };
         let clear = |board: &Board, candidate: Pose| {
             let corners = rules::footprint_corners(candidate, fp);
             rules::within_board(board, &corners)
@@ -2129,6 +2236,7 @@ impl GameState {
                         self.gain_stress(content, i, events);
                     }
                     self.after_expert_roll(content, i, events);
+                    self.after_reposition_cards(content, i, events);
                     ActionResult::Performed
                 } else {
                     ActionResult::Failed
@@ -2140,12 +2248,17 @@ impl GameState {
                 match maneuver::apply(pose, action::boost_maneuver(dir)) {
                     Ok(candidate) if clear(&self.board, candidate) => {
                         self.ships[i].pose = Some(candidate);
+                        self.after_reposition_cards(content, i, events);
                         ActionResult::Performed
                     }
                     _ => ActionResult::Failed,
                 }
             }
             PlannedAction::TargetLock(target) => {
+                // ST-321 locks anywhere; Long-Range Scanners only beyond
+                // Range 2 (and at any distance past it).
+                let anywhere = self.has_effect(content, i, UpgradeEffect::TitleLockAnywhere);
+                let scanners = self.has_effect(content, i, UpgradeEffect::LocksOnlyAtRange3);
                 let in_range = self
                     .ship_index(target)
                     .ok()
@@ -2157,7 +2270,14 @@ impl GameState {
                         let tp = ts.pose?;
                         let tfp = self.class_of(content, ts).footprint;
                         let my = rules::footprint_corners(pose, fp);
-                        combat::range_band_between(&my, &rules::footprint_corners(tp, tfp))
+                        let d = combat::base_distance(&my, &rules::footprint_corners(tp, tfp));
+                        let ok = anywhere
+                            || if scanners {
+                                d > 2.0 * combat::RANGE_BAND_UNITS
+                            } else {
+                                d <= 3.0 * combat::RANGE_BAND_UNITS
+                            };
+                        ok.then_some(())
                     })
                     .is_some();
                 if in_range {
@@ -2244,9 +2364,11 @@ impl GameState {
             ));
             return (ActionResult::Failed, None);
         }
-        let why = format!("fired at the {}", target.kind.name());
-        let line = self.discard_card(content, i, card, &why);
-        events.push(line);
+        if !self.spend_ordnance(content, i, card, events) {
+            let why = format!("fired at the {}", target.kind.name());
+            let line = self.discard_card(content, i, card, &why);
+            events.push(line);
+        }
         let victims: Vec<usize> = (0..self.ships.len())
             .filter(|&v| {
                 let s = &self.ships[v];
@@ -2363,7 +2485,9 @@ impl GameState {
         let pose = self.ships[i].pose.expect("dropping ships are on the board");
         let fp = self.class_of(content, &self.ships[i]).footprint;
         let owner = self.ships[i].owner;
-        self.ships[i].upgrades.retain(|u| *u != card);
+        if !self.spend_ordnance(content, i, card, events) {
+            self.ships[i].upgrades.retain(|u| *u != card);
+        }
         let name = content.upgrades.upgrade(card).map(|u| u.name.clone()).unwrap_or_default();
         events.push(format!("{}: drops {name}", self.label(content, i)));
         let tokens: Vec<BombToken> = bombs::drop_poses(kind, pose, fp)
@@ -2563,11 +2687,38 @@ impl GameState {
         // Combat order: highest pilot skill first (initiative breaks
         // ties), grouped by skill; each group's survivors are fixed when
         // the group starts (the simultaneous-attack rule).
+        let mut skills: Vec<u8> =
+            self.ships.iter().map(|s| self.effective_skill(content, s)).collect();
+        // Swarm Tactics: the lowest-skill friend at Range 1 fires at the
+        // leader's skill this phase.
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.ships[i].pose.is_none()
+                || !self.has_effect(content, i, UpgradeEffect::ShareSkillWithFriendly)
+            {
+                continue;
+            }
+            let mine = self.effective_skill(content, &self.ships[i]);
+            if let Some(f) = self
+                .friends_at_range1(content, i)
+                .into_iter()
+                .filter(|&f| skills[f] < mine)
+                .min_by_key(|&f| skills[f])
+            {
+                skills[f] = mine;
+                events.push(format!(
+                    "{}: Swarm Tactics — {} fires at pilot skill {mine}",
+                    self.label(content, i),
+                    self.label(content, f)
+                ));
+            }
+        }
         let combatants: Vec<(ShipId, u8, PlayerId)> = self
             .ships
             .iter()
-            .filter(|s| !s.destroyed && s.pose.is_some())
-            .map(|s| (s.id, self.effective_skill(content, s), s.owner))
+            .enumerate()
+            .filter(|(_, s)| !s.destroyed && s.pose.is_some())
+            .map(|(k, s)| (s.id, skills[k], s.owner))
             .collect();
         let skill_of = |id: ShipId| {
             combatants.iter().find(|(s, _, _)| *s == id).map(|(_, k, _)| *k).unwrap_or(0)
@@ -2695,7 +2846,13 @@ impl GameState {
                 1 => {
                     let o = options[0].clone();
                     let d_idx = self.ships.iter().position(|s| s.id == o.target).expect("option");
-                    let shot = Shot { d_idx, range: o.range, weapon: o.weapon, second: false };
+                    let shot = Shot {
+                        d_idx,
+                        range: o.range,
+                        weapon: o.weapon,
+                        second: false,
+                        focus_hit: false,
+                    };
                     return Ok(CombatStep::Attack(self.fire(content, a_idx, shot, roll)));
                 }
                 _ => {
@@ -2750,7 +2907,7 @@ impl GameState {
         let a_idx = self.ship_index(pending.attacker)?;
         let d_idx = self.ship_index(target)?;
         self.combat.as_mut().expect("checked above").pending = None;
-        let shot = Shot { d_idx, range, weapon, second: false };
+        let shot = Shot { d_idx, range, weapon, second: false, focus_hit: false };
         Ok(self.fire(content, a_idx, shot, roll))
     }
 
@@ -2770,11 +2927,65 @@ impl GameState {
             shot.weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect),
             Some(UpgradeEffect::MissileAttackTwice | UpgradeEffect::TurretTwinLaserTwiceOneDamage)
         );
-        let cs = self.combat.as_mut().expect("in combat");
-        cs.events.extend(ev);
-        cs.attacks.push(rec.clone());
-        if twice && !shot.second {
-            cs.followup = Some((a_idx, Shot { second: true, ..shot }));
+        let missed = rec.hits + rec.crits == 0;
+        {
+            let cs = self.combat.as_mut().expect("in combat");
+            cs.events.extend(ev);
+            cs.attacks.push(rec.clone());
+            if twice && !shot.second {
+                cs.followup = Some((a_idx, Shot { second: true, ..shot }));
+                return rec;
+            }
+        }
+        // Gunner / Luke Skywalker (crew): a miss is followed by a primary
+        // weapon attack — at the same ship when it is still a legal
+        // target, else the nearest — once per round, and never after a
+        // second attack already taken.
+        if missed && !self.ships[a_idx].destroyed && !shot.focus_hit {
+            let cards =
+                [UpgradeEffect::CrewSecondAttackOnMiss, UpgradeEffect::CrewSecondAttackFocusToHit];
+            let already = cards.iter().any(|e| {
+                self.ships[a_idx]
+                    .used_round
+                    .iter()
+                    .any(|u| content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(*e))
+            });
+            let luke = if already {
+                None
+            } else if self.use_once(content, a_idx, cards[0]).is_some() {
+                Some(false)
+            } else {
+                self.use_once(content, a_idx, cards[1]).map(|_| true)
+            };
+            if let Some(luke) = luke {
+                let defender = self.ships[shot.d_idx].id;
+                let options = self.attack_options(content, a_idx);
+                let primary: Vec<&AttackOption> =
+                    options.iter().filter(|o| o.weapon.is_none()).collect();
+                let pick =
+                    primary.iter().find(|o| o.target == defender).copied().or_else(|| {
+                        primary.iter().copied().min_by(|a, b| a.dist.total_cmp(&b.dist))
+                    });
+                if let Some(o) = pick {
+                    let d_idx = self.ships.iter().position(|s| s.id == o.target).expect("option");
+                    let name = if luke { "Luke Skywalker" } else { "Gunner" };
+                    let cs = self.combat.as_mut().expect("in combat");
+                    cs.events.push(format!(
+                        "{}: {name} — a second attack after the miss",
+                        self.ships[a_idx].callsign
+                    ));
+                    cs.followup = Some((
+                        a_idx,
+                        Shot {
+                            d_idx,
+                            range: o.range,
+                            weapon: None,
+                            second: false,
+                            focus_hit: luke,
+                        },
+                    ));
+                }
+            }
         }
         rec
     }
@@ -2809,12 +3020,18 @@ impl GameState {
         content: &Content,
         roll: &mut dyn FnMut() -> u8,
     ) -> (Vec<MoveRecord>, Vec<Pull>, Vec<Detonation>, Vec<String>) {
+        // Enhanced Scopes: pilot skill 0 for the Activation phase.
         let order = movement_order(
             &self
                 .ships
                 .iter()
                 .filter(|s| !s.destroyed && s.pose.is_some())
-                .map(|s| (s.id, self.effective_skill(content, s), s.owner))
+                .map(|s| {
+                    let scopes =
+                        self.count_effect(content, s, UpgradeEffect::SystemSkillZeroInActivation)
+                            > 0;
+                    (s.id, if scopes { 0 } else { self.effective_skill(content, s) }, s.owner)
+                })
                 .collect::<Vec<_>>(),
             self.initiative,
         );
@@ -2897,6 +3114,29 @@ impl GameState {
                 ));
                 pre = Some((a, r));
             }
+            // Advanced Sensors: a token or lock action is taken before the
+            // maneuver instead of after it (repositions stay after).
+            if pre.is_none()
+                && self.has_effect(content, i, UpgradeEffect::SystemFreeActionBeforeReveal)
+                && matches!(
+                    self.ships[i].planned_action,
+                    Some(
+                        PlannedAction::Focus
+                            | PlannedAction::Evade
+                            | PlannedAction::TargetLock(_)
+                            | PlannedAction::CardAction(_)
+                    )
+                )
+                && self.may_act_freely(content, i)
+            {
+                let a = self.ships[i].planned_action.take().expect("matched above");
+                let (r, _) = self.perform_action(content, i, a, fp, &obstacles, &mut events);
+                events.push(format!(
+                    "{}: Advanced Sensors — action before the maneuver",
+                    self.label(content, i)
+                ));
+                pre = Some((a, r));
+            }
             let start = self.ships[i].pose.expect("placed");
             let path = maneuver::sample_path(start, man).expect("validated at plan time");
 
@@ -2961,10 +3201,27 @@ impl GameState {
                     })
                     .copied()
                     .collect();
+                // R5-X3: discarded before the reveal to ignore the obstacles
+                // this maneuver would hit.
+                let crossed = if !crossed.is_empty()
+                    && let Some(card) =
+                        self.card_with_effect(content, i, UpgradeEffect::IgnoreObstaclesDiscard)
+                {
+                    let e = self.discard_card(content, i, card, "obstacles ignored this round");
+                    events.push(e);
+                    Vec::new()
+                } else {
+                    crossed
+                };
+                let detector =
+                    self.has_effect(content, i, UpgradeEffect::SystemOverlapObstaclesOnReposition);
                 for o in crossed {
                     obstacles_hit.push(o.id);
                     let who = self.label(content, i);
                     let die = AttackFace::from_d8(roll());
+                    // Collision Detector: critical results are ignored.
+                    let die =
+                        if detector && die == AttackFace::Crit { AttackFace::Blank } else { die };
                     match o.kind {
                         ObstacleKind::Asteroid => {
                             on_rock = true;
@@ -3019,10 +3276,27 @@ impl GameState {
                 let e = self.discard_card(content, i, card, "red maneuver flown as white");
                 events.push(e);
             }
+            let stress_before = self.ships[i].stress;
             match difficulty {
-                Difficulty::Hard => self.gain_stress(content, i, &mut events),
+                Difficulty::Hard => {
+                    self.gain_stress(content, i, &mut events);
+                    // Targeting Astromech: a lock after a red maneuver.
+                    if self.has_effect(content, i, UpgradeEffect::LockAfterRed) {
+                        self.auto_lock(content, i, "Targeting Astromech", &mut events);
+                    }
+                }
                 Difficulty::Easy => {
                     self.lose_stress(content, i, &mut events);
+                    // Systems Officer: a friend at Range 1 may lock.
+                    if !self.ships[i].destroyed
+                        && self.has_effect(content, i, UpgradeEffect::CrewFriendlyLockAfterGreen)
+                    {
+                        for f in self.friends_at_range1(content, i) {
+                            if self.auto_lock(content, f, "Systems Officer", &mut events) {
+                                break;
+                            }
+                        }
+                    }
                     // R2-D2 (astromech): a shield back after a green maneuver.
                     if !self.ships[i].destroyed
                         && self.has_effect(content, i, UpgradeEffect::RecoverShieldOnGreen)
@@ -3110,9 +3384,27 @@ impl GameState {
             let planned = self.ships[i].planned_action.take().unwrap_or(PlannedAction::Pass);
             let mut dropped_after = Vec::new();
             let mut seismic = None;
+            // Pattern Analyzer: this maneuver's stress lands after the
+            // action; Primed Thrusters: boosts and rolls under 3 stress.
+            let stress_now = if self.has_effect(content, i, UpgradeEffect::ResolveStressAfterAction)
+            {
+                stress_before
+            } else {
+                self.ships[i].stress
+            };
+            let primed = stress_now < 3
+                && self.has_effect(content, i, UpgradeEffect::StressAllowsRepositionUnder3)
+                && matches!(
+                    planned,
+                    PlannedAction::Boost(_)
+                        | PlannedAction::BarrelRoll(_)
+                        | PlannedAction::BarrelRollFar(_)
+                        | PlannedAction::BarrelRollBank(..)
+                );
             let action_result = if destroyed {
                 ActionResult::Failed
-            } else if self.ships[i].stress > 0
+            } else if stress_now > 0
+                && !primed
                 && self.ability(content, &self.ships[i]) != Some(PilotAbility::ActionsWhileStressed)
             {
                 ActionResult::SkippedStressed
@@ -3507,9 +3799,13 @@ impl GameState {
                 if band < lo || band > hi || (needs_arc && !in_arc) {
                     continue;
                 }
+                let deadeye = self.ships[a_idx].focus > 0
+                    && self.has_effect(content, a_idx, UpgradeEffect::LockBecomesFocus);
                 let armed = match req {
                     AttackRequirement::Free => true,
-                    AttackRequirement::TargetLock => self.ships[a_idx].lock == Some(s.id),
+                    AttackRequirement::TargetLock => {
+                        self.ships[a_idx].lock == Some(s.id) || deadeye
+                    }
                     AttackRequirement::Focus => self.ships[a_idx].focus > 0,
                 };
                 if armed {
@@ -3538,7 +3834,7 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) -> AttackRecord {
-        let Shot { d_idx, range, weapon, second } = shot;
+        let Shot { d_idx, range, weapon, second, focus_hit } = shot;
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
@@ -3585,9 +3881,18 @@ impl GameState {
             events.push(format!("{}: fires {name}{again}", self.label(content, a_idx)));
             if sw.spend && !second {
                 match sw.requires {
-                    AttackRequirement::TargetLock => {
+                    AttackRequirement::TargetLock if self.ships[a_idx].lock == Some(defender) => {
                         self.ships[a_idx].lock = None;
                         lock_spent = true;
+                    }
+                    // Deadeye: the focus token is spent as the lock.
+                    AttackRequirement::TargetLock => {
+                        self.ships[a_idx].focus = self.ships[a_idx].focus.saturating_sub(1);
+                        attacker_focus_spent = true;
+                        events.push(format!(
+                            "{}: Deadeye — focus token spent as the target lock",
+                            self.label(content, a_idx)
+                        ));
                     }
                     AttackRequirement::Focus => {
                         self.ships[a_idx].focus = self.ships[a_idx].focus.saturating_sub(1);
@@ -3813,6 +4118,16 @@ impl GameState {
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
             self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
+            // Luke Skywalker (crew): the second attack turns a focus result
+            // into a hit for free.
+            if focus_hit && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus)
+            {
+                *f = AttackFace::Hit;
+                events.push(format!(
+                    "{}: Luke Skywalker — focus result to hit",
+                    self.label(content, a_idx)
+                ));
+            }
             // Mercenary Copilot: a hit becomes a critical hit at Range 3.
             if range == 3
                 && self.has_effect(content, a_idx, UpgradeEffect::CrewHitToCritAtRange3)
@@ -4334,6 +4649,7 @@ impl GameState {
             && sw.discard_to_fire
             && (!twice || second)
             && (landed || !self.has_effect(content, a_idx, UpgradeEffect::KeepOrdnanceOnMiss))
+            && !weapon.is_some_and(|w| self.spend_ordnance(content, a_idx, w, events))
         {
             self.ships[a_idx].upgrades.retain(|u| Some(*u) != weapon);
             events.push(format!("{}: {name} discarded (fired)", self.label(content, a_idx)));
@@ -6503,6 +6819,124 @@ mod tests {
         let rec = resolve(&c, &mut gs, vec![7; 20]);
         assert_eq!(gs.ships[1].stress, 1, "{:?}", rec.events);
         assert!(rec.events.iter().any(|e| e.contains("Mara Jade")));
+    }
+
+    #[test]
+    fn long_range_scanners_and_st321_change_who_can_be_locked() {
+        let c = content();
+        // Range 3 after the moves: Long-Range Scanners allow the lock.
+        let mut gs = talent_duel(&c, UpgradeId(83));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::TargetLock(ShipId(0))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        // Range 2: refused.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(10.0, 14.5, -FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(UpgradeId(83));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::TargetLock(ShipId(0))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Failed);
+        // ST-321: a lock from the far corner of the board.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(2.0, 17.5, -FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(UpgradeId(97));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::TargetLock(ShipId(0))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].lock, Some(ShipId(0)));
+    }
+
+    #[test]
+    fn targeting_astromech_locks_after_a_red_maneuver() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(55));
+        let k4 =
+            dial_index(&c, XWING, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 4);
+        gs.plan_maneuver(&c, P1, ShipId(1), k4).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        assert_eq!(gs.ships[1].stress, 1);
+        assert_eq!(gs.ships[1].lock, Some(ShipId(0)), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn primed_thrusters_let_a_stressed_tie_barrel_roll() {
+        let c = content();
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(23));
+        let k3 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::KTurn && m.distance == 3);
+        gs.plan_maneuver(&c, P0, ShipId(0), k3).unwrap();
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(Side::Left)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed, "{:?}", rec.events);
+        assert_eq!(gs.ships[0].stress, 1);
+    }
+
+    #[test]
+    fn advanced_sensors_take_the_focus_before_the_maneuver() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(201));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.pre, Some((PlannedAction::Focus, ActionResult::Performed)));
+        assert_eq!(mv.action, PlannedAction::Pass);
+        assert!(rec.events.iter().any(|e| e.contains("Advanced Sensors")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn gunner_and_luke_fire_again_after_a_miss() {
+        let c = content();
+        // Gunner: the miss is followed by a primary attack that lands three hits.
+        let mut gs = talent_duel(&c, UpgradeId(157));
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7]);
+        let shots: Vec<&AttackRecord> =
+            rec.attacks.iter().filter(|a| a.attacker == ShipId(1)).collect();
+        assert_eq!(shots.len(), 2, "{:?}", rec.events);
+        assert_eq!(shots[1].hits, 3);
+        assert!(gs.ships[0].destroyed);
+        // Luke: the second attack turns a focus result into a hit for free.
+        let mut gs = talent_duel(&c, UpgradeId(151));
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let shots: Vec<&AttackRecord> =
+            rec.attacks.iter().filter(|a| a.attacker == ShipId(1)).collect();
+        assert_eq!(shots.len(), 2, "{:?}", rec.events);
+        assert_eq!(shots[1].hits, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Luke Skywalker")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn extra_munitions_keep_the_bomb_card_and_black_one_shakes_a_lock() {
+        let c = content();
+        let seismic = UpgradeId(181);
+        let mut gs = bomber_duel(&c, seismic, 1);
+        gs.ships[0].upgrades.push(UpgradeId(6));
+        gs.ships[0].ordnance = vec![seismic];
+        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        assert!(gs.ships[0].upgrades.contains(&seismic), "card kept: {:?}", rec.events);
+        assert!(gs.ships[0].ordnance.is_empty());
+        assert_eq!(rec.detonations.len(), 1);
+
+        // Black One on the TIE: its barrel roll removes the X-Wing's lock on it.
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(90));
+        gs.ships[1].lock = Some(ShipId(0));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::BarrelRoll(Side::Left)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        assert_eq!(gs.ships[1].lock, None, "{:?}", rec.events);
     }
 
     #[test]

@@ -325,6 +325,22 @@ impl UpgradeEffect {
                 | TorpedoStripShield
                 | SeismicTorpedoAction
                 | BarrelRollActionDiscardLock
+                | OrdnanceTokens
+                | ResolveStressAfterAction
+                | StressAllowsRepositionUnder3
+                | IgnoreObstaclesDiscard
+                | LockAfterRed
+                | LocksOnlyAtRange3
+                | RemoveEnemyLockAfterReposition
+                | TitleLockAnywhere
+                | SystemFreeActionBeforeReveal
+                | SystemSkillZeroInActivation
+                | SystemOverlapObstaclesOnReposition
+                | CrewSecondAttackFocusToHit
+                | CrewSecondAttackOnMiss
+                | CrewFriendlyLockAfterGreen
+                | ShareSkillWithFriendly
+                | LockBecomesFocus
                 | BlankToHitSpendFocus
                 | KeepOneEvade
                 | CancelFocusForEvade
