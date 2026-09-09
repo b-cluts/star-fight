@@ -12,6 +12,7 @@ use sf_core::bombs::{BombKind, BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
+use sf_core::obstacle::{self, Obstacle, ObstacleKind};
 use sf_core::rules;
 use sf_core::ship::ShipId;
 use sf_core::upgrade::{Slot, UpgradeEffect, UpgradeId};
@@ -43,6 +44,8 @@ pub struct Snap {
     pub totals: [u32; 2],
     /// Bomb and mine tokens on the board.
     pub bombs: Vec<BombToken>,
+    /// Asteroid and debris tokens.
+    pub obstacles: Vec<Obstacle>,
 }
 
 /// One step of the turn playback queue, fed by server messages as the
@@ -256,6 +259,7 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         lock: None,
         crits: Vec::new(),
         destroyed: false,
+        on_asteroid: false,
         plan: None,
         planned_action: None,
         bomb: None,
@@ -313,6 +317,7 @@ fn demo_snap(game: &Game) -> Snap {
         initiative: 0,
         totals: [100, 100],
         bombs,
+        obstacles: Vec::new(),
     }
 }
 
@@ -368,6 +373,7 @@ fn demo_queue(game: &Game, snap: &Snap) -> Anim {
             defender: ShipId(def),
             range: 2,
             weapon,
+            obstructed: false,
             attack_faces: vec![AttackFace::Hit; 3],
             defense_faces: Vec::new(),
             lock_spent: false,
@@ -458,6 +464,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     initiative,
                     squad_totals,
                     bombs,
+                    obstacles,
                 } => {
                     if phase != Phase::Placement {
                         online.overrides.clear();
@@ -476,6 +483,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                         initiative,
                         totals: squad_totals,
                         bombs,
+                        obstacles,
                     };
                     if online.anim.is_some() {
                         online.pending_snap = Some(snap);
@@ -609,7 +617,9 @@ fn weapon_name(game: &Game, weapon: Option<u16>) -> String {
 fn attack_line(online: &Online, game: &Game, a: &AttackRecord) -> String {
     let name = |id: u32| callsign(online.snap.as_ref(), id);
     let landed = a.hits + a.crits;
-    let mut line = format!("{} -> {} @R{}: ", name(a.attacker.0), name(a.defender.0), a.range);
+    let obstructed = if a.obstructed { " (obstructed)" } else { "" };
+    let mut line =
+        format!("{} -> {} @R{}{obstructed}: ", name(a.attacker.0), name(a.defender.0), a.range);
     if a.weapon.is_some() {
         line = format!(
             "{} -> {} @R{} [{}]: ",
@@ -1561,6 +1571,55 @@ fn detonation_line(snap: &Snap, d: &Detonation) -> String {
     format!("{} detonates — {}", d.token.kind.name(), hits.join("; "))
 }
 
+/// An obstacle token: asteroids as a craggy outline with a few inner
+/// fracture lines, debris as a dotted cloud.
+fn draw_obstacle(gizmos: &mut Gizmos, game: &Game, o: &Obstacle) {
+    let poly: Vec<Vec2> = o.polygon().into_iter().map(|p| game.to_world(p)).collect();
+    let center = game.to_world(o.center);
+    match o.kind {
+        ObstacleKind::Asteroid => {
+            let rim = Color::srgb(0.55, 0.5, 0.42);
+            let mut pts = poly.clone();
+            pts.push(poly[0]);
+            gizmos.linestrip_2d(pts, rim);
+            let inner = Color::srgba(0.45, 0.4, 0.33, 0.8);
+            for (k, p) in poly.iter().enumerate() {
+                if k % 2 == 0 {
+                    gizmos.line_2d(center + (*p - center) * 0.15, *p, inner);
+                }
+            }
+            let seed = o.id.wrapping_mul(53);
+            for k in 0..3u32 {
+                let a = hash01(seed.wrapping_add(k * 7)) * std::f32::consts::TAU;
+                let r = 4.0 + hash01(seed.wrapping_add(k * 11)) * 6.0;
+                let at = center + Vec2::from_angle(a) * (r + 6.0);
+                gizmos.circle_2d(at, r * 0.35, inner);
+            }
+        }
+        ObstacleKind::Debris => {
+            let tint = Color::srgba(0.5, 0.6, 0.7, 0.7);
+            let seed = o.id.wrapping_mul(71);
+            for (k, p) in poly.iter().enumerate() {
+                let q = poly[(k + 1) % poly.len()];
+                for step in 0..4 {
+                    let t = step as f32 / 4.0;
+                    let at = *p + (q - *p) * t;
+                    gizmos.circle_2d(
+                        at,
+                        1.5 + hash01(seed.wrapping_add(k as u32 * 9 + step)) * 2.0,
+                        tint,
+                    );
+                }
+            }
+            for k in 0..6u32 {
+                let a = hash01(seed.wrapping_add(k * 13)) * std::f32::consts::TAU;
+                let r = hash01(seed.wrapping_add(k * 17)) * 14.0;
+                gizmos.circle_2d(center + Vec2::from_angle(a) * r, 2.0, tint);
+            }
+        }
+    }
+}
+
 /// A bomb or mine token: a square outline in the owner's shade with a
 /// symbol for its kind.
 fn draw_bomb_token(gizmos: &mut Gizmos, game: &Game, t: &BombToken, own: bool) {
@@ -1719,6 +1778,9 @@ fn draw(
         Some(a) => &a.tokens,
         None => &snap.bombs,
     };
+    for o in &snap.obstacles {
+        draw_obstacle(&mut gizmos, &game, o);
+    }
     for t in tokens {
         draw_bomb_token(&mut gizmos, &game, t, t.owner.0 == u32::from(seat));
     }
@@ -1753,7 +1815,13 @@ fn draw(
         // Placement legality tint for own provisional poses.
         if own && snap.phase == Phase::Placement {
             let zone_seat = if seat == 0 { Seat::South } else { Seat::North };
-            if rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[]).is_err() {
+            let corners = rules::footprint_corners(pose, class.footprint);
+            let on_rock =
+                snap.obstacles.iter().any(|o| obstacle::convex_overlap(&corners, &o.polygon()));
+            if on_rock
+                || rules::placement_legal(&game.board, zone_seat, pose, class.footprint, &[])
+                    .is_err()
+            {
                 color = Color::srgb(1.0, 0.35, 0.35);
             }
         }
@@ -1889,6 +1957,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if let Some(l) = view.lock {
             line.push_str(&format!(" lock {}", callsign(Some(snap), l.0)));
         }
+        if view.on_asteroid {
+            line.push_str(" | ON ASTEROID: no attack this round");
+        }
         if !view.crits.is_empty() {
             let names: Vec<&str> = view.crits.iter().map(|c| c.name()).collect();
             line.push_str(&format!(" | crits: {}", names.join(", ")));
@@ -1941,6 +2012,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                         }
                         WeaponState::NoTarget => "no target in range/arc".to_string(),
                         WeaponState::Offline => "OFFLINE (weapons failure)".to_string(),
+                        WeaponState::Grounded => "no attack (on an asteroid)".to_string(),
                     };
                     format!("{}: {state}", w.name)
                 })
@@ -2026,6 +2098,7 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                     ActionResult::SkippedDamaged => " (sensors damaged)".to_string(),
                     ActionResult::Failed => " (failed)".to_string(),
                     ActionResult::SkippedNetted => " (netted: no action)".to_string(),
+                    ActionResult::SkippedObstacle => " (hit an asteroid: no action)".to_string(),
                 };
                 let outcome = |r: ActionResult| match r {
                     ActionResult::Performed => "",
@@ -2048,8 +2121,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                         format!(", then {}{}", action_name(&game, Some(snap), a), outcome(r))
                     })
                     .unwrap_or_default();
+                let rocks = if mv.obstacles_hit.is_empty() { "" } else { " — OBSTACLE!" };
                 lines.push(format!(
-                    "{} {pre}flies {} {} — action: {}{result}{second}",
+                    "{} {pre}flies {} {} — action: {}{result}{second}{rocks}",
                     name(mv.ship.0),
                     render::steer_name(mv.maneuver.steer),
                     mv.maneuver.distance,
