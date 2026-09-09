@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::board::Board;
+use crate::mission::MissionKind;
 use crate::obstacle::ObstacleKind;
 
 fn two() -> u8 {
@@ -40,6 +41,9 @@ pub struct Scenario {
     /// Side (team) of each seat; empty = every seat its own side.
     #[serde(default)]
     pub teams: Vec<u8>,
+    /// A rulebook mission (p.21-24): two sides, Rebels on side 0.
+    #[serde(default)]
+    pub mission: Option<MissionKind>,
 }
 
 /// What the host actually sends: a scenario name plus the numbers, which
@@ -59,6 +63,10 @@ pub struct GameSetup {
     /// = every seat its own side (a free-for-all; the plain duel for 2).
     #[serde(default)]
     pub teams: Vec<u8>,
+    /// A rulebook mission: side 0 flies Rebel squads, side 1 Imperial;
+    /// the mission's setup, special rules and objectives apply.
+    #[serde(default)]
+    pub mission: Option<MissionKind>,
 }
 
 impl Default for GameSetup {
@@ -73,6 +81,7 @@ impl Default for GameSetup {
             board_width: 20.0,
             board_height: 20.0,
             teams: Vec::new(),
+            mission: None,
         }
     }
 }
@@ -89,6 +98,7 @@ impl From<&Scenario> for GameSetup {
             board_width: s.board_width,
             board_height: s.board_height,
             teams: s.teams.clone(),
+            mission: s.mission,
         }
     }
 }
@@ -166,6 +176,9 @@ impl GameSetup {
         if self.team_list().iter().any(|t| *t >= sides) {
             return Err("team ids must be 0..sides".into());
         }
+        if self.mission.is_some() && sides != 2 {
+            return Err("missions are played between two sides".into());
+        }
         if self.points < POINTS_RANGE.0 || self.points > POINTS_RANGE.1 {
             return Err(format!("squad points must be {}-{}", POINTS_RANGE.0, POINTS_RANGE.1));
         }
@@ -215,8 +228,22 @@ impl GameSetup {
     }
 
     /// One-line summary for lobbies and the HUD.
+    /// The faction a seat must fly in a mission (Rebels on side 0).
+    pub fn faction_for_seat(&self, seat: u8) -> Option<crate::ship::Faction> {
+        self.mission.map(|_| {
+            if self.team_of(seat) == 0 {
+                crate::ship::Faction::RebelAlliance
+            } else {
+                crate::ship::Faction::Empire
+            }
+        })
+    }
+
     pub fn summary(&self) -> String {
         let mut parts = vec![format!("{} pts", self.points)];
+        if let Some(m) = self.mission {
+            parts.push(format!("mission {}", m.number()));
+        }
         if self.players > 2 {
             parts.push(format!("{} players, {}", self.players, self.mode_name()));
         }

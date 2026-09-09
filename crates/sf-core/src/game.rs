@@ -19,10 +19,11 @@ use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose, Vec2};
 use crate::maneuver::{self, Difficulty, Maneuver};
+use crate::mission::{self, MissionKind, MissionState, MissionView};
 use crate::obstacle::{self, Obstacle, ObstacleKind, Pull};
 use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
-use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
+use crate::ship::{Faction, PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
 use crate::squad::Squad;
 use crate::upgrade::{AttackRequirement, Slot, UpgradeEffect, UpgradeId};
 
@@ -145,6 +146,12 @@ pub enum Rejection {
     SecondActionNotAllowed,
     /// The base would sit on an asteroid or debris token.
     OverlapsObstacle,
+    /// Mission 2: the Rebels must deploy beyond Range 1 of every asteroid.
+    TooCloseToObstacle,
+    /// Mission 2: the disabled ship flies only speed 1-2 until Round 5.
+    ShipDisabled,
+    /// The action exists only in a mission (Protect, mission 1).
+    NotInThisMission,
     /// No obstacle with that id is on the board.
     NoSuchObstacle,
 }
@@ -171,6 +178,9 @@ impl std::fmt::Display for Rejection {
             Rejection::TemplateNotAllowed => "that template is not available to this pilot",
             Rejection::SecondActionNotAllowed => "this ship cannot take that second action",
             Rejection::OverlapsObstacle => "the ship would sit on an obstacle",
+            Rejection::TooCloseToObstacle => "must deploy beyond Range 1 of every asteroid",
+            Rejection::ShipDisabled => "the disabled ship flies only speed 1-2 until Round 5",
+            Rejection::NotInThisMission => "that action is not available in this game",
             Rejection::NoSuchObstacle => "there is no such obstacle on the board",
         };
         f.write_str(s)
@@ -187,6 +197,9 @@ pub struct MoveRecord {
     pub end: Pose,
     /// Stopped short because another ship was in the way.
     pub bumped: bool,
+    /// Left the board alive under a mission rule (see `destroyed`).
+    #[serde(default)]
+    pub escaped: bool,
     /// Flew off the board and is destroyed.
     pub destroyed: bool,
     /// Stress tokens after the maneuver.
@@ -418,6 +431,12 @@ pub struct ShipView {
     /// Active critical effects — public, like faceup cards.
     pub crits: Vec<CritEffect>,
     pub destroyed: bool,
+    /// Left the board alive under a mission rule.
+    #[serde(default)]
+    pub escaped: bool,
+    /// Satellite tokens carried (mission 3).
+    #[serde(default)]
+    pub satellites: u8,
     /// Ended its move on an asteroid: no attack this round.
     #[serde(default)]
     pub on_asteroid: bool,
@@ -468,6 +487,9 @@ pub struct GameState {
     /// maneuvers are flown as white (one entry per seat).
     #[serde(default)]
     pub white_reds: Vec<bool>,
+    /// Rulebook mission in play (setup, special rules, objectives).
+    #[serde(default)]
+    pub mission: Option<MissionState>,
 }
 
 impl GameState {
@@ -522,53 +544,34 @@ impl GameState {
                 for u in &entry.upgrades {
                     content.upgrades.upgrade(*u).ok_or_else(|| format!("unknown upgrade {u:?}"))?;
                 }
-                ships.push(ShipState {
-                    id: ShipId(ships.len() as u32),
-                    owner: PlayerId(seat as u32),
-                    class: class_id,
-                    pilot: pilot_id,
-                    lingers: content.pilots.pilot(pilot_id).and_then(|p| p.ability)
-                        == Some(PilotAbility::SurviveUntilEndOfCombat),
-                    upgrades: entry.upgrades.clone(),
-                    callsign: callsigns[n].clone(),
-                    pose: None,
-                    hull: class.hull,
-                    shields: class.shields,
-                    stress: 0,
-                    plan: None,
-                    planned_action: None,
-                    bomb: None,
-                    planned_action2: None,
-                    card_actions: Vec::new(),
-                    shield_lost_round: false,
-                    on_asteroid: false,
-                    used_round: Vec::new(),
-                    tractor: 0,
-                    stored_focus: 0,
-                    ordnance: if entry.upgrades.iter().any(|u| {
-                        content.upgrades.upgrade(*u).and_then(|c| c.effect)
-                            == Some(UpgradeEffect::OrdnanceTokens)
-                    }) {
-                        entry
-                            .upgrades
-                            .iter()
-                            .copied()
-                            .filter(|u| {
-                                content.upgrades.upgrade(*u).is_some_and(|c| {
-                                    matches!(c.slot, Slot::Torpedo | Slot::Missile | Slot::Bomb)
-                                })
+                let mut ship = ShipState::new(
+                    ShipId(ships.len() as u32),
+                    PlayerId(seat as u32),
+                    class_id,
+                    pilot_id,
+                    callsigns[n].clone(),
+                    class.hull,
+                    class.shields,
+                );
+                ship.lingers = content.pilots.pilot(pilot_id).and_then(|p| p.ability)
+                    == Some(PilotAbility::SurviveUntilEndOfCombat);
+                ship.upgrades = entry.upgrades.clone();
+                if entry.upgrades.iter().any(|u| {
+                    content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                        == Some(UpgradeEffect::OrdnanceTokens)
+                }) {
+                    ship.ordnance = entry
+                        .upgrades
+                        .iter()
+                        .copied()
+                        .filter(|u| {
+                            content.upgrades.upgrade(*u).is_some_and(|c| {
+                                matches!(c.slot, Slot::Torpedo | Slot::Missile | Slot::Bomb)
                             })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    },
-                    focus: 0,
-                    evade: 0,
-                    ion: 0,
-                    lock: None,
-                    crits: Vec::new(),
-                    destroyed: false,
-                });
+                        })
+                        .collect();
+                }
+                ships.push(ship);
             }
         }
         // Hull Upgrade / Shield Upgrade raise the starting values.
@@ -587,6 +590,7 @@ impl GameState {
             next_bomb_id: 0,
             obstacles: Vec::new(),
             white_reds: vec![false; n],
+            mission: None,
         };
         for i in 0..gs_probe.ships.len() {
             let (h, sh) = (
@@ -628,6 +632,7 @@ impl GameState {
             next_bomb_id: 0,
             obstacles: Vec::new(),
             white_reds: vec![false; n],
+            mission: None,
         })
     }
 
@@ -2145,17 +2150,32 @@ impl GameState {
         let own_placed: Vec<(ShipId, Pose, Footprint)> = self
             .ships
             .iter()
-            .filter(|s| self.allied(s.owner, player) && s.id != ship_id)
+            .filter(|s| self.allied(s.owner, player) && s.id != ship_id && !s.destroyed)
             .filter_map(|s| s.pose.map(|p| (s.id, p, self.class_of(content, s).footprint)))
             .collect();
-        rules::placement_legal(&self.board, self.seat_of(player), pose, fp, &own_placed).map_err(
+        rules::placement_legal_in(&self.deploy_zones(player), pose, fp, &own_placed).map_err(
             |e| match e {
                 rules::PlacementError::OutOfZone => Rejection::OutOfZone,
                 rules::PlacementError::OverlapsShip(_) => Rejection::OverlapsShip,
             },
         )?;
-        if self.on_obstacle(&rules::footprint_corners(pose, fp)).is_some() {
+        let corners = rules::footprint_corners(pose, fp);
+        if self.on_obstacle(&corners).is_some() {
             return Err(Rejection::OverlapsObstacle);
+        }
+        // Mission 2: Rebel ships deploy beyond Range 1 of every asteroid
+        // (the rulebook places the rocks around the ships; the rocks are
+        // scattered first here, so the constraint is turned around).
+        if self.turn == 1
+            && self.mission.as_ref().is_some_and(|m| {
+                m.kind == MissionKind::AsteroidRun && self.team(player) == m.rebel_side
+            })
+            && self
+                .obstacles
+                .iter()
+                .any(|o| mission::outline_distance(&corners, &o.polygon()) <= mission::R1)
+        {
+            return Err(Rejection::TooCloseToObstacle);
         }
         self.ships[i].pose = Some(pose);
         if self.ships.iter().all(|s| s.pose.is_some()) {
@@ -2188,6 +2208,12 @@ impl GameState {
         let class = self.class_of(content, &self.ships[i]);
         let dial = &content.dials.set(class.maneuver_set).expect("validated in new()").maneuvers;
         let man = *dial.get(index as usize).ok_or(Rejection::BadManeuverIndex)?;
+        if self.turn < mission::REPAIR_ROUND
+            && man.distance > 2
+            && self.mission.as_ref().is_some_and(|m| m.disabled == Some(ship_id))
+        {
+            return Err(Rejection::ShipDisabled);
+        }
         // Crits can make normally-white maneuvers red (Damaged Engine /
         // Thrust Control Fire) — the stress rule uses the effective color.
         let (difficulty, _) = self.maneuver_difficulty(content, i, &man);
@@ -2232,6 +2258,15 @@ impl GameState {
             if self.allied(self.ships[t].owner, player) || self.ships[t].destroyed {
                 return Err(Rejection::BadLockTarget);
             }
+        }
+        if planned == PlannedAction::Protect
+            && !self.mission.as_ref().is_some_and(|m| {
+                m.kind == MissionKind::PoliticalEscort
+                    && self.team(player) == m.rebel_side
+                    && m.shuttle != Some(ship_id)
+            })
+        {
+            return Err(Rejection::NotInThisMission);
         }
         self.check_action_extras(content, i, planned)?;
         self.ships[i].planned_action = Some(planned);
@@ -2464,6 +2499,34 @@ impl GameState {
         };
         let result = match planned {
             PlannedAction::Pass => ActionResult::Performed,
+            // Mission 1: an evade token on the senator's shuttle, if it is
+            // within Range 1 (no limit on how many it holds).
+            PlannedAction::Protect => {
+                let shuttle = self
+                    .mission
+                    .as_ref()
+                    .and_then(|m| m.shuttle)
+                    .and_then(|id| self.ships.iter().position(|s| s.id == id))
+                    .filter(|&k| !self.ships[k].destroyed);
+                match shuttle.filter(|&k| self.range_between(content, i, k) == Some(1)) {
+                    Some(k) => {
+                        self.ships[k].evade += 1;
+                        events.push(format!(
+                            "{}: protect — evade token on the senator's shuttle ({} held)",
+                            self.label(content, i),
+                            self.ships[k].evade
+                        ));
+                        ActionResult::Performed
+                    }
+                    None => {
+                        events.push(format!(
+                            "{}: action FAILED — the senator's shuttle is not within Range 1",
+                            self.label(content, i)
+                        ));
+                        ActionResult::Failed
+                    }
+                }
+            }
             // Carnor Jax at Range 1: no focus or evade actions.
             PlannedAction::Focus | PlannedAction::Evade if self.carnor_near(content, i) => {
                 events.push(format!(
@@ -3447,6 +3510,11 @@ impl GameState {
                 continue;
             };
             let owner = self.ships[a_idx].owner;
+            // Mission 3: scanning a satellite replaces the attack.
+            if let Some(msg) = self.mission_scan(content, a_idx) {
+                self.combat.as_mut().expect("in combat").events.push(msg);
+                continue;
+            }
             let options = self.attack_options(content, a_idx);
             match options.len() {
                 0 => continue,
@@ -3911,6 +3979,8 @@ impl GameState {
             }
             let end = used_path[stop];
             let fled = !rules::within_board(&self.board, &rules::footprint_corners(end, fp));
+            let exit = mission::exit_edge(&self.board, combat::base_center(end, fp));
+            let escaped = fled && self.mission_escape(i, exit);
 
             {
                 let ship = &mut self.ships[i];
@@ -3918,7 +3988,19 @@ impl GameState {
                 ship.plan = None;
                 if fled {
                     ship.destroyed = true;
+                    ship.escaped = escaped;
                 }
+            }
+            if fled {
+                events.push(if escaped {
+                    format!("{}: ESCAPED off the {} edge", self.label(content, i), exit.name())
+                } else {
+                    format!(
+                        "{}: fled the battlefield off the {} edge — destroyed",
+                        self.label(content, i),
+                        exit.name()
+                    )
+                });
             }
             // Obstacles (p.20): a base or template crossing an asteroid
             // costs the action and rolls a die (hit: 1 damage, crit: a
@@ -4237,6 +4319,7 @@ impl GameState {
                 end,
                 bumped,
                 destroyed,
+                escaped: self.ships[i].escaped,
                 stress,
                 action: planned,
                 action_result,
@@ -4530,6 +4613,8 @@ impl GameState {
             }
         }
 
+        self.mission_end_phase(content, events);
+
         let n = self.committed.len();
         self.white_reds = vec![false; n];
         self.committed = vec![false; n];
@@ -4540,6 +4625,19 @@ impl GameState {
     /// One side left (or none): the game is over. With every last ship
     /// destroyed at once the side with initiative wins (core rules p.13).
     fn check_victory(&mut self) {
+        if self.mission.is_some() {
+            // Missions are won by their objectives only (p.21); a
+            // reinforcement waiting to be placed reopens Placement.
+            if let Some(w) = self.mission_winner() {
+                self.phase = Phase::GameOver;
+                self.winner = Some(w);
+            } else if self.ships.iter().any(|s| !s.destroyed && s.pose.is_none()) {
+                self.phase = Phase::Placement;
+            } else {
+                self.phase = Phase::Planning;
+            }
+            return;
+        }
         let alive = self.alive_teams();
         match alive.len() {
             0 => {
@@ -4579,8 +4677,11 @@ impl GameState {
         // (weapon, min range, max range, needs arc, requirement)
         // BTL-A4 Y-Wing: turret cards need the arc too.
         let arc_only = self.has_effect(content, a_idx, UpgradeEffect::TitleArcOnlyThenTurretAttack);
-        let mut weapons: Vec<(Option<UpgradeId>, u8, u8, bool, AttackRequirement)> =
-            vec![(None, 1, 3, !class.turret_primary, AttackRequirement::Free)];
+        let mut weapons: Vec<(Option<UpgradeId>, u8, u8, bool, AttackRequirement)> = Vec::new();
+        // A token "ship" without a primary weapon (the senator's shuttle).
+        if class.attack_dice > 0 {
+            weapons.push((None, 1, 3, !class.turret_primary, AttackRequirement::Free));
+        }
         for &u in &self.ships[a_idx].upgrades {
             if let Some(card) = content.upgrades.upgrade(u)
                 && let Some(sw) = card.attack
@@ -5552,6 +5653,11 @@ impl GameState {
             }
         }
 
+        // Mission 1: critical hits against the senator's shuttle are hits.
+        if self.mission.as_ref().is_some_and(|m| m.shuttle == Some(self.ships[d_idx].id)) {
+            hits += crits;
+            crits = 0;
+        }
         // Deal damage: hits before crits; shields absorb first. Only crits
         // reaching the hull are critical — each draws one effect from the
         // table (no card UI: immediates resolve now, the rest attach).
@@ -5702,6 +5808,13 @@ impl GameState {
         if seat < self.committed.len() {
             self.committed[seat] = true;
         }
+        if self.mission.is_some()
+            && let Some(w) = self.mission_winner()
+        {
+            self.phase = Phase::GameOver;
+            self.winner = Some(w);
+            return self.winner;
+        }
         let alive = self.alive_teams();
         if alive.len() >= 2 {
             return None;
@@ -5762,7 +5875,13 @@ impl GameState {
                         .map(|u| u.name.clone())
                         .collect(),
                     upgrade_ids: s.upgrades.clone(),
-                    pose: if own || self.phase != Phase::Placement { s.pose } else { None },
+                    // Setup placement is hidden; a mission reinforcement
+                    // is placed in the open.
+                    pose: if own || self.phase != Phase::Placement || self.turn > 1 {
+                        s.pose
+                    } else {
+                        None
+                    },
                     hull: s.hull,
                     shields: s.shields,
                     stress: s.stress,
@@ -5772,6 +5891,8 @@ impl GameState {
                     lock: s.lock,
                     crits: s.crits.clone(),
                     destroyed: s.destroyed,
+                    escaped: s.escaped,
+                    satellites: s.satellites,
                     on_asteroid: s.on_asteroid,
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
@@ -5788,6 +5909,327 @@ impl GameState {
     }
 }
 
+/// Mission rules (core rules p.21-24). See `mission.rs` for the data
+/// side; policies for the choices the rulebook leaves to a player are
+/// noted on each function.
+impl GameState {
+    /// Turn a freshly built game into a mission game: assign sides,
+    /// place the shuttle / satellites, mark the disabled ship, and give
+    /// the Empire the initiative on a points tie (p.21). Call after the
+    /// obstacles are placed. `points` is the squad size the host chose.
+    pub fn start_mission(
+        &mut self,
+        content: &Content,
+        kind: MissionKind,
+        points: u32,
+    ) -> Result<(), String> {
+        if self.sides() != 2 {
+            return Err("missions are played between two sides".into());
+        }
+        // The Rebel side is whichever side flies Rebel ships (side 0 if
+        // nobody does — an empty board is not a game anyway).
+        let rebel_side = self
+            .ships
+            .iter()
+            .find(|s| self.class_of(content, s).faction == Faction::RebelAlliance)
+            .map(|s| self.team(s.owner))
+            .unwrap_or(0);
+        let imperial_side = 1 - rebel_side;
+        let first_seat = |side: u8| {
+            PlayerId(self.teams.iter().position(|t| *t == side).unwrap_or(side as usize) as u32)
+        };
+        let mut state = MissionState {
+            kind,
+            rebel_side,
+            imperial_side,
+            shuttle: None,
+            disabled: None,
+            satellites: Vec::new(),
+            reinforced: Vec::new(),
+            spawned: 0,
+        };
+        let rebel_seat = Seat::for_side(rebel_side, 2);
+        match kind {
+            MissionKind::PoliticalEscort => {
+                let pilot = content
+                    .pilots
+                    .pilots
+                    .iter()
+                    .find(|p| p.xws == "senatorsshuttle")
+                    .ok_or("the senator's shuttle is missing from pilots.ron")?;
+                let class = content.ships.class(pilot.class).ok_or("shuttle class")?;
+                let id = ShipId(self.ships.len() as u32);
+                let mut shuttle = ShipState::new(
+                    id,
+                    first_seat(rebel_side),
+                    class.id,
+                    pilot.id,
+                    "Senator".into(),
+                    class.hull,
+                    kind.shuttle_shields(points),
+                );
+                shuttle.pose =
+                    Some(mission::shuttle_pose(&self.board, rebel_seat, class.footprint.length));
+                self.ships.push(shuttle);
+                state.shuttle = Some(id);
+            }
+            MissionKind::AsteroidRun => {
+                // "He chooses one of his ships": the first ship of the
+                // Rebel squad (the builder's order is the player's choice).
+                state.disabled =
+                    self.ships.iter().find(|s| self.team(s.owner) == rebel_side).map(|s| s.id);
+            }
+            MissionKind::DarkWhispers => {
+                let n = kind.satellite_count(points);
+                state.satellites = mission::satellite_positions(&self.board, rebel_seat, n)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, pos)| mission::Satellite {
+                        id: i as u32,
+                        pos,
+                        holder: None,
+                        supply: false,
+                    })
+                    .collect();
+            }
+        }
+        // Initiative: lowest squad total, ties to the Empire (p.21).
+        let side_total = |side: u8| -> u32 {
+            self.squad_totals
+                .iter()
+                .zip(&self.teams)
+                .filter(|(_, t)| **t == side)
+                .map(|(c, _)| *c)
+                .sum()
+        };
+        if side_total(rebel_side) == side_total(imperial_side) {
+            self.initiative = first_seat(imperial_side);
+        }
+        self.mission = Some(state);
+        Ok(())
+    }
+
+    /// Where `player` may place ships right now: the mission's zones,
+    /// or the standard deployment band.
+    pub fn deploy_zones(&self, player: PlayerId) -> Vec<mission::Rect> {
+        let own = self.seat_of(player);
+        match &self.mission {
+            None => vec![self.board.deploy_zone(own)],
+            Some(m) => {
+                let side = self.team(player);
+                let other = Seat::for_side(1 - side, 2);
+                mission::deploy_zones(
+                    m.kind,
+                    &self.board,
+                    m.faction_of_side(side),
+                    own,
+                    other,
+                    self.turn > 1,
+                )
+            }
+        }
+    }
+
+    /// The mission as the client shows it to `viewer`.
+    pub fn mission_view(&self, viewer: PlayerId) -> Option<MissionView> {
+        self.mission.as_ref().map(|m| MissionView {
+            kind: m.kind,
+            objective: m.kind.objective(m.faction_of_side(self.team(viewer))).to_string(),
+            satellites: m.satellites.clone(),
+            shuttle: m.shuttle,
+            disabled: m.disabled,
+        })
+    }
+
+    /// Why the game ended, for the Game Over message.
+    pub fn winner_reason(&self) -> String {
+        match (&self.mission, self.winner) {
+            (Some(m), Some(w)) => {
+                format!("{} — {}", m.kind.name(), m.kind.objective(m.faction_of_side(w)))
+            }
+            _ => "fleet destroyed".into(),
+        }
+    }
+
+    /// May the ship at `i`, leaving the board over `exit`, escape instead
+    /// of being destroyed (p.22-24 "not considered destroyed")?
+    fn mission_escape(&self, i: usize, exit: Seat) -> bool {
+        let Some(m) = &self.mission else { return false };
+        let ship = &self.ships[i];
+        let imperial_edge = Seat::for_side(m.imperial_side, 2);
+        let rebel_edge = Seat::for_side(m.rebel_side, 2);
+        match m.kind {
+            MissionKind::PoliticalEscort => m.shuttle == Some(ship.id) && exit == imperial_edge,
+            MissionKind::AsteroidRun => {
+                m.disabled == Some(ship.id)
+                    && self.turn >= mission::REPAIR_ROUND
+                    && (exit == rebel_edge || exit == imperial_edge)
+            }
+            MissionKind::DarkWhispers => {
+                self.team(ship.owner) == m.imperial_side
+                    && ship.satellites > 0
+                    && exit == imperial_edge
+                    && m.all_scanned()
+            }
+        }
+    }
+
+    /// Mission 3: an Imperial ship overlapping a satellite token, or
+    /// touching a Rebel ship that overlaps one, scans it instead of
+    /// attacking. Policy: always scan when possible (one token per
+    /// Combat phase). Returns the log line when a scan happened.
+    fn mission_scan(&mut self, content: &Content, a_idx: usize) -> Option<String> {
+        let m = self.mission.as_ref()?;
+        if m.kind != MissionKind::DarkWhispers
+            || self.team(self.ships[a_idx].owner) != m.imperial_side
+        {
+            return None;
+        }
+        let pose = self.ships[a_idx].pose?;
+        let fp = self.class_of(content, &self.ships[a_idx]).footprint;
+        let mine = rules::footprint_corners(pose, fp);
+        // Bases the scan may reach through: the ship's own, plus every
+        // touching Rebel base.
+        let mut reach = vec![mine];
+        for k in 0..self.ships.len() {
+            let other = &self.ships[k];
+            if k == a_idx || other.destroyed || self.team(other.owner) != m.rebel_side {
+                continue;
+            }
+            if let Some(p) = other.pose {
+                let oc = rules::footprint_corners(p, self.class_of(content, other).footprint);
+                if combat::base_distance(&mine, &oc) <= 1e-6 {
+                    reach.push(oc);
+                }
+            }
+        }
+        let sat = m.satellites.iter().position(|s| {
+            s.on_board() && reach.iter().any(|b| rules::obbs_overlap(b, &s.corners()))
+        })?;
+        let id = self.ships[a_idx].id;
+        let who = self.label(content, a_idx);
+        let m = self.mission.as_mut().expect("checked");
+        m.satellites[sat].holder = Some(id);
+        self.ships[a_idx].satellites += 1;
+        let left = m.satellites.iter().filter(|s| s.on_board()).count();
+        let num = m.satellites[sat].id + 1;
+        Some(format!(
+            "{who}: scans satellite {num} instead of attacking ({left} left on the board)"
+        ))
+    }
+
+    /// Who has fulfilled their objective (side index), if anyone.
+    fn mission_winner(&self) -> Option<u8> {
+        let m = self.mission.as_ref()?;
+        let ship = |id: Option<ShipId>| id.and_then(|id| self.ships.iter().find(|s| s.id == id));
+        let imperial_alive =
+            self.ships.iter().any(|s| !s.destroyed && self.team(s.owner) == m.imperial_side);
+        match m.kind {
+            MissionKind::PoliticalEscort => {
+                let shuttle = ship(m.shuttle)?;
+                if shuttle.escaped {
+                    Some(m.rebel_side)
+                } else if shuttle.destroyed {
+                    Some(m.imperial_side)
+                } else {
+                    None
+                }
+            }
+            MissionKind::AsteroidRun => {
+                let disabled = ship(m.disabled)?;
+                if disabled.escaped {
+                    Some(m.rebel_side)
+                } else if disabled.destroyed {
+                    Some(m.imperial_side)
+                } else {
+                    None
+                }
+            }
+            MissionKind::DarkWhispers => {
+                let carried_home = self.ships.iter().any(|s| {
+                    s.escaped && s.satellites > 0 && self.team(s.owner) == m.imperial_side
+                });
+                let in_supply = |s: &mission::Satellite| {
+                    s.supply
+                        || s.holder.is_some_and(|h| {
+                            self.ships.iter().any(|x| x.id == h && x.destroyed && !x.escaped)
+                        })
+                };
+                if carried_home {
+                    Some(m.imperial_side)
+                } else if m.satellites.iter().all(in_supply) || !imperial_alive {
+                    Some(m.rebel_side)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// End phase: satellites on destroyed ships go back to the supply,
+    /// and the reinforcing side gets one generic pilot per ship it lost
+    /// this round, to be placed before the next Planning phase
+    /// (policy: reinforcements are always called for).
+    fn mission_end_phase(&mut self, content: &Content, events: &mut Vec<String>) {
+        let Some(m) = &self.mission else { return };
+        let kind = m.kind;
+        for k in 0..m.satellites.len() {
+            let holder = self.mission.as_ref().expect("mission").satellites[k].holder;
+            if let Some(h) = holder
+                && self.ships.iter().any(|s| s.id == h && s.destroyed && !s.escaped)
+            {
+                let m = self.mission.as_mut().expect("mission");
+                m.satellites[k].holder = None;
+                m.satellites[k].supply = true;
+                events.push(format!("satellite {} returns to the supply", m.satellites[k].id + 1));
+            }
+        }
+        let (faction, pilot_xws, _) = kind.reinforcements();
+        let m = self.mission.as_ref().expect("mission");
+        let side = m.side_of(faction);
+        let lost: Vec<ShipId> = self
+            .ships
+            .iter()
+            .filter(|s| {
+                s.destroyed
+                    && !s.escaped
+                    && self.team(s.owner) == side
+                    && !m.reinforced.contains(&s.id)
+            })
+            .map(|s| s.id)
+            .collect();
+        if lost.is_empty() {
+            return;
+        }
+        let Some(pilot) = content.pilots.pilots.iter().find(|p| p.xws == pilot_xws) else {
+            return;
+        };
+        let Some(class) = content.ships.class(pilot.class) else { return };
+        let owner = PlayerId(self.teams.iter().position(|t| *t == side).unwrap_or(0) as u32);
+        for id in lost {
+            let m = self.mission.as_mut().expect("mission");
+            m.reinforced.push(id);
+            m.spawned += 1;
+            let n = m.spawned;
+            let callsign = format!("Reserve-{n}");
+            let ship = ShipState::new(
+                ShipId(self.ships.len() as u32),
+                owner,
+                class.id,
+                pilot.id,
+                callsign.clone(),
+                class.hull,
+                class.shields,
+            );
+            self.ships.push(ship);
+            events.push(format!(
+                "reinforcement: {} ({}) arrives as {callsign} — place it within Range 1 of the edge",
+                pilot.name, class.name
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5799,6 +6241,240 @@ mod tests {
     const XWING: ShipClassId = ShipClassId(2);
     const P0: PlayerId = PlayerId(0);
     const P1: PlayerId = PlayerId(1);
+
+    // ---------------- Missions (core rules p.21-24) ----------------
+
+    fn mission_game(c: &Content, kind: MissionKind, points: u32) -> GameState {
+        let rebel = mission::fixed_squad(c, kind, Faction::RebelAlliance).unwrap();
+        let imperial = mission::fixed_squad(c, kind, Faction::Empire).unwrap();
+        let mut gs =
+            GameState::from_squads(board(), c, &[&rebel, &imperial], &[0, 1], AttackFace::Blank)
+                .unwrap();
+        gs.start_mission(c, kind, points).unwrap();
+        gs
+    }
+
+    fn straight(c: &Content, class: ShipClassId, d: u8) -> u8 {
+        let set = c.ships.class(class).unwrap().maneuver_set;
+        let dial = &c.dials.set(set).unwrap().maneuvers;
+        dial.iter()
+            .position(|m| m.steer == crate::maneuver::Steer::Straight && m.distance == d)
+            .unwrap() as u8
+    }
+
+    const T65: ShipClassId = ShipClassId(11);
+    const SHUTTLE: ShipClassId = ShipClassId(12);
+
+    /// Every living ship flies the given straight; both seats commit.
+    fn fly_all(c: &Content, gs: &mut GameState, dist: u8) -> TurnRecords {
+        for i in 0..gs.ships.len() {
+            if gs.ships[i].destroyed || gs.ships[i].plan.is_some() {
+                continue;
+            }
+            let (owner, id, class) = (gs.ships[i].owner, gs.ships[i].id, gs.ships[i].class);
+            gs.plan_maneuver(c, owner, id, straight(c, class, dist)).unwrap();
+        }
+        gs.commit_plans(c, P0, &mut || 7).unwrap();
+        gs.commit_plans(c, P1, &mut || 7).unwrap().unwrap()
+    }
+
+    #[test]
+    fn political_escort_shuttle_protect_escape_and_reinforcements() {
+        let c = content();
+        let mut gs = mission_game(&c, MissionKind::PoliticalEscort, 100);
+        // Red Squadron Pilot (0) vs two Academy Pilots (1, 2); the shuttle
+        // (3) is the Rebels', already on the board at the centre of their
+        // edge, shields 6 at 100 points, and can neither act nor attack.
+        assert_eq!(gs.ships.len(), 4);
+        let sh = &gs.ships[3];
+        assert_eq!((sh.class, sh.owner, sh.shields, sh.hull), (SHUTTLE, P0, 6, 6));
+        let pose = sh.pose.unwrap();
+        assert!((pose.anchor.x - 10.0).abs() < 1e-9 && pose.anchor.y < mission::R1);
+        assert!(gs.action_bar(&c, sh).is_empty());
+        assert_eq!(gs.mission.as_ref().unwrap().shuttle, Some(ShipId(3)));
+        // Both sides deploy within Range 2 of their edge; the Empire has
+        // the initiative on the points tie.
+        assert_eq!(gs.deploy_zones(P0), vec![(0.0, 0.0, 20.0, 5.0)]);
+        assert_eq!(gs.deploy_zones(P1), vec![(0.0, 15.0, 20.0, 20.0)]);
+        assert_ne!(gs.squad_totals[0], gs.squad_totals[1]);
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(13.0, 2.0, FRAC_PI_2)).unwrap();
+        assert_eq!(
+            gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 14.0, -FRAC_PI_2)),
+            Err(Rejection::OutOfZone)
+        );
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 18.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 18.0, -FRAC_PI_2)).unwrap();
+        assert_eq!(gs.phase, Phase::Planning);
+        // Protect is a Rebel-only mission action; it needs Range 1 of the
+        // shuttle when performed. The shuttle's dial has speed 0-2 only.
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::Protect),
+            Err(Rejection::NotInThisMission)
+        );
+        assert!(gs.attack_options(&c, 3).is_empty());
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Protect).unwrap();
+        // One TIE is lost before the round resolves: the Empire gets an
+        // Academy Pilot to place within Range 1 of its edge.
+        gs.ships[1].destroyed = true;
+        gs.ships[1].hull = 0;
+        let rec = fly_all(&c, &mut gs, 2);
+        assert!(rec.events.iter().any(|e| e.contains("protect — evade token")), "{:?}", rec.events);
+        assert!(rec.events.iter().any(|e| e.contains("reinforcement: Academy Pilot")));
+        assert_eq!(gs.ships.len(), 5);
+        assert_eq!((gs.ships[4].owner, gs.ships[4].pose, gs.phase), (P1, None, Phase::Placement));
+        assert_eq!(gs.deploy_zones(P1), vec![(0.0, 17.5, 20.0, 20.0)]);
+        // Mid-game placement is in the open: the Rebel sees the TIE.
+        assert!(gs.snapshot_for(&c, P0)[2].pose.is_some());
+        assert_eq!(
+            gs.place_ship(&c, P1, ShipId(4), Pose::new(10.0, 16.0, -FRAC_PI_2)),
+            Err(Rejection::OutOfZone)
+        );
+        gs.place_ship(&c, P1, ShipId(4), Pose::new(3.0, 19.0, -FRAC_PI_2)).unwrap();
+        assert_eq!(gs.phase, Phase::Planning);
+        // Losing every Rebel fighter is not an Imperial win: the shuttle
+        // must die. Getting the shuttle off the Imperial edge wins.
+        gs.ships[0].destroyed = true;
+        gs.ships[3].pose = Some(Pose::new(10.0, 18.5, FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        let shuttle_move = rec.moves.iter().find(|m| m.ship == ShipId(3)).unwrap();
+        assert!(shuttle_move.destroyed && shuttle_move.escaped);
+        assert!(rec.events.iter().any(|e| e.contains("Senator: ESCAPED off the north edge")));
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(0)));
+        assert!(gs.winner_reason().contains("Political Escort"));
+
+        // Off any other edge the shuttle is destroyed: the Empire wins.
+        let mut gs = mission_game(&c, MissionKind::PoliticalEscort, 31);
+        assert_eq!(gs.ships[3].shields, 0, "no shields below 100 points");
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(13.0, 2.0, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 18.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 18.0, -FRAC_PI_2)).unwrap();
+        gs.ships[3].pose = Some(Pose::new(1.5, 4.0, std::f64::consts::PI));
+        let rec = fly_all(&c, &mut gs, 2);
+        let shuttle_move = rec.moves.iter().find(|m| m.ship == ShipId(3)).unwrap();
+        assert!(shuttle_move.destroyed && !shuttle_move.escaped);
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(1)));
+    }
+
+    #[test]
+    fn asteroid_run_disabled_ship_flies_slow_until_round_5_then_escapes() {
+        let c = content();
+        let mut gs = mission_game(&c, MissionKind::AsteroidRun, 100);
+        // Luke (0) vs Night Beast (1) and Mauler Mithel (2).
+        assert_eq!(gs.ships[0].class, T65);
+        assert_eq!(gs.mission.as_ref().unwrap().disabled, Some(ShipId(0)));
+        // Rebels deploy in the middle band, the Empire at either edge.
+        assert_eq!(gs.deploy_zones(P0), vec![(0.0, 7.5, 20.0, 12.5)]);
+        assert_eq!(gs.deploy_zones(P1), vec![(0.0, 17.5, 20.0, 20.0), (0.0, 0.0, 20.0, 2.5)]);
+        gs.obstacles.push(Obstacle {
+            id: 0,
+            kind: ObstacleKind::Asteroid,
+            center: Vec2::new(5.0, 10.0),
+            heading: 0.0,
+            shape: 0,
+        });
+        assert_eq!(
+            gs.place_ship(&c, P0, ShipId(0), Pose::new(7.0, 10.5, FRAC_PI_2)),
+            Err(Rejection::TooCloseToObstacle)
+        );
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(14.0, 10.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 1.5, FRAC_PI_2)).unwrap();
+        assert_eq!(gs.phase, Phase::Planning);
+        assert_eq!(
+            gs.plan_maneuver(&c, P0, ShipId(0), straight(&c, T65, 3)),
+            Err(Rejection::ShipDisabled)
+        );
+        gs.plan_maneuver(&c, P0, ShipId(0), straight(&c, T65, 2)).unwrap();
+        // Fleeing before Round 5 destroys the disabled ship: Imperial win.
+        gs.ships[0].pose = Some(Pose::new(10.0, 11.5, -FRAC_PI_2));
+        gs.turn = 4;
+        gs.ships[0].pose = Some(Pose::new(10.0, 1.5, -FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        let luke = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
+        assert!(luke.destroyed && !luke.escaped);
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(1)));
+
+        // From Round 5 the ship is repaired and may leave by either
+        // player's edge alive.
+        let mut gs = mission_game(&c, MissionKind::AsteroidRun, 100);
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(14.0, 10.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.turn = mission::REPAIR_ROUND;
+        gs.plan_maneuver(&c, P0, ShipId(0), straight(&c, T65, 3)).unwrap();
+        gs.ships[0].plan = None;
+        gs.ships[0].pose = Some(Pose::new(10.0, 1.5, -FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        assert!(rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap().escaped);
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(0)));
+    }
+
+    #[test]
+    fn dark_whispers_scans_satellites_and_carries_them_home() {
+        let c = content();
+        let mut gs = mission_game(&c, MissionKind::DarkWhispers, 100);
+        // Red Squadron Pilot (0) vs Black Squadron Pilot (1), Obsidian (2).
+        let sats = gs.mission.as_ref().unwrap().satellites.clone();
+        assert_eq!(sats.len(), 4);
+        assert!(sats.iter().all(|s| s.on_board() && s.pos.y < mission::R3));
+        assert_eq!(gs.deploy_zones(P0), vec![(0.0, 0.0, 20.0, 2.5)]);
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 1.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 19.0, -FRAC_PI_2)).unwrap();
+        // The Black Squadron TIE ends its move on satellite 1 and scans it
+        // instead of shooting; everyone else is out of range.
+        let s0 = sats[0].pos;
+        gs.ships[1].pose = Some(Pose::new(s0.x, s0.y - 1.5, FRAC_PI_2));
+        gs.ships[0].pose = Some(Pose::new(2.0, 13.0, FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        assert!(rec.events.iter().any(|e| e.contains("scans satellite 1")), "{:?}", rec.events);
+        assert!(rec.attacks.is_empty());
+        assert_eq!(gs.ships[1].satellites, 1);
+        assert_eq!(gs.mission.as_ref().unwrap().satellites[0].holder, Some(ShipId(1)));
+        // Leaving with satellites still on the board destroys the ship
+        // and returns its token to the supply; the game goes on.
+        gs.ships[1].pose = Some(Pose::new(10.0, 18.5, FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        let m1 = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert!(m1.destroyed && !m1.escaped);
+        assert!(rec.events.iter().any(|e| e.contains("satellite 1 returns to the supply")));
+        let sat0 = &gs.mission.as_ref().unwrap().satellites[0];
+        assert!(sat0.supply && sat0.holder.is_none());
+        assert_eq!((gs.phase, gs.winner), (Phase::Planning, None));
+        // Once every satellite has left the board, an Imperial ship
+        // carrying one flees off the Imperial edge alive: Imperial win.
+        {
+            let m = gs.mission.as_mut().unwrap();
+            for s in &mut m.satellites[1..] {
+                s.holder = Some(ShipId(2));
+            }
+        }
+        gs.ships[2].satellites = 3;
+        gs.ships[2].pose = Some(Pose::new(10.0, 18.5, FRAC_PI_2));
+        let rec = fly_all(&c, &mut gs, 2);
+        assert!(rec.moves.iter().find(|m| m.ship == ShipId(2)).unwrap().escaped);
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(1)));
+
+        // Every token back in the supply is a Rebel win; so is a Rebel
+        // loss answered by a Rookie Pilot reinforcement at the Rebel edge.
+        let mut gs = mission_game(&c, MissionKind::DarkWhispers, 60);
+        assert_eq!(gs.mission.as_ref().unwrap().satellites.len(), 2);
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 1.5, FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(5.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(15.0, 19.0, -FRAC_PI_2)).unwrap();
+        gs.ships[0].destroyed = true;
+        gs.ships[0].hull = 0;
+        let rec = fly_all(&c, &mut gs, 2);
+        assert!(rec.events.iter().any(|e| e.contains("reinforcement: Rookie Pilot")));
+        assert_eq!((gs.ships[3].owner, gs.ships[3].class, gs.phase), (P0, T65, Phase::Placement));
+        assert_eq!(gs.deploy_zones(P0), vec![(0.0, 0.0, 20.0, 2.5)]);
+        gs.place_ship(&c, P0, ShipId(3), Pose::new(10.0, 1.5, FRAC_PI_2)).unwrap();
+        for s in &mut gs.mission.as_mut().unwrap().satellites {
+            s.supply = true;
+        }
+        fly_all(&c, &mut gs, 2);
+        assert_eq!((gs.phase, gs.winner), (Phase::GameOver, Some(0)));
+    }
 
     fn content() -> Content {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/data");

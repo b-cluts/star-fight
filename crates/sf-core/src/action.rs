@@ -120,6 +120,9 @@ pub enum PlannedAction {
     /// Lieutenant Lorrir: a barrel roll with a bank-1 template to `side`,
     /// bending toward the ship's front (`true`) or rear, for a stress.
     BarrelRollBank(Side, bool),
+    /// Mission 1 (Political Escort): a Rebel ship within Range 1 of the
+    /// senator's shuttle puts an evade token on it.
+    Protect,
 }
 
 impl PlannedAction {
@@ -137,6 +140,7 @@ impl PlannedAction {
             PlannedAction::CardAction(_) => None,
             PlannedAction::CardActionAt(..) => None,
             PlannedAction::BarrelRollBank(..) => Some(ActionKind::BarrelRoll),
+            PlannedAction::Protect => None,
         }
     }
 }

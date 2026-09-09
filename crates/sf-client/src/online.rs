@@ -297,6 +297,8 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         lock: None,
         crits: Vec::new(),
         destroyed: false,
+        escaped: false,
+        satellites: 0,
         on_asteroid: false,
         plan: None,
         planned_action: None,
@@ -1745,6 +1747,7 @@ fn action_name(game: &Game, snap: Option<&Snap>, a: PlannedAction) -> String {
         PlannedAction::BarrelRollFar(Side::Right) => "Far Roll R".into(),
         PlannedAction::CardAction(card) => format!("{} action", card_name(game, card)),
         PlannedAction::CardActionAt(card, _) => format!("{} at obstacle", card_name(game, card)),
+        PlannedAction::Protect => "Protect the shuttle".into(),
         PlannedAction::BarrelRollBank(side, forward) => format!(
             "Bank roll {} {}",
             if side == Side::Left { "L" } else { "R" },

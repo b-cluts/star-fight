@@ -11,6 +11,7 @@ pub mod dice;
 pub mod game;
 pub mod geometry;
 pub mod maneuver;
+pub mod mission;
 pub mod obstacle;
 pub mod pilot;
 pub mod rules;

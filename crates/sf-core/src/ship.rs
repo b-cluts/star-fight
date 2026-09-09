@@ -193,6 +193,59 @@ pub struct ShipState {
     /// Active (faceup) critical effects — public information.
     pub crits: Vec<crate::crit::CritEffect>,
     pub destroyed: bool,
+    /// Left the board alive under a mission rule (still `destroyed` for
+    /// every other purpose: it takes no further part in the game).
+    #[serde(default)]
+    pub escaped: bool,
+    /// Satellite tokens carried (mission 3, "Dark Whispers").
+    #[serde(default)]
+    pub satellites: u8,
+}
+
+impl ShipState {
+    /// A fresh, unplaced ship with no tokens, upgrades or damage.
+    pub fn new(
+        id: ShipId,
+        owner: PlayerId,
+        class: ShipClassId,
+        pilot: crate::pilot::PilotId,
+        callsign: String,
+        hull: u8,
+        shields: u8,
+    ) -> Self {
+        Self {
+            id,
+            owner,
+            class,
+            pilot,
+            upgrades: Vec::new(),
+            callsign,
+            pose: None,
+            hull,
+            shields,
+            stress: 0,
+            plan: None,
+            planned_action: None,
+            planned_action2: None,
+            card_actions: Vec::new(),
+            bomb: None,
+            shield_lost_round: false,
+            on_asteroid: false,
+            used_round: Vec::new(),
+            ordnance: Vec::new(),
+            tractor: 0,
+            stored_focus: 0,
+            lingers: false,
+            focus: 0,
+            evade: 0,
+            ion: 0,
+            lock: None,
+            crits: Vec::new(),
+            destroyed: false,
+            escaped: false,
+            satellites: 0,
+        }
+    }
 }
 
 /// Longest accepted callsign (characters).

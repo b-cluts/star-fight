@@ -78,9 +78,20 @@ pub fn placement_legal(
     fp: Footprint,
     placed: &[(ShipId, Pose, Footprint)],
 ) -> Result<(), PlacementError> {
+    placement_legal_in(&[board.deploy_zone(seat)], pose, fp, placed)
+}
+
+/// As `placement_legal`, for an explicit set of zones (missions deploy
+/// in bands the standard rules do not use): the base must lie wholly
+/// inside one of them.
+pub fn placement_legal_in(
+    zones: &[(f64, f64, f64, f64)],
+    pose: Pose,
+    fp: Footprint,
+    placed: &[(ShipId, Pose, Footprint)],
+) -> Result<(), PlacementError> {
     let corners = footprint_corners(pose, fp);
-    let (x0, y0, x1, y1) = board.deploy_zone(seat);
-    if !corners_within(&corners, x0, y0, x1, y1) {
+    if !zones.iter().any(|&(x0, y0, x1, y1)| corners_within(&corners, x0, y0, x1, y1)) {
         return Err(PlacementError::OutOfZone);
     }
     for &(id, other_pose, other_fp) in placed {
