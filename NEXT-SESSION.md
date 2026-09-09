@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (182 tests),
+`cargo build` clean, `cargo test --workspace` green (193 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -231,13 +231,40 @@ and Server `ws://127.0.0.1:7777`.
       protocol 3, commit faaf170 "Version 0.4.0"; release zips from the
       `v*` workflow). Still unplaytested on screen: the setup screen,
       the second-action keys, the black hole pull, the torpedo pick and
-      Lorrir's keys — ask the user for feedback next session. NEXT
-      candidates (user asked "what else?" 2026-09-09): glossary marks
-      the bomb cards / Extra Munitions / Snap Shot as not automated
-      because they resolve outside `implemented()` (quick fix);
-      multi-player seats (unblocks scenarios/campaigns; protocol
-      change); remaining pilot abilities (26) and crew/system upgrade
-      effects (~70).
+      Lorrir's keys — ask the user for feedback next session.
+      >>> RESUME HERE (session stopped 2026-09-09 at the usage limit):
+      upgrade-effect batches 1 and 2 are DONE (commits 0c80143,
+      85bf2e1; 193 tests; `used_round` once-per-round bookkeeping,
+      `ordnance` tokens, `Shot.focus_hit`, `auto_lock`,
+      `after_attack_cards`, `after_reposition_cards`). NEXT = batch 3,
+      planned but NOT started (no code written): Royal Guard TIE (+1
+      Modification slot) and TIE/x1 (+System slot, system cost −4) in
+      squad.rs validate_squad/ship_cost; R3-A2 (stress both when the
+      defender is in arc, attacker unstressed); A Score to Settle (mark
+      the most expensive enemy like Agent Kallus — refactor
+      `kallus_target` into `marked_enemy(effect)`, focus→crit); Tractor
+      Beam (`ShipState.tractor`, agility −1 per token, cleared in the
+      End phase); BTL-A4 title (turrets need arc; after a primary
+      attack a turret follow-up via `fire()` like Gunner); Rey
+      (`stored_focus`: store one at the End phase, return it at combat
+      start); Leia (`GameState.white_reds: [bool; 2]`, discard at
+      Activation start when a friend planned red; `maneuver_difficulty`
+      turns Hard into Normal); Navigator / Stay on Target (auto-rotate
+      the dial only when the planned maneuver would leave the board or
+      bump: same bearing / same speed flown red — insert after the
+      `obstacles` vec in resolve_movement); card actions for K: Fleet
+      Officer, Squad Leader (friend at R1-2 with lower PS gets a focus),
+      R7-T1 (lock if inside the enemy's arc, then a straight boost) in
+      perform_action's CardAction arm, and dice card actions Lando
+      (2 defense dice → tokens), Saboteur (attack die → faceup card on
+      an enemy at R1 with facedown cards), R5-D8 (defense die → discard
+      a facedown card) via a `dice_card_action` branch in the main
+      action step (like fire_seismic_torpedo). Then the 26 pilot
+      abilities. Skipped on purpose (need a player choice or a bigger
+      refactor): Electronic Baffle, Weapons Engineer (two locks), Jan
+      Ors, Lightning Reflexes, Millennium Falcon title, Daredevil,
+      Experimental Interface, Snap Shot, Decoy, Hyperwave Comm Scanner,
+      Intelligence Agent. Also still open: multi-player seats.
       Skip: player-placed obstacles (user decision). ~~Defender policies (Elusiveness,
       R7) and damage-card riders~~ DONE (see 4.d second batch).
       ~~Second action / template choice~~ DONE 2026-09-09, PROTOCOL 3
