@@ -1,0 +1,24 @@
+// Scenario presets offered to the host before a game. Numbers may be
+// adjusted on the setup screen; `players` other than 2 is reserved.
+(
+    scenarios: [
+        (id: "dogfight", name: "Standard dogfight",
+         description: "100-point squads on a 20x20 board with six asteroids scattered by the rules' spacing.",
+         asteroids: 6),
+        (id: "open", name: "Open space",
+         description: "No obstacles at all: pure maneuver and gunnery.",
+         asteroids: 0),
+        (id: "dense", name: "Dense asteroid field",
+         description: "Ten asteroids; every approach has to thread rocks.",
+         asteroids: 10),
+        (id: "debris", name: "Debris run",
+         description: "Three asteroids and three debris clouds: debris stresses ships that cross it instead of costing the action.",
+         asteroids: 3, debris: 3),
+        (id: "skirmish", name: "Skirmish (60 points)",
+         description: "Small squads for a quick game; three asteroids.",
+         points: 60, asteroids: 3),
+        (id: "grand", name: "Grand battle (150 points)",
+         description: "Big squads on a 24x24 board with eight asteroids.",
+         points: 150, asteroids: 8, board_width: 24, board_height: 24),
+    ],
+)

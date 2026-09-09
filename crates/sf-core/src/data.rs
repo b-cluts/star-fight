@@ -42,6 +42,20 @@ pub struct Content {
     /// Tokens, actions, damage cards and rules terms for the in-game
     /// glossary (`glossary.ron`).
     pub glossary: GlossaryDb,
+    /// Scenario presets for the host's setup screen (`scenarios.ron`).
+    pub scenarios: ScenarioDb,
+}
+
+/// Contents of `assets/data/scenarios.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioDb {
+    pub scenarios: Vec<crate::scenario::Scenario>,
+}
+
+impl ScenarioDb {
+    pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
+        parser().from_str(s)
+    }
 }
 
 /// Which glossary tab an entry belongs to.
@@ -79,6 +93,7 @@ impl Content {
         pilots: &str,
         upgrades: &str,
         glossary: &str,
+        scenarios: &str,
     ) -> Result<Self, ron::error::SpannedError> {
         Ok(Self {
             ships: ShipDb::from_ron(ships)?,
@@ -86,10 +101,11 @@ impl Content {
             pilots: PilotDb::from_ron(pilots)?,
             upgrades: UpgradeDb::from_ron(upgrades)?,
             glossary: GlossaryDb::from_ron(glossary)?,
+            scenarios: ScenarioDb::from_ron(scenarios)?,
         })
     }
 
-    /// Read the five data files from a directory.
+    /// Read the six data files from a directory.
     pub fn load_dir(dir: &str) -> Result<Self, String> {
         let read = |name: &str| {
             std::fs::read_to_string(format!("{dir}/{name}"))
@@ -101,6 +117,7 @@ impl Content {
             &read("pilots.ron")?,
             &read("upgrades.ron")?,
             &read("glossary.ron")?,
+            &read("scenarios.ron")?,
         )
         .map_err(|e| format!("parse data in {dir}: {e}"))
     }
