@@ -58,74 +58,74 @@ pub enum PilotAbility {
     /// Nien Nunb: when you receive a stress token, if there is an enemy
     /// ship inside your firing arc at Range 1, you may discard it.
     DiscardStressIfEnemyInArcRange1,
-    /// "Snap" Wexley: after you execute a 2-, 3-, or 4-speed maneuver, if
+    /// Snap Wexley: after you execute a 2-, 3-, or 4-speed maneuver, if
     /// you are not touching a ship, you may perform a free boost action.
     FreeBoostAfterSpeed2To4,
-    /// "Red Ace": the first time you remove a shield token each round,
+    /// Red Ace: the first time you remove a shield token each round,
     /// assign 1 evade token to your ship.
     EvadeOnFirstShieldLoss,
-    /// "Blue Ace": when performing a boost action, you may use the left
+    /// Blue Ace: when performing a boost action, you may use the left
     /// or right turn 1 template.
     BoostWithTurnTemplate,
     /// Jess Pava: when attacking or defending, you may reroll 1 die for
     /// each other friendly ship at Range 1.
     RerollPerFriendlyRange1,
     // ---- TIE/ln ----
-    /// "Howlrunner": when another friendly ship at Range 1 attacks with
+    /// Howlrunner: when another friendly ship at Range 1 attacks with
     /// its primary weapon, it may reroll 1 attack die.
     FriendlyRerollAttackRange1,
-    /// "Mauler Mithel": when attacking at Range 1, roll 1 additional
+    /// Mauler Mithel: when attacking at Range 1, roll 1 additional
     /// attack die.
     ExtraAttackDieAtRange1,
-    /// "Backstabber": when attacking from outside the defender's firing
+    /// Backstabber: when attacking from outside the defender's firing
     /// arc, roll 1 additional attack die.
     ExtraAttackDieOutsideDefenderArc,
-    /// "Dark Curse": when defending, ships attacking you cannot spend
+    /// Dark Curse: when defending, ships attacking you cannot spend
     /// focus tokens or reroll attack dice.
     DefenderDeniesFocusAndRerolls,
     /// Scourge: when attacking a defender that has 1 or more Damage
     /// cards, roll 1 additional attack die.
     ExtraAttackDieVsDamaged,
-    /// "Night Beast": after executing a green maneuver, you may perform a
+    /// Night Beast: after executing a green maneuver, you may perform a
     /// free focus action.
     FreeFocusAfterGreen,
-    /// "Youngster": friendly TIE fighters at Range 1-3 may perform the
+    /// Youngster: friendly TIE fighters at Range 1-3 may perform the
     /// action on your equipped Elite Pilot Talent card as their action.
     ShareTalentAction,
-    /// "Wampa": when attacking, you may cancel all dice results; if you
+    /// Wampa: when attacking, you may cancel all dice results; if you
     /// cancel a critical result, deal 1 facedown Damage card to the
     /// defender.
     CancelAllForFacedownDamage,
-    /// "Chaser": when another friendly ship at Range 1 spends a focus
+    /// Chaser: when another friendly ship at Range 1 spends a focus
     /// token, assign a focus token to your ship.
     FocusWhenFriendlySpendsFocusRange1,
-    /// "Winged Gundark": when attacking at Range 1, you may change 1 of
+    /// Winged Gundark: when attacking at Range 1, you may change 1 of
     /// your hit results to a critical hit result.
     HitToCritAtRange1,
     // ---- TIE/fo ----
-    /// "Omega Ace": when attacking, you may spend a target lock and a
+    /// Omega Ace: when attacking, you may spend a target lock and a
     /// focus token to change all of your dice results to critical hits.
     SpendLockAndFocusForAllCrits,
-    /// "Epsilon Leader": at the start of the Combat phase, remove 1 stress
+    /// Epsilon Leader: at the start of the Combat phase, remove 1 stress
     /// token from each friendly ship at Range 1.
     RemoveStressFriendlyRange1AtCombatStart,
-    /// "Zeta Ace": when performing a barrel roll, you may use the
+    /// Zeta Ace: when performing a barrel roll, you may use the
     /// straight 2 template instead of the straight 1 template.
     BarrelRollWithStraight2,
-    /// "Omega Leader": enemy ships you have locked cannot modify any dice
+    /// Omega Leader: enemy ships you have locked cannot modify any dice
     /// when attacking you or defending against your attacks.
     LockedEnemiesCannotModifyDice,
-    /// "Zeta Leader": when attacking, if you are not stressed, you may
+    /// Zeta Leader: when attacking, if you are not stressed, you may
     /// receive 1 stress token to roll 1 additional attack die.
     StressForExtraAttackDie,
-    /// "Epsilon Ace": while you have no Damage cards, treat your pilot
+    /// Epsilon Ace: while you have no Damage cards, treat your pilot
     /// skill as 12.
     SkillTwelveWhileUndamaged,
     // ---- BTL-A4 Y-Wing ----
     /// Horton Salm: when attacking at Range 2-3, you may reroll any of
     /// your blank results.
     RerollBlanksAtRange2To3,
-    /// "Dutch" Vander: after acquiring a target lock, choose another
+    /// Dutch Vander: after acquiring a target lock, choose another
     /// friendly ship at Range 1-2; that ship may immediately acquire a
     /// target lock.
     FriendlyLockAfterLock,
@@ -174,7 +174,7 @@ pub enum PilotAbility {
     /// Captain Jonus: when another friendly ship at Range 1 attacks with
     /// a secondary weapon, it may reroll up to 2 attack dice.
     FriendlySecondaryReroll2AtRange1,
-    /// "Deathfire": when you reveal your maneuver dial or after you
+    /// Deathfire: when you reveal your maneuver dial or after you
     /// perform an action, you may perform a Bomb Upgrade card action as
     /// a free action.
     FreeBombActionOnRevealOrAction,
@@ -215,7 +215,7 @@ pub enum PilotAbility {
     /// Kir Kanos: when attacking at Range 2-3, you may spend 1 evade
     /// token to add 1 hit result to your roll.
     SpendEvadeForHitAtRange2To3,
-    /// "Fel's Wrath": when the number of Damage cards assigned to you
+    /// Fel's Wrath: when the number of Damage cards assigned to you
     /// equals or exceeds your hull value, you are not destroyed until
     /// the end of the Combat phase.
     SurviveUntilEndOfCombat,
@@ -250,70 +250,70 @@ impl PilotAbility {
                 "Nien Nunb: when you receive a stress token, if there is an enemy ship inside your firing arc at Range 1, you may discard it."
             }
             PilotAbility::FreeBoostAfterSpeed2To4 => {
-                "\"Snap\" Wexley: after you execute a 2-, 3-, or 4-speed maneuver, if you are not touching a ship, you may perform a free boost action."
+                "Snap Wexley: after you execute a 2-, 3-, or 4-speed maneuver, if you are not touching a ship, you may perform a free boost action."
             }
             PilotAbility::EvadeOnFirstShieldLoss => {
-                "\"Red Ace\": the first time you remove a shield token each round, assign 1 evade token to your ship."
+                "Red Ace: the first time you remove a shield token each round, assign 1 evade token to your ship."
             }
             PilotAbility::BoostWithTurnTemplate => {
-                "\"Blue Ace\": when performing a boost action, you may use the left or right turn 1 template."
+                "Blue Ace: when performing a boost action, you may use the left or right turn 1 template."
             }
             PilotAbility::RerollPerFriendlyRange1 => {
                 "Jess Pava: when attacking or defending, you may reroll 1 die for each other friendly ship at Range 1."
             }
             PilotAbility::FriendlyRerollAttackRange1 => {
-                "\"Howlrunner\": when another friendly ship at Range 1 attacks with its primary weapon, it may reroll 1 attack die."
+                "Howlrunner: when another friendly ship at Range 1 attacks with its primary weapon, it may reroll 1 attack die."
             }
             PilotAbility::ExtraAttackDieAtRange1 => {
-                "\"Mauler Mithel\": when attacking at Range 1, roll 1 additional attack die."
+                "Mauler Mithel: when attacking at Range 1, roll 1 additional attack die."
             }
             PilotAbility::ExtraAttackDieOutsideDefenderArc => {
-                "\"Backstabber\": when attacking from outside the defender's firing arc, roll 1 additional attack die."
+                "Backstabber: when attacking from outside the defender's firing arc, roll 1 additional attack die."
             }
             PilotAbility::DefenderDeniesFocusAndRerolls => {
-                "\"Dark Curse\": when defending, ships attacking you cannot spend focus tokens or reroll attack dice."
+                "Dark Curse: when defending, ships attacking you cannot spend focus tokens or reroll attack dice."
             }
             PilotAbility::ExtraAttackDieVsDamaged => {
                 "Scourge: when attacking a defender that has 1 or more Damage cards, roll 1 additional attack die."
             }
             PilotAbility::FreeFocusAfterGreen => {
-                "\"Night Beast\": after executing a green maneuver, you may perform a free focus action."
+                "Night Beast: after executing a green maneuver, you may perform a free focus action."
             }
             PilotAbility::ShareTalentAction => {
-                "\"Youngster\": friendly TIE fighters at Range 1-3 may perform the action on your equipped Elite Pilot Talent card as their action."
+                "Youngster: friendly TIE fighters at Range 1-3 may perform the action on your equipped Elite Pilot Talent card as their action."
             }
             PilotAbility::CancelAllForFacedownDamage => {
-                "\"Wampa\": when attacking, you may cancel all dice results; if you cancel a critical result, deal 1 facedown Damage card to the defender."
+                "Wampa: when attacking, you may cancel all dice results; if you cancel a critical result, deal 1 facedown Damage card to the defender."
             }
             PilotAbility::FocusWhenFriendlySpendsFocusRange1 => {
-                "\"Chaser\": when another friendly ship at Range 1 spends a focus token, assign a focus token to your ship."
+                "Chaser: when another friendly ship at Range 1 spends a focus token, assign a focus token to your ship."
             }
             PilotAbility::HitToCritAtRange1 => {
-                "\"Winged Gundark\": when attacking at Range 1, you may change 1 of your hit results to a critical hit result."
+                "Winged Gundark: when attacking at Range 1, you may change 1 of your hit results to a critical hit result."
             }
             PilotAbility::SpendLockAndFocusForAllCrits => {
-                "\"Omega Ace\": when attacking, you may spend a target lock and a focus token to change all of your dice results to critical hits."
+                "Omega Ace: when attacking, you may spend a target lock and a focus token to change all of your dice results to critical hits."
             }
             PilotAbility::RemoveStressFriendlyRange1AtCombatStart => {
-                "\"Epsilon Leader\": at the start of the Combat phase, remove 1 stress token from each friendly ship at Range 1."
+                "Epsilon Leader: at the start of the Combat phase, remove 1 stress token from each friendly ship at Range 1."
             }
             PilotAbility::BarrelRollWithStraight2 => {
-                "\"Zeta Ace\": when performing a barrel roll, you may use the straight 2 template instead of the straight 1 template."
+                "Zeta Ace: when performing a barrel roll, you may use the straight 2 template instead of the straight 1 template."
             }
             PilotAbility::LockedEnemiesCannotModifyDice => {
-                "\"Omega Leader\": enemy ships you have locked cannot modify any dice when attacking you or defending against your attacks."
+                "Omega Leader: enemy ships you have locked cannot modify any dice when attacking you or defending against your attacks."
             }
             PilotAbility::StressForExtraAttackDie => {
-                "\"Zeta Leader\": when attacking, if you are not stressed, you may receive 1 stress token to roll 1 additional attack die."
+                "Zeta Leader: when attacking, if you are not stressed, you may receive 1 stress token to roll 1 additional attack die."
             }
             PilotAbility::SkillTwelveWhileUndamaged => {
-                "\"Epsilon Ace\": while you have no Damage cards, treat your pilot skill as 12."
+                "Epsilon Ace: while you have no Damage cards, treat your pilot skill as 12."
             }
             PilotAbility::RerollBlanksAtRange2To3 => {
                 "Horton Salm: when attacking at Range 2-3, you may reroll any of your blank results."
             }
             PilotAbility::FriendlyLockAfterLock => {
-                "\"Dutch\" Vander: after acquiring a target lock, choose another friendly ship at Range 1-2; that ship may immediately acquire a target lock."
+                "Dutch Vander: after acquiring a target lock, choose another friendly ship at Range 1-2; that ship may immediately acquire a target lock."
             }
             PilotAbility::ActionsWhileStressed => {
                 "Tycho Celchu: you may perform actions even while you have stress tokens."
@@ -355,7 +355,7 @@ impl PilotAbility {
                 "Captain Jonus: when another friendly ship at Range 1 attacks with a secondary weapon, it may reroll up to 2 attack dice."
             }
             PilotAbility::FreeBombActionOnRevealOrAction => {
-                "\"Deathfire\": when you reveal your maneuver dial or after you perform an action, you may perform a Bomb Upgrade card action as a free action."
+                "Deathfire: when you reveal your maneuver dial or after you perform an action, you may perform a Bomb Upgrade card action as a free action."
             }
             PilotAbility::TwoActions => {
                 "Darth Vader: during your \"Perform Action\" step, you may perform 2 actions."
@@ -391,7 +391,7 @@ impl PilotAbility {
                 "Kir Kanos: when attacking at Range 2-3, you may spend 1 evade token to add 1 hit result to your roll."
             }
             PilotAbility::SurviveUntilEndOfCombat => {
-                "\"Fel's Wrath\": when the number of Damage cards assigned to you equals or exceeds your hull value, you are not destroyed until the end of the Combat phase."
+                "Fel's Wrath: when the number of Damage cards assigned to you equals or exceeds your hull value, you are not destroyed until the end of the Combat phase."
             }
             PilotAbility::BarrelRollWithBank1ForStress => {
                 "Lieutenant Lorrir: when performing a barrel roll, you may receive 1 stress token to use the bank 1 templates instead of straight 1."
@@ -446,7 +446,7 @@ pub struct Pilot {
     pub class: ShipClassId,
     pub name: String,
     /// XWS identifier (application-neutral card id, e.g. "howlrunner",
-    /// "poedameron-swx57"); also the card image file stem.
+    /// poedameron-swx57); also the card image file stem.
     pub xws: String,
     /// Named pilots: at most one copy per squad.
     pub unique: bool,
