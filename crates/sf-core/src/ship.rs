@@ -163,6 +163,9 @@ pub struct ShipState {
     /// Ended its maneuver on an asteroid: cannot attack this round.
     #[serde(default)]
     pub on_asteroid: bool,
+    /// Cards whose once-per-round effect has been used this round.
+    #[serde(default)]
+    pub used_round: Vec<crate::upgrade::UpgradeId>,
     /// Focus tokens (public). Cleared in the End phase.
     pub focus: u8,
     /// Evade tokens (public). Cleared in the End phase.

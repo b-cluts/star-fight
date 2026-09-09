@@ -225,6 +225,13 @@ pub struct SeismicBlast {
     pub detonation: Detonation,
 }
 
+/// What an attack did, for the after-attack card effects.
+#[derive(Debug, Clone, Copy)]
+struct AttackOutcome {
+    landed: bool,
+    lock_spent: bool,
+}
+
 /// One resolved attack in the Combat phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttackRecord {
@@ -508,6 +515,7 @@ impl GameState {
                     card_actions: Vec::new(),
                     shield_lost_round: false,
                     on_asteroid: false,
+                    used_round: Vec::new(),
                     focus: 0,
                     evade: 0,
                     ion: 0,
@@ -742,6 +750,80 @@ impl GameState {
             .iter()
             .copied()
             .find(|u| content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(e))
+    }
+
+    /// Use a once-per-round card effect on ship `i`: the card if it is
+    /// carried and unused this round (now marked used), else None.
+    fn use_once(&mut self, content: &Content, i: usize, e: UpgradeEffect) -> Option<UpgradeId> {
+        let card = self.ships[i].upgrades.iter().copied().find(|u| {
+            content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(e)
+                && !self.ships[i].used_round.contains(u)
+        })?;
+        self.ships[i].used_round.push(card);
+        Some(card)
+    }
+
+    /// Agent Kallus: the enemy chosen at the start of the game — the
+    /// most expensive one (lowest id on a tie), chosen once and for all.
+    fn kallus_target(&self, content: &Content, i: usize) -> Option<ShipId> {
+        if !self.has_effect(content, i, UpgradeEffect::CrewChosenEnemyFocusToHitOrEvade) {
+            return None;
+        }
+        self.ships
+            .iter()
+            .filter(|s| s.owner != self.ships[i].owner)
+            .max_by_key(|s| {
+                (content.pilots.pilot(s.pilot).map(|p| p.cost).unwrap_or(0), u32::MAX - s.id.0)
+            })
+            .map(|s| s.id)
+    }
+
+    /// Is ship `i` touching (bases in contact with) an enemy ship that
+    /// carries Intimidation?
+    fn touching_intimidator(&self, content: &Content, i: usize) -> bool {
+        let Some(p) = self.ships[i].pose else { return false };
+        let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
+        (0..self.ships.len()).any(|k| {
+            let s = &self.ships[k];
+            s.owner != self.ships[i].owner
+                && !s.destroyed
+                && self.has_effect(content, k, UpgradeEffect::ReduceAgilityWhileTouching)
+                && s.pose.is_some_and(|q| {
+                    let theirs = rules::footprint_corners(q, self.class_of(content, s).footprint);
+                    combat::base_distance(&mine, &theirs) <= 0.0
+                })
+        })
+    }
+
+    /// Swarm Leader: up to two other friends with the defender in arc at
+    /// Range 1-3 each give up an evade token for one more attack die.
+    fn swarm_leader_dice(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        d_idx: usize,
+        events: &mut Vec<String>,
+    ) -> u8 {
+        let friends: Vec<usize> = (0..self.ships.len())
+            .filter(|&f| {
+                f != a_idx
+                    && self.ships[f].owner == self.ships[a_idx].owner
+                    && !self.ships[f].destroyed
+                    && self.ships[f].evade > 0
+                    && self.range_between(content, f, d_idx).is_some()
+                    && self.ship_in_front_arc(content, f, d_idx)
+            })
+            .take(2)
+            .collect();
+        for &f in &friends {
+            self.ships[f].evade -= 1;
+            events.push(format!(
+                "{}: Swarm Leader — {} gives up an evade token, +1 attack die",
+                self.label(content, a_idx),
+                self.label(content, f)
+            ));
+        }
+        friends.len() as u8
     }
 
     fn discard_card(&mut self, content: &Content, i: usize, card: UpgradeId, why: &str) -> String {
@@ -1022,6 +1104,35 @@ impl GameState {
                 "{}: R7 Astromech — lock spent, attacker rerolls {n} dice",
                 self.label(content, d_idx)
             ));
+        }
+        // M9-G8: every ship holding a lock on the attacker with the
+        // astromech forces one reroll — an enemy picks the best die, a
+        // friend (locked on purpose) a blank.
+        let attacker = self.ships[a_idx].id;
+        let holders: Vec<usize> = (0..self.ships.len())
+            .filter(|&k| {
+                !self.ships[k].destroyed
+                    && self.ships[k].lock == Some(attacker)
+                    && self.has_effect(content, k, UpgradeEffect::ForceRerollLockedAttacker)
+            })
+            .collect();
+        for k in holders {
+            let enemy = self.ships[k].owner != self.ships[a_idx].owner;
+            let pick = if enemy {
+                faces
+                    .iter()
+                    .position(|f| *f == AttackFace::Crit)
+                    .or_else(|| faces.iter().position(|f| *f == AttackFace::Hit))
+            } else {
+                faces.iter().position(|f| *f == AttackFace::Blank)
+            };
+            if let Some(p) = pick {
+                faces[p] = AttackFace::from_d8(roll());
+                events.push(format!(
+                    "{}: M9-G8 — the locked attacker rerolls a die",
+                    self.label(content, k)
+                ));
+            }
         }
     }
 
@@ -1407,6 +1518,142 @@ impl GameState {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Crew, talent and system effects that trigger after an attack:
+    /// Tactician, Ruthlessness, Darth Vader (crew), Fire-Control System,
+    /// R5-K6 and Operations Specialist.
+    fn after_attack_cards(
+        &mut self,
+        content: &Content,
+        a_idx: usize,
+        shot: Shot,
+        outcome: AttackOutcome,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        let Shot { d_idx, range, .. } = shot;
+        let defender = self.ships[d_idx].id;
+        let who = self.label(content, a_idx);
+        // Tactician: a target at Range 2 inside the arc is stressed.
+        if range == 2
+            && !self.ships[d_idx].destroyed
+            && self.has_effect(content, a_idx, UpgradeEffect::CrewStressTargetAtRange2InArc)
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+        {
+            events.push(format!("{who}: Tactician — {} is stressed", self.label(content, d_idx)));
+            self.gain_stress(content, d_idx, events);
+        }
+        // Ruthlessness: after a hit, another ship at Range 1 of the
+        // defender suffers 1 damage — an enemy if there is one, else a
+        // friend (the card says must).
+        if outcome.landed && self.has_effect(content, a_idx, UpgradeEffect::SplashDamageAfterHit) {
+            let near: Vec<usize> = (0..self.ships.len())
+                .filter(|&j| {
+                    j != d_idx
+                        && j != a_idx
+                        && !self.ships[j].destroyed
+                        && self.range_between(content, d_idx, j) == Some(1)
+                })
+                .collect();
+            let pick = near
+                .iter()
+                .copied()
+                .find(|&j| self.ships[j].owner != self.ships[a_idx].owner)
+                .or_else(|| near.first().copied());
+            if let Some(j) = pick {
+                self.damage_point(j);
+                let died = if self.ships[j].destroyed { " — DESTROYED" } else { "" };
+                events.push(format!(
+                    "{who}: Ruthlessness — {} suffers 1 damage{died}",
+                    self.label(content, j)
+                ));
+            }
+        }
+        // Darth Vader (crew): two damage to the attacker for a critical
+        // hit on the defender — taken when it finishes the defender off
+        // and the attacker keeps at least one hull.
+        if !self.ships[d_idx].destroyed
+            && self.ships[d_idx].owner != self.ships[a_idx].owner
+            && self.ships[d_idx].shields == 0
+            && self.ships[d_idx].hull == 1
+            && self.ships[a_idx].shields + self.ships[a_idx].hull >= 3
+            && self.has_effect(content, a_idx, UpgradeEffect::CrewSufferTwoForCrit)
+        {
+            self.damage_point(a_idx);
+            self.damage_point(a_idx);
+            self.damage_point(d_idx);
+            events.push(format!(
+                "{who}: Darth Vader — suffers 2 damage; {} suffers a critical hit — DESTROYED",
+                self.label(content, d_idx)
+            ));
+        }
+        if self.ships[a_idx].destroyed {
+            return;
+        }
+        // Fire-Control System: a lock on the defender afterwards.
+        if !self.ships[d_idx].destroyed
+            && self.ships[a_idx].lock != Some(defender)
+            && self.has_effect(content, a_idx, UpgradeEffect::SystemLockAfterAttack)
+        {
+            self.ships[a_idx].lock = Some(defender);
+            events
+                .push(format!("{who}: Fire-Control System — locks {}", self.label(content, d_idx)));
+        }
+        // R5-K6: after spending the lock, a defense die may bring it back.
+        if outcome.lock_spent
+            && !self.ships[d_idx].destroyed
+            && self.ships[a_idx].lock.is_none()
+            && self.has_effect(content, a_idx, UpgradeEffect::ReLockOnEvadeDie)
+        {
+            if DefenseFace::from_d8(roll()) == DefenseFace::Evade {
+                self.ships[a_idx].lock = Some(defender);
+                events.push(format!(
+                    "{who}: R5-K6 — evade rolled, lock on {} re-acquired",
+                    self.label(content, d_idx)
+                ));
+            } else {
+                events.push(format!("{who}: R5-K6 — no evade, lock not re-acquired"));
+            }
+        }
+        // Operations Specialist: a friend's miss at Range 1-2 hands a
+        // focus token to a friendly ship at Range 1-3 of the attacker
+        // (one without tokens first).
+        if !outcome.landed {
+            let owner = self.ships[a_idx].owner;
+            let specialists: Vec<usize> = (0..self.ships.len())
+                .filter(|&k| {
+                    self.ships[k].owner == owner
+                        && !self.ships[k].destroyed
+                        && self.has_effect(content, k, UpgradeEffect::CrewFocusAfterFriendlyMiss)
+                        && (k == a_idx
+                            || matches!(self.range_between(content, k, a_idx), Some(1 | 2)))
+                })
+                .collect();
+            for k in specialists {
+                let friends: Vec<usize> = (0..self.ships.len())
+                    .filter(|&j| {
+                        j != a_idx
+                            && self.ships[j].owner == owner
+                            && !self.ships[j].destroyed
+                            && self.range_between(content, a_idx, j).is_some()
+                    })
+                    .collect();
+                let pick = friends
+                    .iter()
+                    .copied()
+                    .find(|&j| self.ships[j].focus == 0)
+                    .or_else(|| friends.first().copied());
+                if let Some(j) = pick {
+                    self.ships[j].focus += 1;
+                    events.push(format!(
+                        "{}: Operations Specialist — focus token to {}",
+                        self.label(content, k),
+                        self.label(content, j)
+                    ));
+                }
+            }
         }
     }
 
@@ -1841,10 +2088,23 @@ impl GameState {
             PlannedAction::Pass => ActionResult::Performed,
             PlannedAction::Focus => {
                 self.ships[i].focus += 1;
+                // Recon Specialist: a second focus token.
+                if self.has_effect(content, i, UpgradeEffect::CrewExtraFocusOnFocusAction) {
+                    self.ships[i].focus += 1;
+                    events.push(format!(
+                        "{}: Recon Specialist — extra focus token",
+                        self.label(content, i)
+                    ));
+                }
                 ActionResult::Performed
             }
             PlannedAction::Evade => {
-                self.ships[i].evade += 1;
+                // Comm Relay caps the ship at one evade token.
+                if self.ships[i].evade == 0
+                    || !self.has_effect(content, i, UpgradeEffect::KeepOneEvade)
+                {
+                    self.ships[i].evade += 1;
+                }
                 ActionResult::Performed
             }
             PlannedAction::BarrelRoll(side)
@@ -2340,6 +2600,16 @@ impl GameState {
         for i in 0..self.ships.len() {
             if self.ships[i].destroyed || self.ships[i].pose.is_none() {
                 continue;
+            }
+            // Ysanne Isard: shieldless and damaged, a free evade action.
+            if self.ships[i].shields == 0
+                && self.ships[i].hull < self.max_hull(content, &self.ships[i])
+                && self.has_effect(content, i, UpgradeEffect::CrewFreeEvadeIfNoShieldsDamaged)
+                && self.may_act_freely(content, i)
+            {
+                self.ships[i].evade += 1;
+                events
+                    .push(format!("{}: Ysanne Isard — free evade action", self.label(content, i)));
             }
             let friends = self.friends_at_range1(content, i);
             if self.ability(content, &self.ships[i])
@@ -3048,6 +3318,31 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) {
+        // End of the Combat phase: Mara Jade stresses every unstressed
+        // enemy at Range 1.
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || !self.has_effect(content, i, UpgradeEffect::CrewStressEnemiesAtRange1EndOfCombat)
+            {
+                continue;
+            }
+            let enemies: Vec<usize> = (0..self.ships.len())
+                .filter(|&e| {
+                    self.ships[e].owner != self.ships[i].owner
+                        && !self.ships[e].destroyed
+                        && self.ships[e].stress == 0
+                        && self.range_between(content, i, e) == Some(1)
+                })
+                .collect();
+            for e in enemies {
+                events.push(format!(
+                    "{}: Mara Jade — {} is stressed",
+                    self.label(content, i),
+                    self.label(content, e)
+                ));
+                self.gain_stress(content, e, events);
+            }
+        }
         // End of the Combat phase: R5-P9 trades a focus token for a shield.
         for i in 0..self.ships.len() {
             let s = &self.ships[i];
@@ -3082,9 +3377,14 @@ impl GameState {
                 ));
             }
         }
-        for ship in &mut self.ships {
+        // Comm Relay: one unused evade token survives the End phase.
+        let keep_evade: Vec<bool> = (0..self.ships.len())
+            .map(|i| self.has_effect(content, i, UpgradeEffect::KeepOneEvade))
+            .collect();
+        for (ship, keep) in self.ships.iter_mut().zip(keep_evade) {
             ship.focus = 0;
-            ship.evade = 0;
+            ship.evade = if keep { ship.evade.min(1) } else { 0 };
+            ship.used_round.clear();
             ship.shield_lost_round = false;
             ship.on_asteroid = false;
             ship.card_actions.clear();
@@ -3260,6 +3560,18 @@ impl GameState {
                 self.label(content, a_idx)
             ));
         }
+        // Rebel Captive: the first ship to target this one each round is
+        // stressed on declaring the attack.
+        if !second
+            && self.use_once(content, d_idx, UpgradeEffect::CrewStressFirstAttacker).is_some()
+        {
+            events.push(format!(
+                "{}: Rebel Captive — {} receives a stress token",
+                self.label(content, d_idx),
+                self.label(content, a_idx)
+            ));
+            self.gain_stress(content, a_idx, events);
+        }
 
         // Secondary weapon: its own dice, no range bonuses either way,
         // and the required token is spent up front when the card says so.
@@ -3348,6 +3660,15 @@ impl GameState {
                 + self.opportunist_die(content, a_idx, d_idx, events);
             (a_dice + range_bonus + extra + weapon_extra).saturating_sub(malfunctions)
         };
+        let swarm = if secondary.is_none()
+            && !blinded
+            && self.has_effect(content, a_idx, UpgradeEffect::ExtraDiceFromFriendlyEvades)
+        {
+            self.swarm_leader_dice(content, a_idx, d_idx, events)
+        } else {
+            0
+        };
+        let n_atk = n_atk + swarm;
         let mut attack_faces: Vec<AttackFace> =
             (0..n_atk).map(|_| AttackFace::from_d8(roll())).collect();
         // Heavy Laser Cannon: crits become hits immediately after rolling.
@@ -3356,6 +3677,30 @@ impl GameState {
                 *f = AttackFace::Hit;
             }
         }
+        // Finn: a blank joins a primary attack on a ship in arc (reroll
+        // fodder).
+        if secondary.is_none()
+            && n_atk > 0
+            && self.has_effect(content, a_idx, UpgradeEffect::CrewAddBlankIfEnemyInArc)
+            && self.ship_in_front_arc(content, a_idx, d_idx)
+        {
+            attack_faces.push(AttackFace::Blank);
+            events.push(format!("{}: Finn — adds a blank result", self.label(content, a_idx)));
+        }
+        // Sensor Jammer: the defender turns one hit into a focus result
+        // that cannot be rerolled — held aside until the rerolls are over.
+        let jammed = if self.has_effect(content, d_idx, UpgradeEffect::SystemAttackerHitToFocus)
+            && let Some(k) = attack_faces.iter().position(|f| *f == AttackFace::Hit)
+        {
+            attack_faces.remove(k);
+            events.push(format!(
+                "{}: Sensor Jammer — one hit result becomes a focus result",
+                self.label(content, d_idx)
+            ));
+            true
+        } else {
+            false
+        };
 
         // Denials. Omega Leader: an enemy he has locked cannot modify any
         // dice against him, and cannot modify any when he attacks it.
@@ -3391,10 +3736,53 @@ impl GameState {
         // Modify attack: spend the lock to reroll blanks (and eyes too if
         // no focus token is held), then free ability conversions, then
         // focus converts the remaining eyes to hits.
+        // Adv. Targeting Computer: a free critical hit with a lock on the
+        // defender, which then cannot be spent.
+        let mut lock_frozen = false;
+        if attacker_may_modify
+            && secondary.is_none()
+            && self.ships[a_idx].lock == Some(defender)
+            && self.has_effect(content, a_idx, UpgradeEffect::SystemAddCritWithLock)
+        {
+            attack_faces.push(AttackFace::Crit);
+            lock_frozen = true;
+            events.push(format!(
+                "{}: Adv. Targeting Computer — adds a critical hit, lock kept",
+                self.label(content, a_idx)
+            ));
+        }
+        // Han Solo (crew): the lock turns every focus result into a hit
+        // when there is no token for them and that beats rerolling blanks.
+        if attacker_may_spend
+            && !lock_frozen
+            && self.ships[a_idx].lock == Some(defender)
+            && self.ships[a_idx].focus == 0
+            && self.has_effect(content, a_idx, UpgradeEffect::CrewLockAllFocusToHit)
+        {
+            let eyes = attack_faces.iter().filter(|f| **f == AttackFace::Focus).count();
+            let blanks = attack_faces.iter().filter(|f| **f == AttackFace::Blank).count();
+            if eyes > 0 && eyes >= blanks {
+                for f in attack_faces.iter_mut().filter(|f| **f == AttackFace::Focus) {
+                    *f = AttackFace::Hit;
+                }
+                self.ships[a_idx].lock = None;
+                lock_spent = true;
+                lock_frozen = true;
+                events.push(format!(
+                    "{}: Han Solo — lock spent, all focus results to hits",
+                    self.label(content, a_idx)
+                ));
+            }
+        }
         let all_crits = attacker_may_spend
+            && !lock_frozen
             && self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
         lock_spent |= all_crits;
-        if attacker_may_spend && !all_crits && self.ships[a_idx].lock == Some(defender) {
+        if attacker_may_spend
+            && !all_crits
+            && !lock_frozen
+            && self.ships[a_idx].lock == Some(defender)
+        {
             let reroll_eyes = self.ships[a_idx].focus == 0;
             let mut any = false;
             for f in attack_faces.iter_mut() {
@@ -3419,9 +3807,56 @@ impl GameState {
             }
             self.talent_attack_rerolls(content, a_idx, d_idx, &mut attack_faces, roll, events);
         }
+        if jammed {
+            attack_faces.push(AttackFace::Focus);
+        }
         if attacker_may_modify {
             self.free_attack_mods(content, a_idx, range, &mut attack_faces, events);
             self.weapon_attack_mods(content, a_idx, weapon_effect, &mut attack_faces, events);
+            // Mercenary Copilot: a hit becomes a critical hit at Range 3.
+            if range == 3
+                && self.has_effect(content, a_idx, UpgradeEffect::CrewHitToCritAtRange3)
+                && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Hit)
+            {
+                *f = AttackFace::Crit;
+                events.push(format!(
+                    "{}: Mercenary Copilot — hit result to critical hit",
+                    self.label(content, a_idx)
+                ));
+            }
+            // Agent Kallus: one focus result to a hit against his mark.
+            if self.kallus_target(content, a_idx) == Some(defender)
+                && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Focus)
+            {
+                *f = AttackFace::Hit;
+                events.push(format!(
+                    "{}: Agent Kallus — focus result to hit",
+                    self.label(content, a_idx)
+                ));
+            }
+            // Guidance Chips: once per round a torpedo or missile die
+            // becomes a hit (a critical hit with a 3+ primary weapon) — a
+            // blank first, else a focus result no token will convert.
+            let weapon_slot = weapon.and_then(|u| content.upgrades.upgrade(u)).map(|c| c.slot);
+            if matches!(weapon_slot, Some(Slot::Torpedo | Slot::Missile)) {
+                let pick =
+                    attack_faces.iter().position(|f| *f == AttackFace::Blank).or_else(|| {
+                        (self.ships[a_idx].focus == 0)
+                            .then(|| attack_faces.iter().position(|f| *f == AttackFace::Focus))
+                            .flatten()
+                    });
+                if let Some(k) = pick
+                    && self.use_once(content, a_idx, UpgradeEffect::OrdnanceDieToHit).is_some()
+                {
+                    let big = self.printed(content, &self.ships[a_idx]).attack >= 3;
+                    attack_faces[k] = if big { AttackFace::Crit } else { AttackFace::Hit };
+                    events.push(format!(
+                        "{}: Guidance Chips — die result to {}",
+                        self.label(content, a_idx),
+                        if big { "critical hit" } else { "hit" }
+                    ));
+                }
+            }
             // Marksmanship (action this round): one focus result to a
             // critical hit, the rest to hits, no token needed.
             if self.card_action_active(
@@ -3485,11 +3920,56 @@ impl GameState {
                 }
             }
         }
+        // Weapons Guidance: a focus token with no focus result left to
+        // convert turns a blank into a hit instead.
+        if attacker_may_spend
+            && self.ships[a_idx].focus > 0
+            && self.has_effect(content, a_idx, UpgradeEffect::BlankToHitSpendFocus)
+            && let Some(f) = attack_faces.iter_mut().find(|f| **f == AttackFace::Blank)
+        {
+            *f = AttackFace::Hit;
+            self.ships[a_idx].focus -= 1;
+            attacker_focus_spent = true;
+            events.push(format!(
+                "{}: Weapons Guidance — focus spent, blank to hit",
+                self.label(content, a_idx)
+            ));
+        }
         if attacker_focus_spent {
             self.friend_spent_focus(content, a_idx, events);
         }
+        // R3 Astromech: once per round a focus result nothing will convert
+        // is cancelled for an evade token (primary weapon only).
+        if secondary.is_none()
+            && attacker_may_modify
+            && let Some(k) = attack_faces.iter().position(|f| *f == AttackFace::Focus)
+            && self.use_once(content, a_idx, UpgradeEffect::CancelFocusForEvade).is_some()
+        {
+            attack_faces.remove(k);
+            self.ships[a_idx].evade += 1;
+            events.push(format!(
+                "{}: R3 Astromech — focus result cancelled, evade token gained",
+                self.label(content, a_idx)
+            ));
+        }
         if defender_may_modify {
             self.defender_forces_rerolls(content, a_idx, d_idx, &mut attack_faces, roll, events);
+        }
+        // Accuracy Corrector: fewer than two results landing → cancel all
+        // and add two hits; nothing may touch the dice afterwards.
+        if attacker_may_modify
+            && self.has_effect(content, a_idx, UpgradeEffect::SystemCancelAllAddTwoHits)
+            && attack_faces
+                .iter()
+                .filter(|f| matches!(f, AttackFace::Hit | AttackFace::Crit))
+                .count()
+                < 2
+        {
+            attack_faces = vec![AttackFace::Hit, AttackFace::Hit];
+            events.push(format!(
+                "{}: Accuracy Corrector — all dice cancelled, two hits added",
+                self.label(content, a_idx)
+            ));
         }
         let raw_hits = attack_faces.iter().filter(|f| **f == AttackFace::Hit).count() as u8;
         let raw_crits = attack_faces.iter().filter(|f| **f == AttackFace::Crit).count() as u8;
@@ -3507,9 +3987,36 @@ impl GameState {
             events
                 .push(format!("{}: Outmaneuver — defender agility -1", self.label(content, a_idx)));
         }
+        // Intimidation: a defender touching an enemy that carries it loses
+        // one agility.
+        if d_agility > 0 && self.touching_intimidator(content, d_idx) {
+            d_agility -= 1;
+            events.push(format!(
+                "{}: Intimidation — touching defender's agility -1",
+                self.label(content, d_idx)
+            ));
+        }
         let n_def = d_agility + u8::from(range == 3 && secondary.is_none()) + u8::from(obstructed);
         let mut defense_faces: Vec<DefenseFace> =
             (0..n_def).map(|_| DefenseFace::from_d8(roll())).collect();
+        // Lightweight Frame: outgunned, roll one more defense die.
+        if attack_faces.len() as u8 > n_def
+            && self.has_effect(content, d_idx, UpgradeEffect::ExtraDefenseDieIfOutgunned)
+        {
+            defense_faces.push(DefenseFace::from_d8(roll()));
+            events.push(format!(
+                "{}: Lightweight Frame — +1 defense die",
+                self.label(content, d_idx)
+            ));
+        }
+        // Finn (defending): a blank joins the roll when the attacker is in
+        // this ship's arc.
+        if self.has_effect(content, d_idx, UpgradeEffect::CrewAddBlankIfEnemyInArc)
+            && self.ship_in_front_arc(content, d_idx, a_idx)
+        {
+            defense_faces.push(DefenseFace::Blank);
+            events.push(format!("{}: Finn — adds a blank result", self.label(content, d_idx)));
+        }
 
         // A defender inside the attacker's bullseye lane cannot spend
         // focus or evade tokens to defend.
@@ -3522,6 +4029,18 @@ impl GameState {
         // Modify defense: focus converts eyes when it helps, evade token
         // adds one evade result if damage would still land.
         let incoming = raw_hits + raw_crits;
+        // C-3PO: once per round, "zero evades" is guessed before the roll;
+        // a roll with none gains one evade result.
+        if incoming > 0
+            && !defense_faces.contains(&DefenseFace::Evade)
+            && self.use_once(content, d_idx, UpgradeEffect::CrewGuessEvades).is_some()
+        {
+            defense_faces.push(DefenseFace::Evade);
+            events.push(format!(
+                "{}: C-3PO — guessed zero evades correctly, +1 evade",
+                self.label(content, d_idx)
+            ));
+        }
         if defender_may_modify {
             let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
             if evading < incoming {
@@ -3534,8 +4053,37 @@ impl GameState {
                     ));
                 }
                 self.talent_defense_rerolls(content, d_idx, &mut defense_faces, roll, events);
+                // Flight Instructor: reroll one focus result — or a blank
+                // against a pilot of skill 2 or less.
+                if self.has_effect(content, d_idx, UpgradeEffect::CrewRerollDefenseDie) {
+                    let low = self.effective_skill(content, &self.ships[a_idx]) <= 2;
+                    let pick =
+                        defense_faces.iter().position(|f| *f == DefenseFace::Focus).or_else(|| {
+                            low.then(|| defense_faces.iter().position(|f| *f == DefenseFace::Blank))
+                                .flatten()
+                        });
+                    if let Some(k) = pick {
+                        defense_faces[k] = DefenseFace::from_d8(roll());
+                        events.push(format!(
+                            "{}: Flight Instructor — rerolls a defense die",
+                            self.label(content, d_idx)
+                        ));
+                    }
+                }
             }
             self.free_defense_mods(content, d_idx, &mut defense_faces, incoming, events);
+            // Agent Kallus: one focus result to an evade against his mark.
+            let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+            if evading < incoming
+                && self.kallus_target(content, d_idx) == Some(attacker)
+                && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Focus)
+            {
+                *f = DefenseFace::Evade;
+                events.push(format!(
+                    "{}: Agent Kallus — focus result to evade",
+                    self.label(content, d_idx)
+                ));
+            }
         }
         let mut evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
         let mut defender_focus_spent = false;
@@ -3629,6 +4177,23 @@ impl GameState {
             let canceled_hits = hits.min(evades);
             hits -= canceled_hits;
             crits -= (evades - canceled_hits).min(crits);
+        }
+
+        // R4-D6: with three or more uncancelled hits, cancel down to two
+        // for a stress token each — only as far as the hull is at risk.
+        if hits >= 3 && self.has_effect(content, d_idx, UpgradeEffect::CancelHitsForStress) {
+            let to_hull = (hits + crits).saturating_sub(self.ships[d_idx].shields);
+            let n = (hits - 2).min(to_hull);
+            if n > 0 {
+                hits -= n;
+                events.push(format!(
+                    "{}: R4-D6 — cancels {n} hit results for {n} stress",
+                    self.label(content, d_idx)
+                ));
+                for _ in 0..n {
+                    self.gain_stress(content, d_idx, events);
+                }
+            }
         }
 
         // "If this attack hits, … Then cancel all dice results": ion and
@@ -3740,6 +4305,18 @@ impl GameState {
         if shields_lost > 0 && !self.ships[d_idx].destroyed {
             self.after_shield_loss(content, d_idx, events);
         }
+        // Reinforced Deflectors: three or more damage brings a shield back.
+        if shields_lost + hull_lost >= 3
+            && !self.ships[d_idx].destroyed
+            && self.has_effect(content, d_idx, UpgradeEffect::SystemRecoverShieldAfter3Damage)
+            && self.ships[d_idx].shields < self.max_shields(content, &self.ships[d_idx])
+        {
+            self.ships[d_idx].shields += 1;
+            events.push(format!(
+                "{}: Reinforced Deflectors — shield recovered",
+                self.label(content, d_idx)
+            ));
+        }
         // "If you are hit by an attack": at least one uncanceled result.
         if hits + crits > 0 {
             self.discard_on_hit(content, d_idx, events);
@@ -3747,10 +4324,16 @@ impl GameState {
         if let Some(effect) = weapon_effect {
             self.after_attack_effects(content, a_idx, d_idx, effect, landed, events);
         }
-        // Ordnance is discarded once fired (after the repeat, if any).
+        if !twice || second {
+            let outcome = AttackOutcome { landed, lock_spent };
+            self.after_attack_cards(content, a_idx, shot, outcome, roll, events);
+        }
+        // Ordnance is discarded once fired (after the repeat, if any);
+        // Munitions Failsafe keeps it after a miss.
         if let Some((name, sw)) = &secondary
             && sw.discard_to_fire
             && (!twice || second)
+            && (landed || !self.has_effect(content, a_idx, UpgradeEffect::KeepOrdnanceOnMiss))
         {
             self.ships[a_idx].upgrades.retain(|u| Some(*u) != weapon);
             events.push(format!("{}: {name} discarded (fired)", self.label(content, a_idx)));
@@ -5809,6 +6392,117 @@ mod tests {
         let mut rolls = scripted(rolls);
         gs.commit_plans(c, P0, &mut rolls).unwrap();
         gs.commit_plans(c, P1, &mut rolls).unwrap().unwrap()
+    }
+
+    #[test]
+    fn mercenary_copilot_crits_at_range_3_and_sensor_jammer_blunts_a_hit() {
+        let c = content();
+        // X-Wing rolls [Hit, Blank, Blank] at Range 3: the hit becomes a crit.
+        let mut gs = talent_duel(&c, UpgradeId(158));
+        let rec = resolve(&c, &mut gs, vec![0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!((rebel_shot(&rec).hits, rebel_shot(&rec).crits), (0, 1));
+        // Sensor Jammer on the TIE: the same hit becomes a focus result
+        // the X-Wing has no token to convert.
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(202));
+        let rec = resolve(&c, &mut gs, vec![0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 0);
+        assert!(rebel_shot(&rec).attack_faces.contains(&AttackFace::Focus));
+        assert!(rec.events.iter().any(|e| e.contains("Sensor Jammer")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn accuracy_corrector_turns_a_whiff_into_two_hits() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(203));
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert_eq!(gs.ships[0].hull, 1);
+    }
+
+    #[test]
+    fn weapons_guidance_spends_a_spare_focus_on_a_blank() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(20));
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 1);
+        assert!(rebel_shot(&rec).attacker_focus_spent);
+    }
+
+    #[test]
+    fn han_solo_crew_spends_the_lock_to_convert_all_focus_results() {
+        let c = content();
+        let mut gs = talent_duel(&c, UpgradeId(152));
+        gs.ships[1].lock = Some(ShipId(0));
+        // [Focus, Focus, Blank] with no focus token: Han beats rerolling.
+        let rec = resolve(&c, &mut gs, vec![4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert!(rebel_shot(&rec).lock_spent);
+        assert_eq!(gs.ships[1].lock, None);
+    }
+
+    #[test]
+    fn tactician_stresses_a_range_2_target_and_fire_control_locks_it() {
+        let c = content();
+        // X-Wing ends at anchor y=10.5: base 10.5..11.5 vs TIE nose 7.5 → Range 2.
+        let mut gs = duel_at(
+            &c,
+            "obsidiansquadronpilot",
+            "redsquadronveteran",
+            Pose::new(10.0, 14.5, -FRAC_PI_2),
+        );
+        gs.ships[1].upgrades.push(UpgradeId(162));
+        gs.ships[1].upgrades.push(UpgradeId(200));
+        let rec = resolve(&c, &mut gs, vec![7; 16]);
+        assert_eq!(rebel_shot(&rec).range, 2);
+        assert_eq!(gs.ships[0].stress, 1, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].lock, Some(ShipId(0)));
+    }
+
+    #[test]
+    fn comm_relay_keeps_one_evade_and_r4d6_trades_hits_for_stress() {
+        let c = content();
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(21));
+        gs.plan_action(&c, P0, ShipId(0), PlannedAction::Evade).unwrap();
+        resolve(&c, &mut gs, vec![7; 16]);
+        assert_eq!(gs.ships[0].evade, 1, "Comm Relay keeps the token through the End phase");
+
+        // R4-D6 on the shieldless TIE: three hits → one cancelled for a stress.
+        let mut gs = duel(&c, "obsidiansquadronpilot", "redsquadronveteran");
+        gs.ships[0].upgrades.push(UpgradeId(47));
+        let rec = resolve(&c, &mut gs, vec![0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).hits, 2);
+        assert_eq!(gs.ships[0].stress, 1);
+        assert_eq!(gs.ships[0].hull, 1);
+    }
+
+    #[test]
+    fn lightweight_frame_and_mara_jade_at_range_1() {
+        let c = content();
+        // X-Wing anchor y=9.0 after its straight 4: base 9..10 vs TIE nose 7.5 → Range 1.
+        let stage = |c: &Content| {
+            duel_at(
+                c,
+                "obsidiansquadronpilot",
+                "redsquadronveteran",
+                Pose::new(10.0, 13.0, -FRAC_PI_2),
+            )
+        };
+        let mut gs = stage(&c);
+        gs.ships[0].upgrades.push(UpgradeId(79));
+        // X-Wing: 4 dice, all hits. TIE: 3 dice blank, the extra die an evade.
+        let rec = resolve(&c, &mut gs, vec![0, 0, 0, 0, 7, 7, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(rebel_shot(&rec).range, 1);
+        assert_eq!(rebel_shot(&rec).defense_faces.len(), 4);
+        assert_eq!(rebel_shot(&rec).hits, 3);
+
+        let mut gs = stage(&c);
+        gs.ships[0].upgrades.push(UpgradeId(179));
+        let rec = resolve(&c, &mut gs, vec![7; 20]);
+        assert_eq!(gs.ships[1].stress, 1, "{:?}", rec.events);
+        assert!(rec.events.iter().any(|e| e.contains("Mara Jade")));
     }
 
     #[test]

@@ -325,6 +325,36 @@ impl UpgradeEffect {
                 | TorpedoStripShield
                 | SeismicTorpedoAction
                 | BarrelRollActionDiscardLock
+                | BlankToHitSpendFocus
+                | KeepOneEvade
+                | CancelFocusForEvade
+                | CancelHitsForStress
+                | ReLockOnEvadeDie
+                | ForceRerollLockedAttacker
+                | OrdnanceDieToHit
+                | ExtraDefenseDieIfOutgunned
+                | KeepOrdnanceOnMiss
+                | SystemLockAfterAttack
+                | SystemAttackerHitToFocus
+                | SystemCancelAllAddTwoHits
+                | SystemRecoverShieldAfter3Damage
+                | SystemAddCritWithLock
+                | CrewLockAllFocusToHit
+                | CrewGuessEvades
+                | CrewHitToCritAtRange3
+                | CrewExtraFocusOnFocusAction
+                | CrewStressTargetAtRange2InArc
+                | CrewAddBlankIfEnemyInArc
+                | CrewRerollDefenseDie
+                | CrewSufferTwoForCrit
+                | CrewChosenEnemyFocusToHitOrEvade
+                | CrewStressFirstAttacker
+                | CrewFreeEvadeIfNoShieldsDamaged
+                | CrewFocusAfterFriendlyMiss
+                | CrewStressEnemiesAtRange1EndOfCombat
+                | ReduceAgilityWhileTouching
+                | SplashDamageAfterHit
+                | ExtraDiceFromFriendlyEvades
                 | BombOnRevealProton
                 | BombOnRevealSeismic
                 | BombOnRevealIon
