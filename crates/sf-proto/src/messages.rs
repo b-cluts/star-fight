@@ -5,7 +5,7 @@ use sf_core::board::Board;
 use sf_core::bombs::{BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::Pose;
-use sf_core::obstacle::Obstacle;
+use sf_core::obstacle::{Obstacle, Pull};
 use sf_core::scenario::GameSetup;
 use sf_core::ship::ShipId;
 use sf_core::squad::Squad;
@@ -133,6 +133,9 @@ pub enum ServerMsg {
     /// / OpponentChoosing messages, closed by TurnEnd.
     MovementResult {
         moves: Vec<MoveRecord>,
+        /// Ships dragged by black holes after all moves.
+        #[serde(default)]
+        pulls: Vec<Pull>,
         /// Bombs that went off at the end of the Activation phase.
         #[serde(default)]
         detonations: Vec<Detonation>,

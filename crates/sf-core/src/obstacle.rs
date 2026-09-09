@@ -25,6 +25,21 @@ pub enum ObstacleKind {
 
 /// Radius of a black hole's core, in units (1-unit diameter).
 pub const CORE_RADIUS: f64 = 0.5;
+/// Range band within which a black hole drags ships (Range 5).
+pub const GRAVITY_BANDS: f64 = 5.0;
+/// Distance a ship is dragged per round, in units.
+pub const PULL_UNITS: f64 = 1.0;
+
+/// One ship dragged toward a black hole at the end of the Activation
+/// phase (`from` → `to`; `swallowed` when it reached the core).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Pull {
+    pub ship: crate::ship::ShipId,
+    pub hole: u32,
+    pub from: crate::geometry::Pose,
+    pub to: crate::geometry::Pose,
+    pub swallowed: bool,
+}
 
 impl ObstacleKind {
     pub fn name(self) -> &'static str {

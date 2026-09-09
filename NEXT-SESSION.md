@@ -2,7 +2,7 @@
 
 ## State: full networked game loop with combat, actions, and crits
 
-`cargo build` clean, `cargo test --workspace` green (173 tests),
+`cargo build` clean, `cargo test --workspace` green (174 tests),
 `cargo clippy --workspace -- -D warnings` clean, `cargo fmt --check`
 clean (rustfmt.toml: max_width 100, use_small_heuristics Max). Rulebook coverage:
 core_rules_en.pdf pages 8-13 and 16-19 are implemented (the PDF sits at
@@ -655,9 +655,22 @@ pins.txt + last-used menu values), starfield.rs.
   draws it (stacked black rings, three spiralling gas arms animated
   with `Time`, drifting motes) and the Effects Demo shows one at
   (17.5, 17) plus two asteroids, a debris cloud and Onyx-2's arc with
-  the asteroid's shadow over Gold-1 (obstructed shots labelled). NOT
-  done: the gravity pull, scatter/scenario support for black holes,
-  glossary entry. Open questions for the
+  the asteroid's shadow over Gold-1 (obstructed shots labelled).
+  GRAVITY PULL DONE 2026-09-09: `GameState::gravity_pulls` runs after
+  all moves and BEFORE bombs — every ship whose base is within Range 5
+  (`GRAVITY_BANDS` × RANGE_BAND_UNITS) of a core is dragged
+  `PULL_UNITS` (1) straight toward the center in 0.1 steps, stopping
+  short of any other ship (no damage), swallowed (destroyed) the
+  moment its base touches the core; `obstacle::Pull { ship, hole,
+  from, to, swallowed }` records flow through ActivationRecords /
+  TurnRecords / MovementResult `pulls`; the client animates the slide
+  (eased, shrinking into the core when swallowed) between the moves
+  and the detonations, narrated in the HUD. Bomb tokens are NOT
+  pulled; a pulled ship landing on an asteroid suffers nothing (both as
+  suggested). `GameSetup.black_holes` (≤2, counted in the 12-token
+  cap; setup-screen field "Black holes"; scattered first, spacing by
+  the core polygon), preset "Event horizon" (1 hole + 3 asteroids),
+  glossary entry "Black hole". Unplaytested on screen. Open questions for the
   user: does a pulled ship stop when it would overlap another ship
   (suggest: yes, bump-style back-off, no damage); are huge/large ships
   pulled the same distance; do bomb tokens get pulled (suggest no); is

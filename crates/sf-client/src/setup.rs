@@ -30,8 +30,15 @@ pub struct SetupForm {
     pub field: usize,
 }
 
-const FIELDS: [&str; 6] =
-    ["Asteroids", "Debris clouds", "Squad points", "Players", "Board width", "Board height"];
+const FIELDS: [&str; 7] = [
+    "Asteroids",
+    "Debris clouds",
+    "Black holes",
+    "Squad points",
+    "Players",
+    "Board width",
+    "Board height",
+];
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<PendingCreate>()
@@ -92,15 +99,16 @@ fn input(
         let s = &mut form.setup;
         let bump_u8 = |v: u8, max: u8| (v as i32 + delta).clamp(0, max as i32) as u8;
         match field {
-            0 => s.asteroids = bump_u8(s.asteroids, MAX_TOKENS - s.debris),
-            1 => s.debris = bump_u8(s.debris, MAX_TOKENS - s.asteroids),
-            2 => {
+            0 => s.asteroids = bump_u8(s.asteroids, MAX_TOKENS - s.debris - s.black_holes),
+            1 => s.debris = bump_u8(s.debris, MAX_TOKENS - s.asteroids - s.black_holes),
+            2 => s.black_holes = bump_u8(s.black_holes, 2.min(MAX_TOKENS - s.asteroids - s.debris)),
+            3 => {
                 s.points = (s.points as i32 + delta * 10)
                     .clamp(POINTS_RANGE.0 as i32, POINTS_RANGE.1 as i32)
                     as u32
             }
-            3 => s.players = bump_u8(s.players, 8).max(2),
-            4 => {
+            4 => s.players = bump_u8(s.players, 8).max(2),
+            5 => {
                 s.board_width =
                     (s.board_width + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
@@ -159,6 +167,7 @@ fn show(
     let values = [
         s.asteroids.to_string(),
         s.debris.to_string(),
+        s.black_holes.to_string(),
         s.points.to_string(),
         s.players.to_string(),
         s.board_width.to_string(),

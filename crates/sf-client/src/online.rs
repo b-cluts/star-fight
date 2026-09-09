@@ -12,7 +12,7 @@ use sf_core::bombs::{BombKind, BombToken, Detonation};
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
 use sf_core::geometry::{Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
-use sf_core::obstacle::{self, Obstacle, ObstacleKind};
+use sf_core::obstacle::{self, Obstacle, ObstacleKind, Pull};
 use sf_core::rules;
 use sf_core::ship::ShipId;
 use sf_core::upgrade::{Slot, UpgradeEffect, UpgradeId};
@@ -28,6 +28,8 @@ use crate::render::{self, ClassArt, CursorUnits, Game, Ghost, HudText, ShowArcs}
 /// (samples are 0.1 units apart → 4 units/second).
 const ANIM_SAMPLES_PER_SEC: f32 = 40.0;
 
+/// Seconds a black-hole pull slides a ship for.
+const PULL_DUR: f32 = 0.7;
 /// Seconds a bomb or mine detonation plays for.
 const DETONATION_DUR: f32 = 1.1;
 /// Seconds per attack in the combat animation.
@@ -79,6 +81,8 @@ pub enum AnimItem {
     Waiting {
         attacker: u32,
     },
+    /// A ship dragged toward a black hole (swallowed at the end if so).
+    Pull(Pull),
     /// A bomb or mine token going off.
     Detonation(Detonation),
     /// Combat finished: adopt the post-turn snapshot after this.
@@ -111,8 +115,14 @@ impl Anim {
     }
 
     fn push(&mut self, item: AnimItem) {
-        if let AnimItem::Move(m) = &item {
-            self.end_poses.insert(m.ship.0, m.end);
+        match &item {
+            AnimItem::Move(m) => {
+                self.end_poses.insert(m.ship.0, m.end);
+            }
+            AnimItem::Pull(p) => {
+                self.end_poses.insert(p.ship.0, p.to);
+            }
+            _ => {}
         }
         self.queue.push_back(item);
     }
@@ -538,7 +548,7 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                 ServerMsg::Rejected { reason } => {
                     online.status = format!("Rejected: {reason}");
                 }
-                ServerMsg::MovementResult { moves, detonations, events } => {
+                ServerMsg::MovementResult { moves, pulls, detonations, events } => {
                     online.status.clear();
                     online.waiting_on = None;
                     online.combat_log = events;
@@ -546,6 +556,9 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     let anim = online.anim.get_or_insert_with(|| Anim::new(tokens));
                     for m in moves {
                         anim.push(AnimItem::Move(m));
+                    }
+                    for p in pulls {
+                        anim.push(AnimItem::Pull(p));
                     }
                     for d in detonations {
                         anim.push(AnimItem::Detonation(d));
@@ -864,6 +877,40 @@ fn animate(
                     for d in mv.mines_hit.iter().rev() {
                         a.queue.push_front(AnimItem::Detonation(d.clone()));
                     }
+                    a.current = None;
+                    continue;
+                }
+                return;
+            }
+            AnimItem::Pull(p) => {
+                a.t += time.delta_secs();
+                let k = (a.t / PULL_DUR).clamp(0.0, 1.0);
+                let ease = k * k;
+                let pose = Pose {
+                    anchor: GVec2::new(
+                        p.from.anchor.x + (p.to.anchor.x - p.from.anchor.x) * f64::from(ease),
+                        p.from.anchor.y + (p.to.anchor.y - p.from.anchor.y) * f64::from(ease),
+                    ),
+                    heading: p.from.heading,
+                };
+                if let Some(view) = snapshot.ships.iter().find(|s| s.id.0 == p.ship.0) {
+                    let class = &game.ships.classes[game.class_index(view.class)];
+                    // Swallowed ships shrink into the core.
+                    let scale = if p.swallowed { 1.0 - ease * 0.85 } else { 1.0 };
+                    for (ship, mut sprite, mut tf, mut vis) in &mut ships_q {
+                        if ship.0 == p.ship.0 {
+                            let (size, t) = render::ship_visual(class, pose, &game, 1.5);
+                            sprite.custom_size = Some(size * scale);
+                            *tf = t;
+                            *vis = if p.swallowed && a.t >= PULL_DUR {
+                                Visibility::Hidden
+                            } else {
+                                Visibility::Visible
+                            };
+                        }
+                    }
+                }
+                if a.t >= PULL_DUR {
                     a.current = None;
                     continue;
                 }
@@ -2227,6 +2274,11 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             }
             Some(AnimItem::Attack { line, .. }) => lines.push(line.clone()),
             Some(AnimItem::Detonation(d)) => lines.push(detonation_line(snap, d)),
+            Some(AnimItem::Pull(p)) => lines.push(if p.swallowed {
+                format!("{} is dragged into the black hole — SWALLOWED", name(p.ship.0))
+            } else {
+                format!("{} is pulled one unit toward the black hole", name(p.ship.0))
+            }),
             Some(AnimItem::Prompt { attacker, options, unavailable }) => {
                 let opts: Vec<String> = options
                     .iter()

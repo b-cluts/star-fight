@@ -31,6 +31,8 @@ pub struct Scenario {
     pub asteroids: u8,
     #[serde(default)]
     pub debris: u8,
+    #[serde(default)]
+    pub black_holes: u8,
     #[serde(default = "twenty")]
     pub board_width: f64,
     #[serde(default = "twenty")]
@@ -46,6 +48,8 @@ pub struct GameSetup {
     pub points: u32,
     pub asteroids: u8,
     pub debris: u8,
+    #[serde(default)]
+    pub black_holes: u8,
     pub board_width: f64,
     pub board_height: f64,
 }
@@ -58,6 +62,7 @@ impl Default for GameSetup {
             points: 100,
             asteroids: 6,
             debris: 0,
+            black_holes: 0,
             board_width: 20.0,
             board_height: 20.0,
         }
@@ -72,6 +77,7 @@ impl From<&Scenario> for GameSetup {
             points: s.points,
             asteroids: s.asteroids,
             debris: s.debris,
+            black_holes: s.black_holes,
             board_width: s.board_width,
             board_height: s.board_height,
         }
@@ -91,8 +97,12 @@ impl GameSetup {
         if self.points < POINTS_RANGE.0 || self.points > POINTS_RANGE.1 {
             return Err(format!("squad points must be {}-{}", POINTS_RANGE.0, POINTS_RANGE.1));
         }
-        if self.asteroids.saturating_add(self.debris) > MAX_TOKENS {
+        if self.asteroids.saturating_add(self.debris).saturating_add(self.black_holes) > MAX_TOKENS
+        {
             return Err(format!("at most {MAX_TOKENS} obstacle tokens"));
+        }
+        if self.black_holes > 2 {
+            return Err("at most 2 black holes".into());
         }
         for d in [self.board_width, self.board_height] {
             if !(BOARD_RANGE.0..=BOARD_RANGE.1).contains(&d) || !d.is_finite() {
@@ -111,7 +121,8 @@ impl GameSetup {
 
     /// Obstacle tokens to scatter, asteroids first.
     pub fn obstacle_kinds(&self) -> Vec<ObstacleKind> {
-        let mut kinds = vec![ObstacleKind::Asteroid; self.asteroids as usize];
+        let mut kinds = vec![ObstacleKind::BlackHole; self.black_holes as usize];
+        kinds.extend(std::iter::repeat_n(ObstacleKind::Asteroid, self.asteroids as usize));
         kinds.extend(std::iter::repeat_n(ObstacleKind::Debris, self.debris as usize));
         kinds
     }
@@ -120,10 +131,16 @@ impl GameSetup {
     pub fn summary(&self) -> String {
         let mut parts = vec![format!("{} pts", self.points)];
         match (self.asteroids, self.debris) {
-            (0, 0) => parts.push("open space".into()),
+            (0, 0) if self.black_holes == 0 => parts.push("open space".into()),
+            (0, 0) => {}
             (a, 0) => parts.push(format!("{a} asteroids")),
             (0, d) => parts.push(format!("{d} debris")),
             (a, d) => parts.push(format!("{a} asteroids, {d} debris")),
+        }
+        match self.black_holes {
+            0 => {}
+            1 => parts.push("a black hole".into()),
+            n => parts.push(format!("{n} black holes")),
         }
         if (self.board_width, self.board_height) != (20.0, 20.0) {
             parts.push(format!("{}x{} board", self.board_width, self.board_height));

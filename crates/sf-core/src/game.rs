@@ -19,7 +19,7 @@ use crate::data::Content;
 use crate::dice::{AttackFace, DefenseFace};
 use crate::geometry::{Footprint, Pose, Vec2};
 use crate::maneuver::{self, Difficulty, Maneuver};
-use crate::obstacle::{self, Obstacle, ObstacleKind};
+use crate::obstacle::{self, Obstacle, ObstacleKind, Pull};
 use crate::pilot::{PilotAbility, PilotId};
 use crate::rules;
 use crate::ship::{PlayerId, ShipClass, ShipClassId, ShipId, ShipState, StatBlock};
@@ -245,6 +245,9 @@ pub struct AttackRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnRecords {
     pub moves: Vec<MoveRecord>,
+    /// Ships dragged by black holes after all moves.
+    #[serde(default)]
+    pub pulls: Vec<Pull>,
     /// Bombs that went off at the end of the Activation phase.
     #[serde(default)]
     pub detonations: Vec<Detonation>,
@@ -258,6 +261,9 @@ pub struct TurnRecords {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationRecords {
     pub moves: Vec<MoveRecord>,
+    /// Ships dragged by black holes after all moves.
+    #[serde(default)]
+    pub pulls: Vec<Pull>,
     /// Bombs that went off at the end of the Activation phase.
     #[serde(default)]
     pub detonations: Vec<Detonation>,
@@ -317,6 +323,8 @@ pub struct CombatState {
     attacks: Vec<AttackRecord>,
     events: Vec<String>,
     moves: Vec<MoveRecord>,
+    #[serde(default)]
+    pulls: Vec<Pull>,
     #[serde(default)]
     detonations: Vec<Detonation>,
 }
@@ -2123,7 +2131,7 @@ impl GameState {
         if self.committed != [true, true] {
             return Ok(None);
         }
-        let (moves, detonations, mut events) = self.resolve_movement(content, roll);
+        let (moves, pulls, detonations, mut events) = self.resolve_movement(content, roll);
         self.combat_start_stress_relief(content, &mut events);
 
         // Combat order: highest pilot skill first (initiative breaks
@@ -2154,9 +2162,10 @@ impl GameState {
             attacks: Vec::new(),
             events: events.clone(),
             moves: moves.clone(),
+            pulls: pulls.clone(),
             detonations: detonations.clone(),
         });
-        Ok(Some(ActivationRecords { moves, detonations, events }))
+        Ok(Some(ActivationRecords { moves, pulls, detonations, events }))
     }
 
     /// Start of the Combat phase: "Epsilon Leader" removes a stress token
@@ -2225,6 +2234,7 @@ impl GameState {
                     self.finish_turn(content, roll, &mut cs.events);
                     return Ok(CombatStep::Done(TurnRecords {
                         moves: cs.moves,
+                        pulls: cs.pulls,
                         detonations: cs.detonations,
                         attacks: cs.attacks,
                         events: cs.events,
@@ -2362,7 +2372,7 @@ impl GameState {
         &mut self,
         content: &Content,
         roll: &mut dyn FnMut() -> u8,
-    ) -> (Vec<MoveRecord>, Vec<Detonation>, Vec<String>) {
+    ) -> (Vec<MoveRecord>, Vec<Pull>, Vec<Detonation>, Vec<String>) {
         let order = movement_order(
             &self
                 .ships
@@ -2730,6 +2740,9 @@ impl GameState {
             });
         }
 
+        // Black holes drag everything nearby once all ships have moved.
+        let pulls = self.gravity_pulls(content, &mut events);
+
         // End of the Activation phase: every dial-reveal bomb goes off
         // against all ships (either side) within Range 1 of its token.
         let mut detonations = Vec::new();
@@ -2767,7 +2780,86 @@ impl GameState {
             }
         }
 
-        (records, detonations, events)
+        (records, pulls, detonations, events)
+    }
+
+    /// Black holes: every ship within Range 5 of a core is dragged one
+    /// unit straight toward it, heading unchanged, stopping short of any
+    /// ship in the way; a base that reaches the core is swallowed.
+    fn gravity_pulls(&mut self, content: &Content, events: &mut Vec<String>) -> Vec<Pull> {
+        let holes: Vec<Obstacle> =
+            self.obstacles.iter().filter(|o| o.kind == ObstacleKind::BlackHole).copied().collect();
+        let mut pulls = Vec::new();
+        for hole in holes {
+            let core = hole.polygon();
+            for i in 0..self.ships.len() {
+                let Some(pose) = self.ships[i].pose else { continue };
+                if self.ships[i].destroyed {
+                    continue;
+                }
+                let fp = self.class_of(content, &self.ships[i]).footprint;
+                let corners = rules::footprint_corners(pose, fp);
+                if obstacle::polygon_distance(&corners, &core)
+                    > obstacle::GRAVITY_BANDS * combat::RANGE_BAND_UNITS
+                {
+                    continue;
+                }
+                let d = hole.center - pose.anchor;
+                let len = (d.x * d.x + d.y * d.y).sqrt();
+                if len < 1e-9 {
+                    continue;
+                }
+                let dir = Vec2::new(d.x / len, d.y / len);
+                let others: Vec<[Vec2; 4]> = self
+                    .ships
+                    .iter()
+                    .filter(|s| s.id != self.ships[i].id && !s.destroyed)
+                    .filter_map(|s| {
+                        s.pose.map(|p| {
+                            rules::footprint_corners(p, self.class_of(content, s).footprint)
+                        })
+                    })
+                    .collect();
+                let mut best = pose;
+                let mut swallowed = false;
+                let steps = 10;
+                for k in 1..=steps {
+                    let t = obstacle::PULL_UNITS * k as f64 / steps as f64;
+                    let cand = Pose {
+                        anchor: Vec2::new(pose.anchor.x + dir.x * t, pose.anchor.y + dir.y * t),
+                        heading: pose.heading,
+                    };
+                    let c = rules::footprint_corners(cand, fp);
+                    if others.iter().any(|oc| rules::obbs_overlap(&c, oc)) {
+                        break;
+                    }
+                    best = cand;
+                    if obstacle::convex_overlap(&c, &core) {
+                        swallowed = true;
+                        break;
+                    }
+                }
+                if best == pose {
+                    continue;
+                }
+                let who = self.label(content, i);
+                self.ships[i].pose = Some(best);
+                if swallowed {
+                    self.ships[i].destroyed = true;
+                    events.push(format!("{who}: dragged into the black hole — SWALLOWED"));
+                } else {
+                    events.push(format!("{who}: pulled toward the black hole"));
+                }
+                pulls.push(Pull {
+                    ship: self.ships[i].id,
+                    hole: hole.id,
+                    from: pose,
+                    to: best,
+                    swallowed,
+                });
+            }
+        }
+        pulls
     }
 
     /// End phase and turn bookkeeping once combat is complete.
@@ -6292,6 +6384,47 @@ mod tests {
         assert_eq!(mv.obstacles_hit, vec![0]);
         assert!(gs.ships[0].destroyed);
         assert!(rec.events.iter().any(|e| e.contains("swallowed")), "{:?}", rec.events);
+        assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(0)));
+    }
+
+    #[test]
+    fn black_holes_drag_ships_within_range_5_and_swallow_at_the_core() {
+        let c = content();
+        let hole = |x, y| Obstacle {
+            id: 7,
+            kind: ObstacleKind::BlackHole,
+            center: Vec2::new(x, y),
+            heading: 0.0,
+            shape: 0,
+        };
+        // Hole far to the east of the TIE's end position (nose y=7.5):
+        // within Range 5, so the TIE slides one unit toward it.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(hole(18.0, 7.0));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert_eq!(rec.pulls.len(), 2, "both ships are within Range 5: {:?}", rec.pulls);
+        let tie = rec.pulls.iter().find(|p| p.ship == ShipId(0)).unwrap();
+        assert!(!tie.swallowed);
+        let d = tie.to.anchor - tie.from.anchor;
+        assert!(((d.x * d.x + d.y * d.y).sqrt() - 1.0).abs() < 1e-9);
+        assert!(d.x > 0.9, "straight toward the hole: {d:?}");
+        assert_eq!(tie.to.heading, tie.from.heading);
+        assert!(rec.events.iter().any(|e| e.contains("pulled toward the black hole")));
+
+        // Out of reach: a hole more than 12.5 units away does nothing.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(hole(2.0, 19.0));
+        gs.ships[1].pose = Some(Pose::new(10.0, 17.5, -FRAC_PI_2));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        assert!(rec.pulls.iter().all(|p| p.ship != ShipId(0)), "{:?}", rec.pulls);
+
+        // Sitting just short of the core: the pull drags the base onto it.
+        let mut gs = duel(&c, "academypilot", "bluesquadronnovice");
+        gs.obstacles.push(hole(10.0, 8.7));
+        let rec = resolve(&c, &mut gs, vec![7]);
+        let tie = rec.pulls.iter().find(|p| p.ship == ShipId(0)).unwrap();
+        assert!(tie.swallowed);
+        assert!(gs.ships[0].destroyed);
         assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(0)));
     }
 }

@@ -687,14 +687,15 @@ async fn session(
                         {
                             Ok(None) => snapshots!(&*gs),
                             Ok(Some(act)) => {
-                                let (moves, detonations, events) =
-                                    (act.moves, act.detonations, act.events);
+                                let (moves, pulls, detonations, events) =
+                                    (act.moves, act.pulls, act.detonations, act.events);
                                 streamed = events.len();
                                 for s in 0..players.len() as u8 {
                                     send_to!(
                                         s,
                                         ServerMsg::MovementResult {
                                             moves: moves.clone(),
+                                            pulls: pulls.clone(),
                                             detonations: detonations.clone(),
                                             events: events.clone(),
                                         }
