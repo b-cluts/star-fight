@@ -245,9 +245,11 @@ and Server `ws://127.0.0.1:7777`.
       satellites fixed by `satellite_positions`, auto-scan policy in
       `mission_scan`, `mission_winner` replaces the alive-teams check).
       Data: T-65 X-Wing class 11 (dial 11, pilots 1101-1106: Rookie, Red
-      Squadron, Biggs, Garven, Luke, Wedge — abilities data-only for now:
-      ProtectFriendsAtRange1, PassSpentFocusRange1To2, DefenseFocusToEvade,
-      DefenderAgilityMinus1). Proto 4 Snapshot += zones, mission
+      Squadron, Biggs, Garven, Luke, Wedge — all four abilities IMPLEMENTED
+      2026-09-10: Luke focus→evade on defense, Wedge defender agility −1,
+      Biggs target filter in `attack_options`, Garven passes the spent
+      token in `friend_spent_focus` to the friend at Range 1-2 with the
+      fewest focus tokens; `skirmish` helper now stages any pose). Proto 4 Snapshot += zones, mission
       (MissionView); GameSetup/Scenario += mission; server: seat factions
       (`faction_for_seat`), printed forces on a squad-less join
       (`mission::fixed_squad`), `winner_reason`. Client: zones drawn from

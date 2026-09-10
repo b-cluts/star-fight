@@ -494,6 +494,10 @@ impl PilotAbility {
                 | PilotAbility::BarrelRollWithStraight2
                 | PilotAbility::FreeRepositionAfterFocus
                 | PilotAbility::TwoActions
+                | PilotAbility::DefenseFocusToEvade
+                | PilotAbility::DefenderAgilityMinus1
+                | PilotAbility::ProtectFriendsAtRange1
+                | PilotAbility::PassSpentFocusRange1To2
         )
     }
 }

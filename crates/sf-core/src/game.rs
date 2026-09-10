@@ -1246,6 +1246,22 @@ impl GameState {
     /// "Chaser": a focus token whenever another friendly ship at Range 1
     /// spends one.
     fn friend_spent_focus(&mut self, content: &Content, spender: usize, events: &mut Vec<String>) {
+        // Garven Dreis: the spent token goes to another friendly ship at
+        // Range 1-2 (policy: the one holding the fewest focus tokens).
+        if self.ability(content, &self.ships[spender])
+            == Some(PilotAbility::PassSpentFocusRange1To2)
+            && let Some(f) = self
+                .friends_within(content, spender, 2)
+                .into_iter()
+                .min_by_key(|&f| (self.ships[f].focus, f))
+        {
+            self.ships[f].focus += 1;
+            events.push(format!(
+                "{}: Garven Dreis — spent focus token passed to {}",
+                self.label(content, spender),
+                self.label(content, f)
+            ));
+        }
         for f in self.friends_at_range1(content, spender) {
             if self.ability(content, &self.ships[f])
                 == Some(PilotAbility::FocusWhenFriendlySpendsFocusRange1)
@@ -4746,6 +4762,28 @@ impl GameState {
                 }
             }
         }
+        // Biggs Darklighter: while he could be targeted (same weapon), his
+        // friends at Range 1 of him cannot be.
+        let biggs: Vec<(Option<UpgradeId>, usize)> = options
+            .iter()
+            .filter_map(|o| {
+                let b = self.ships.iter().position(|s| s.id == o.target)?;
+                (self.ability(content, &self.ships[b])
+                    == Some(PilotAbility::ProtectFriendsAtRange1))
+                .then_some((o.weapon, b))
+            })
+            .collect();
+        if !biggs.is_empty() {
+            options.retain(|o| {
+                let t = self.ships.iter().position(|s| s.id == o.target).expect("option target");
+                !biggs.iter().any(|&(w, b)| {
+                    w == o.weapon
+                        && b != t
+                        && self.allied(self.ships[b].owner, self.ships[t].owner)
+                        && self.range_between(content, b, t) == Some(1)
+                })
+            });
+        }
         options
     }
 
@@ -5343,6 +5381,17 @@ impl GameState {
             events
                 .push(format!("{}: Outmaneuver — defender agility -1", self.label(content, a_idx)));
         }
+        // Wedge Antilles: the defender's agility drops by one (minimum 0).
+        if d_agility > 0
+            && self.ability(content, &self.ships[a_idx])
+                == Some(PilotAbility::DefenderAgilityMinus1)
+        {
+            d_agility -= 1;
+            events.push(format!(
+                "{}: Wedge Antilles — defender agility -1",
+                self.label(content, a_idx)
+            ));
+        }
         // Intimidation: a defender touching an enemy that carries it loses
         // one agility.
         if d_agility > 0 && self.touching_intimidator(content, d_idx) {
@@ -5462,6 +5511,19 @@ impl GameState {
                 *f = DefenseFace::Evade;
                 events.push(format!(
                     "{}: Agent Kallus — focus result to evade",
+                    self.label(content, d_idx)
+                ));
+            }
+            // Luke Skywalker: one focus result to an evade, no token needed.
+            let evading = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+            if evading < incoming
+                && self.ability(content, &self.ships[d_idx])
+                    == Some(PilotAbility::DefenseFocusToEvade)
+                && let Some(f) = defense_faces.iter_mut().find(|f| **f == DefenseFace::Focus)
+            {
+                *f = DefenseFace::Evade;
+                events.push(format!(
+                    "{}: Luke Skywalker — focus result to evade",
                     self.label(content, d_idx)
                 ));
             }
@@ -6277,6 +6339,80 @@ mod tests {
         }
         gs.commit_plans(c, P0, &mut || 7).unwrap();
         gs.commit_plans(c, P1, &mut || 7).unwrap().unwrap()
+    }
+
+    #[test]
+    fn t65_pilots_luke_wedge_biggs_and_garven() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let south = -FRAC_PI_2;
+        // Luke, nose to nose with an Academy Pilot at Range 1, has no focus
+        // token; his defense dice show focus + blank and the ability turns
+        // the focus into an evade: two of three hits land, on the shields.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("lukeskywalker", Pose::new(10.0, 8.0, south), 2)],
+        );
+        let rec = resolve(&c, &mut gs, vec![7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 4, 7]);
+        let shot = imperial_shot(&rec);
+        assert_eq!(shot.range, 1);
+        assert!(shot.defense_faces.contains(&DefenseFace::Evade), "{:?}", shot.defense_faces);
+        assert_eq!((shot.shields_lost, shot.hull_lost), (2, 0));
+        assert!(rec.events.iter().any(|e| e.contains("Luke Skywalker — focus result to evade")));
+
+        // Wedge at Range 2 of a TIE (agility 3): the defender rolls two dice.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("wedgeantilles", Pose::new(10.0, 9.0, south), 2)],
+        );
+        let rec = resolve(&c, &mut gs, vec![7; 12]);
+        let shot = rebel_shot(&rec);
+        assert_eq!((shot.range, shot.defense_faces.len()), (2, 2));
+        assert!(rec.events.iter().any(|e| e.contains("Wedge Antilles — defender agility -1")));
+
+        // Biggs and a Rookie both at Range 1 of the TIE, the Rookie the
+        // nearer: the TIE may only shoot Biggs.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("biggsdarklighter", Pose::new(9.0, 8.0, south), 2),
+                ("rookiepilot", Pose::new(11.0, 7.5, south), 2),
+            ],
+        );
+        let rec = resolve(&c, &mut gs, vec![7; 30]);
+        assert_eq!(imperial_shot(&rec).defender, ShipId(1), "{:?}", rec.attacks);
+        let opts = gs.attack_options(&c, 0);
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0].target, ShipId(1));
+
+        // Garven spends his focus token on the attack; it moves to the
+        // Rookie at Range 1 instead of being discarded.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("garvendreis", Pose::new(9.0, 8.0, south), 2),
+                ("rookiepilot", Pose::new(11.0, 8.0, south), 2),
+            ],
+        );
+        gs.ships[1].focus = 1;
+        let rec = resolve(
+            &c,
+            &mut gs,
+            vec![4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7],
+        );
+        let garven = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(garven.attacker_focus_spent);
+        assert!(
+            rec.events
+                .iter()
+                .any(|e| e.contains("Garven Dreis — spent focus token passed to Red-2")),
+            "{:?}",
+            rec.events
+        );
     }
 
     #[test]
@@ -7116,9 +7252,19 @@ mod tests {
             GameState::from_squads(board(), c, &[&a, &b], &[0, 1], crate::dice::AttackFace::Hit)
                 .unwrap();
         let all: Vec<_> = imperial.iter().chain(rebel.iter()).collect();
-        for (k, (_, pose, _)) in all.iter().enumerate() {
+        for (k, _) in all.iter().enumerate() {
             let player = if k < imperial.len() { P0 } else { P1 };
-            gs.place_ship(c, player, ShipId(k as u32), *pose).unwrap();
+            // Any pose is allowed for staging: place legally in the zone
+            // (spread along the edge), then move the ship where asked.
+            let legal = if k < imperial.len() {
+                Pose::new(2.0 + 3.0 * k as f64, 2.5, FRAC_PI_2)
+            } else {
+                Pose::new(2.0 + 3.0 * k as f64, 17.5, -FRAC_PI_2)
+            };
+            gs.place_ship(c, player, ShipId(k as u32), legal).unwrap();
+        }
+        for (k, (_, pose, _)) in all.iter().enumerate() {
+            gs.ships[k].pose = Some(*pose);
         }
         for (k, (_, _, dist)) in all.iter().enumerate() {
             let player = if k < imperial.len() { P0 } else { P1 };
