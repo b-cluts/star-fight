@@ -93,8 +93,9 @@ What exists end-to-end:
 - TIE/fo class (id 3) with its real dial incl. Segnor's loops
   (Steer::SegnorLeft/Right, bank then flip); placeholder sprite shares
   the TIE/ln art. The T-70 lost its native barrel roll (card-correct).
-  NOTE: the TIE/ln and T-70 dials in maneuvers.ron are the earlier
-  house dials, not the printed cards — revisit if fidelity matters.
+  The TIE/ln and T-70 dials in maneuvers.ron are the PRINTED First
+  Edition dials since 2026-09-10 (TIE/ln: hard 1-turns, green 2/3
+  straights only, red K-turns 3 and 4, straight 5; T-70: no 4-turns).
 - CARD IMAGES: the user cloned voidstate/xwing-card-images (MIT-licensed
   repo of FFG card scans, XWS naming) into reference/ — GITIGNORED, never
   commit it. Checked: 561 images all valid PNG/JPEG, no trailing data,

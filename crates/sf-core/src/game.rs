@@ -6364,7 +6364,7 @@ mod tests {
         // Wedge at Range 2 of a TIE (agility 3): the defender rolls two dice.
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("wedgeantilles", Pose::new(10.0, 9.0, south), 2)],
         );
         let rec = resolve(&c, &mut gs, vec![7; 12]);
@@ -7029,10 +7029,10 @@ mod tests {
         gs.place_ship(&c, P1, ShipId(2), Pose::new(10.0, 18.0, -FRAC_PI_2)).unwrap();
         let s3 =
             dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 3);
-        let s1 =
-            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 1);
+        let s2 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 2);
         gs.plan_maneuver(&c, P0, ShipId(0), s3).unwrap();
-        gs.plan_maneuver(&c, P0, ShipId(1), s1).unwrap();
+        gs.plan_maneuver(&c, P0, ShipId(1), s2).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(2), straight2(&c, XWING)).unwrap();
         gs.commit_plans(&c, P0, &mut || 6).unwrap();
         let moves = gs.commit_plans(&c, P1, &mut || 6).unwrap().unwrap().moves;
@@ -7357,7 +7357,7 @@ mod tests {
         let north = FRAC_PI_2;
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("outerrimsmuggler", Pose::new(10.0, 17.5, -north), 1)],
         );
         // The Outer Rim Smuggler's card prints 2/1/6/4 on a 3/1/8/5 hull.
@@ -7365,7 +7365,7 @@ mod tests {
         assert_eq!(gs.printed(&c, &gs.ships[1]).attack, 2);
         // Stage both heading north with the TIE 6 units behind the
         // freighter (range 3, outside the freighter's forward arc).
-        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[0].pose = Some(Pose::new(10.0, 3.0, north));
         gs.ships[1].pose = Some(Pose::new(10.0, 12.0, north));
         let mut rolls = scripted(vec![7]);
         gs.commit_plans(&c, P0, &mut rolls).unwrap();
@@ -7480,11 +7480,11 @@ mod tests {
         // (out of the primary arc) 4 units back → Range 2.
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
         );
         gs.ships[1].upgrades.push(ion_turret);
-        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[0].pose = Some(Pose::new(10.0, 3.0, north));
         gs.ships[1].pose = Some(Pose::new(10.0, 9.0, north));
         let mut rolls = scripted(vec![7]);
         gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
@@ -7636,11 +7636,11 @@ mod tests {
         let dorsal = UpgradeId(13);
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
         );
         gs.ships[1].upgrades.push(dorsal);
-        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[0].pose = Some(Pose::new(10.0, 3.0, north));
         gs.ships[1].pose = Some(Pose::new(10.0, 7.0, north));
         let mut rolls = scripted(vec![7]);
         gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
@@ -7654,11 +7654,11 @@ mod tests {
         let rockets = UpgradeId(145);
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("prototypepilot", Pose::new(10.0, 17.5, -north), 2)],
         );
         gs.ships[1].upgrades.push(rockets);
-        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north)); // nose 5 after 1
+        gs.ships[0].pose = Some(Pose::new(10.0, 3.0, north)); // nose 5 after straight 2
         gs.ships[1].pose = Some(Pose::new(10.0, 9.0, -north)); // nose 7 after 2: gap 2 → R1
         gs.ships[1].focus = 1;
         let mut rolls = scripted(vec![7]);
@@ -7677,11 +7677,11 @@ mod tests {
         let north = FRAC_PI_2;
         let mut gs = skirmish(
             &c,
-            &[("academypilot", Pose::new(10.0, 2.5, north), 1)],
+            &[("academypilot", Pose::new(10.0, 1.5, north), 2)],
             &[("goldsquadronpilot", Pose::new(10.0, 17.5, -north), 1)],
         );
         gs.ships[1].upgrades.push(ion_turret);
-        gs.ships[0].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[0].pose = Some(Pose::new(10.0, 3.0, north));
         gs.ships[1].pose = Some(Pose::new(10.0, 9.0, north));
         // Turret [Hit, Hit, Hit] vs 3 blanks: exactly 1 damage lands and
         // the TIE is ionized. The TIE (behind, out of arc) has no shot.
@@ -8356,10 +8356,12 @@ mod tests {
         gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)).unwrap();
         let s5 =
             dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 5);
-        let s1 =
-            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 1);
-        // Every attack: 2 hits; every defense: 3 blanks.
-        let mut rolls = scripted(vec![0, 0, 7, 7, 7]);
+        let s2 =
+            dial_index(&c, TIE, |m| m.steer == crate::maneuver::Steer::Straight && m.distance == 2);
+        // Turn 1 (Range 2): every attack 2 hits, every defense 3 blanks.
+        // Turn 2 (Range 1, three attack dice): 3 hits vs 3 blanks.
+        let mut rolls =
+            scripted(vec![0, 0, 7, 7, 7, 0, 0, 7, 7, 7, 0, 0, 0, 7, 7, 7, 0, 0, 0, 7, 7, 7]);
         // Turn 1: close to range 2 (hull gap 5); both take 2 hull damage.
         gs.plan_maneuver(&c, P0, ShipId(0), s5).unwrap();
         gs.plan_maneuver(&c, P1, ShipId(1), s5).unwrap();
@@ -8370,8 +8372,8 @@ mod tests {
         assert_eq!(gs.ships[1].hull, 1);
         // Turn 2: both die — but both still fire (simultaneous rule),
         // and the initiative holder wins the mutual kill.
-        gs.plan_maneuver(&c, P0, ShipId(0), s1).unwrap();
-        gs.plan_maneuver(&c, P1, ShipId(1), s1).unwrap();
+        gs.plan_maneuver(&c, P0, ShipId(0), s2).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(1), s2).unwrap();
         gs.commit_plans(&c, P0, &mut rolls).unwrap();
         let rec = gs.commit_plans(&c, P1, &mut rolls).unwrap().unwrap();
         assert_eq!(rec.attacks.len(), 2, "destroyed ship of equal skill still fires");

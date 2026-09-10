@@ -4,33 +4,29 @@
 (
     sets: [
         (
-            id: 1, // standard TIE Fighter dial (speed-major order, like every dial)
+            id: 1, // TIE/ln Fighter dial (First Edition card): hard 1-turns,
+                   // green only on the 2 and 3 straights, red K-turns 3 and 4.
             maneuvers: [
-                // Speed 1: straight and banks green; no hard turns.
-                (steer: BankLeft,  distance: 1, difficulty: Easy),
-                (steer: Straight,  distance: 1, difficulty: Easy),
-                (steer: BankRight, distance: 1, difficulty: Easy),
-                // Speed 2: turns white, banks and straight green.
+                (steer: TurnLeft,  distance: 1, difficulty: Normal),
+                (steer: TurnRight, distance: 1, difficulty: Normal),
                 (steer: TurnLeft,  distance: 2, difficulty: Normal),
-                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: BankLeft,  distance: 2, difficulty: Normal),
                 (steer: Straight,  distance: 2, difficulty: Easy),
-                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Normal),
                 (steer: TurnRight, distance: 2, difficulty: Normal),
-                // Speed 3: straight green, the rest white, red K-turn.
                 (steer: TurnLeft,  distance: 3, difficulty: Normal),
                 (steer: BankLeft,  distance: 3, difficulty: Normal),
                 (steer: Straight,  distance: 3, difficulty: Easy),
                 (steer: BankRight, distance: 3, difficulty: Normal),
                 (steer: TurnRight, distance: 3, difficulty: Normal),
                 (steer: KTurn,     distance: 3, difficulty: Hard),
-                // Speed 4: straight white, red K-turn; speed 5 straight white.
-                (steer: Straight, distance: 4, difficulty: Normal),
-                (steer: KTurn,    distance: 4, difficulty: Hard),
-                (steer: Straight, distance: 5, difficulty: Normal),
+                (steer: Straight,  distance: 4, difficulty: Normal),
+                (steer: KTurn,     distance: 4, difficulty: Hard),
+                (steer: Straight,  distance: 5, difficulty: Normal),
             ],
         ),
         (
-            id: 2, // T-70 X-Wing dial
+            id: 2, // T-70 X-Wing dial (First Edition card)
             maneuvers: [
                 // Speed 1: straight and banks green; no hard turns.
                 (steer: BankLeft,  distance: 1, difficulty: Easy),
@@ -50,10 +46,8 @@
                 (steer: TurnRight, distance: 3, difficulty: Normal),
                 (steer: TallonLeft,  distance: 3, difficulty: Hard),
                 (steer: TallonRight, distance: 3, difficulty: Hard),
-                // Speed 4: turns and straight white, red Koiogran.
-                (steer: TurnLeft,  distance: 4, difficulty: Normal),
+                // Speed 4: straight white, red Koiogran (no 4-turns on the card).
                 (steer: Straight,  distance: 4, difficulty: Normal),
-                (steer: TurnRight, distance: 4, difficulty: Normal),
                 (steer: KTurn,     distance: 4, difficulty: Hard),
             ],
         ),
