@@ -216,30 +216,28 @@
             ],
         ),
         (
-            id: 9, // TIE Interceptor dial (First Edition card)
+            id: 9, // TIE Interceptor dial, read from a photo of the First
+                   // Edition dial (SWX09): hard 1-turns only; the whole
+                   // speed-2 row green; 3 turns and banks white, 3 straight
+                   // green, red K-turn 3; green 4 straight; white 5 straight
+                   // and red K-turn 5.
             maneuvers: [
-                // Speed 1: turns and banks white (no straight).
                 (steer: TurnLeft,  distance: 1, difficulty: Normal),
-                (steer: BankLeft,  distance: 1, difficulty: Normal),
-                (steer: BankRight, distance: 1, difficulty: Normal),
                 (steer: TurnRight, distance: 1, difficulty: Normal),
-                // Speed 2: turns white, banks and straight green.
-                (steer: TurnLeft,  distance: 2, difficulty: Normal),
+                (steer: TurnLeft,  distance: 2, difficulty: Easy),
                 (steer: BankLeft,  distance: 2, difficulty: Easy),
                 (steer: Straight,  distance: 2, difficulty: Easy),
                 (steer: BankRight, distance: 2, difficulty: Easy),
-                (steer: TurnRight, distance: 2, difficulty: Normal),
-                // Speed 3: turns white, banks and straight green, red K-turn.
+                (steer: TurnRight, distance: 2, difficulty: Easy),
                 (steer: TurnLeft,  distance: 3, difficulty: Normal),
-                (steer: BankLeft,  distance: 3, difficulty: Easy),
+                (steer: BankLeft,  distance: 3, difficulty: Normal),
                 (steer: Straight,  distance: 3, difficulty: Easy),
-                (steer: BankRight, distance: 3, difficulty: Easy),
+                (steer: BankRight, distance: 3, difficulty: Normal),
                 (steer: TurnRight, distance: 3, difficulty: Normal),
                 (steer: KTurn,     distance: 3, difficulty: Hard),
-                // Speed 4 and 5: straights white, red 5 K-turn.
-                (steer: Straight, distance: 4, difficulty: Normal),
-                (steer: Straight, distance: 5, difficulty: Normal),
-                (steer: KTurn,    distance: 5, difficulty: Hard),
+                (steer: Straight,  distance: 4, difficulty: Easy),
+                (steer: Straight,  distance: 5, difficulty: Normal),
+                (steer: KTurn,     distance: 5, difficulty: Hard),
             ],
         ),
         (

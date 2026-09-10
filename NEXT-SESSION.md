@@ -96,6 +96,11 @@ What exists end-to-end:
   The TIE/ln and T-70 dials in maneuvers.ron are the PRINTED First
   Edition dials since 2026-09-10 (TIE/ln: hard 1-turns, green 2/3
   straights only, red K-turns 3 and 4, straight 5; T-70: no 4-turns).
+  The TIE Interceptor dial was corrected from the user's photo of the FE
+  dial (repo root `tie-interceptor-dial.jpg`, a watermarked retailer
+  photo — gitignored, never commit): 1-turns only, all of speed 2 green,
+  3 banks white, K-turns 3 and 5, green 4 straight. The TIE/ln and T-70
+  dials are from memory; ask the user for dial photos to confirm them.
 - CARD IMAGES: the user cloned voidstate/xwing-card-images (MIT-licensed
   repo of FFG card scans, XWS naming) into reference/ — GITIGNORED, never
   commit it. Checked: 561 images all valid PNG/JPEG, no trailing data,
