@@ -74,6 +74,40 @@ enforce yet are marked "NOT yet automated".
 Downloads: **Actions → Release builds** (or a tagged GitHub Release) has zips
 for Linux and Windows containing both binaries and `assets/`.
 
+## Playing over Tailscale (recommended)
+
+The easiest way to play with friends elsewhere is a [Tailscale](https://tailscale.com)
+network: no router port forwarding, no public IP, and the game's own pinned
+TLS and password still apply on top of Tailscale's encryption.
+
+1. Install Tailscale on the machine that runs `sf-server` and on every
+   player's machine, all signed into the same tailnet (or share the server
+   node with a friend's tailnet). Each machine gets a `100.x.y.z` address and,
+   with MagicDNS, a name like `mybox.tailnet-name.ts.net`.
+2. Start the server with its Tailscale name (or `100.x` address) so the
+   printed join string points at it — the auto-detected address is usually
+   the LAN one:
+
+   ```
+   sf-server --host mybox.tailnet-name.ts.net
+   ```
+
+   It prints the certificate fingerprint, the password and the join string
+   `starfight://mybox.tailnet-name.ts.net:7777/#<fingerprint>`.
+3. Send players the join string and the password. In the client they paste
+   the join string into **Server**, type the password, then **Create Game**
+   or **Join Game** with the 4-letter code. The fingerprint is remembered per
+   host:port after the first connection.
+
+Nothing needs opening on the router. Only a local firewall on the server
+box could get in the way (allow TCP 7777 on the `tailscale0` interface). If
+a player has MagicDNS turned off, use the server's `100.x` address in
+`--host` instead of the name.
+
+Without Tailscale, forward TCP 7777 on your router to the server box and
+pass your public IP or dynamic-DNS name as `--host`; the pinned certificate
+and password are what make that safe.
+
 ## Card images (optional)
 
 The squad builder can show the real pilot and upgrade cards. The scans are
