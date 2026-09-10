@@ -94,14 +94,16 @@ What exists end-to-end:
   (Steer::SegnorLeft/Right, bank then flip); placeholder sprite shares
   the TIE/ln art. The T-70 lost its native barrel roll (card-correct).
   The TIE/ln and T-70 dials in maneuvers.ron are the PRINTED First
-  Edition dials since 2026-09-10 (TIE/ln: hard 1-turns, green 2/3
-  straights only, red K-turns 3 and 4, straight 5; T-70: no 4-turns).
+  Edition dials since 2026-09-10 (TIE/ln: hard 1-turns, green 2 banks
+  and 2/3 straights, red K-turns 3 and 4, straight 5; T-70: no 4-turns).
   The TIE Interceptor dial was corrected from the user's photo of the FE
   dial (repo root `tie-interceptor-dial.jpg`, a watermarked retailer
   photo — gitignored, never commit): 1-turns only, all of speed 2 green,
   3 banks white, K-turns 3 and 5, green 4 straight. The T-70 dial was
   confirmed from a maneuver chart (`MR_T70-X-WING.webp`, gitignored):
-  speed-2 banks are white. Only the TIE/ln dial is still from memory.
+  speed-2 banks are white. The TIE/ln dial was confirmed from a photo of
+  the 2E dial (identical to FE; `tie-ln-fighter-...jpg`, gitignored):
+  its speed-2 banks are GREEN. All three core dials are now from images.
 - CARD IMAGES: the user cloned voidstate/xwing-card-images (MIT-licensed
   repo of FFG card scans, XWS naming) into reference/ — GITIGNORED, never
   commit it. Checked: 561 images all valid PNG/JPEG, no trailing data,

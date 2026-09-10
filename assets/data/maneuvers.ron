@@ -4,15 +4,18 @@
 (
     sets: [
         (
-            id: 1, // TIE/ln Fighter dial (First Edition card): hard 1-turns,
-                   // green only on the 2 and 3 straights, red K-turns 3 and 4.
+            id: 1, // TIE/ln Fighter dial, read from a dial photo (the Second
+                   // Edition dial, unchanged from First Edition): hard 1-turns
+                   // white; 2 banks and straight green, 2 turns white; 3 turns
+                   // and banks white, straight green, red K-turn; 4 straight
+                   // white, red K-turn; 5 straight white.
             maneuvers: [
                 (steer: TurnLeft,  distance: 1, difficulty: Normal),
                 (steer: TurnRight, distance: 1, difficulty: Normal),
                 (steer: TurnLeft,  distance: 2, difficulty: Normal),
-                (steer: BankLeft,  distance: 2, difficulty: Normal),
+                (steer: BankLeft,  distance: 2, difficulty: Easy),
                 (steer: Straight,  distance: 2, difficulty: Easy),
-                (steer: BankRight, distance: 2, difficulty: Normal),
+                (steer: BankRight, distance: 2, difficulty: Easy),
                 (steer: TurnRight, distance: 2, difficulty: Normal),
                 (steer: TurnLeft,  distance: 3, difficulty: Normal),
                 (steer: BankLeft,  distance: 3, difficulty: Normal),
