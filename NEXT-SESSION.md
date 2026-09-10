@@ -268,7 +268,9 @@ and Server `ws://127.0.0.1:7777`.
       setup field 9 "Bots (computer players)". Bots are NOT unique-checked
       against human squads. UNPLAYTESTED on screen (server test
       `a_bot_seat_plays_a_solo_game_through` covers 3 rounds).
-      NEXT: user playtest of missions + bots → v0.5.0 (protocol 4).
+      ~~v0.5.0~~ CUT 2026-09-10 (tag v0.5.0, commit 8188832, protocol 4,
+      Linux/Windows zips from the release workflow). NEXT: the user's
+      playtest feedback on missions, bots and multi-seat games.
       >>> RESUME HERE: card automation is essentially COMPLETE
       (2026-09-09, 216 tests). Upgrade-effect batches 1-3 (commits
       0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B
