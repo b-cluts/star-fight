@@ -99,8 +99,9 @@ What exists end-to-end:
   The TIE Interceptor dial was corrected from the user's photo of the FE
   dial (repo root `tie-interceptor-dial.jpg`, a watermarked retailer
   photo — gitignored, never commit): 1-turns only, all of speed 2 green,
-  3 banks white, K-turns 3 and 5, green 4 straight. The TIE/ln and T-70
-  dials are from memory; ask the user for dial photos to confirm them.
+  3 banks white, K-turns 3 and 5, green 4 straight. The T-70 dial was
+  confirmed from a maneuver chart (`MR_T70-X-WING.webp`, gitignored):
+  speed-2 banks are white. Only the TIE/ln dial is still from memory.
 - CARD IMAGES: the user cloned voidstate/xwing-card-images (MIT-licensed
   repo of FFG card scans, XWS naming) into reference/ — GITIGNORED, never
   commit it. Checked: 561 images all valid PNG/JPEG, no trailing data,

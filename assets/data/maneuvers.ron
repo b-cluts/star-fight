@@ -26,17 +26,18 @@
             ],
         ),
         (
-            id: 2, // T-70 X-Wing dial (First Edition card)
+            id: 2, // T-70 X-Wing dial, read from a First Edition maneuver
+                   // chart: speed 1 all green; at speed 2 only the straight
+                   // is green; 3 straight green, red Tallon rolls; 4 straight
+                   // white, red K-turn.
             maneuvers: [
-                // Speed 1: straight and banks green; no hard turns.
                 (steer: BankLeft,  distance: 1, difficulty: Easy),
                 (steer: Straight,  distance: 1, difficulty: Easy),
                 (steer: BankRight, distance: 1, difficulty: Easy),
-                // Speed 2: turns white, banks and straight green.
                 (steer: TurnLeft,  distance: 2, difficulty: Normal),
-                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: BankLeft,  distance: 2, difficulty: Normal),
                 (steer: Straight,  distance: 2, difficulty: Easy),
-                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Normal),
                 (steer: TurnRight, distance: 2, difficulty: Normal),
                 // Speed 3: straight green, turns and banks white, red Tallon rolls.
                 (steer: TurnLeft,  distance: 3, difficulty: Normal),
