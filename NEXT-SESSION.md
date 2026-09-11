@@ -284,7 +284,71 @@ and Server `ws://127.0.0.1:7777`.
       2026-09-10 (tag v0.5.1, commit 0b79eff, same protocol: T-65 pilot
       abilities, the three dials confirmed from images, Tailscale README). NEXT: the user's
       playtest feedback on missions, bots and multi-seat games.
-      >>> RESUME HERE: card automation is essentially COMPLETE
+      >>> RESUME HERE (2026-09-11 evening, 247 tests, all pushed, last
+      commit fa941e4): LARGE-SHIP MODS DONE (abcfc31: Anti-Pursuit Lasers
+      84 / Ion Projector 85 fire from the bump hook after Stunned Pilot in
+      the move loop; Countermeasures 86 is a U-toggle consumed in
+      `countermeasures()` at Combat start (+1 `agility_bonus`, cleared in
+      the End phase, removes the highest-skill enemy's lock); Tactical
+      Jammer 87 via `obstructed_attack()`; Smuggling Compartment 88,
+      Bomb Loadout 8 (Torpedo slot) through `UpgradeEffect::granted_slots`
+      shared by squad.rs and the builder; Chardaan Refit 27 — `Upgrade.cost`
+      is now i8 and `ship_cost` clamps at 0). SCUM AND VILLAINY DONE
+      (fa941e4, tests still to write): `Faction::Scum` (builder key F
+      cycles three factions; squad names Black Sun/Binayre/Kihraxz/Hutt;
+      laser colour yellow; server side name "Scum"; missions stay
+      Rebel/Empire — Scum arms map to the Rebel side / no fixed force),
+      classes 13 Z-95 (dial 13 READ FROM THE USER'S PHOTO), 14 Y-Wing Scum
+      (dial 4 shared), 15 Firespray-31 (dial 14 FROM MEMORY — the user's
+      firespray_dial.jpg is Second Edition, blue arrows; told the user),
+      `ShipClass.rear_arc` + `combat::rear_pose` + `ship_in_rear_arc`
+      (primary weapon only; client `render::draw_arcs` draws both arcs),
+      pilots 1301-1504 with abilities StealTokenAtCombatStart (Kaa'to,
+      `steal_tokens()` at Combat start), ExtraAttackDieIfNoFriendsRange1To2
+      (N'dru), StressToReacquireLockAfterSpending (Drea, after the lock
+      reroll block), ExtraAttackDieOutsideOwnArc (Kavil),
+      ExtraAttackDieInAuxiliaryArc (Kath), RerollPerEnemyRange1 (Boba, in
+      `friendly_rerolls`), BombWithSpeed3Template (Emon — DATA ONLY, needs
+      a template choice in the bomb plan); Illicit 210-213 ("Hot Shot"
+      Blaster = Illicit secondary weapon ignoring the arc, discard to fire;
+      Inertial Dampeners = U-toggle → white Straight 0 + stress after the
+      move; Dead Man's Switch = `dead_mans_switches()` sweep after each
+      attack and at the end of movement, `ShipState.switch_fired`;
+      Feedback Array = U-toggle, `feedback_array()` in combat_step zaps the
+      weakest enemy at Range 1 instead of attacking); Salvaged Astromechs
+      220-223 (Unhinged = `Speed3Green` in maneuver_difficulty; Salvaged =
+      Ship-trait crit discarded next to the Integrated Astromech hook; R4
+      Agromech = lock after a spent focus, just before the AttackRecord
+      literal; R4-B11 = spend a still-held lock to reroll every evade,
+      before the evade-token step). Sprites z95-headhunter.png,
+      firespray-31.png, y-wing-scum.png (af9fd4b; user confirmed the three
+      .jpeg sources are license-free; SOURCES.md updated). Card texts came
+      from the gitignored reference/xwing-card-images scans (pilots/scum/*,
+      upgrades/illicit, upgrades/samd, upgrades/mod) — use them again for
+      any further Scum content (aggressor, starviper, m3a, kihraxz, ...).
+      >>> NEXT: (1) WRITE THE TESTS the Scum commit lacks, in game.rs tests
+      (helpers: `skirmish`, `resolve`, `run_combat`, `scripted`; Scum
+      pilots go in the "rebel" slot of skirmish; ids above). Planned:
+      N'dru/Kavil (Ion Cannon Turret on Kavil, TIE behind him)/Kath extra
+      dice; Boba rerolls attacking and defending (TIE at Range 1: rolls
+      [7,7,7,7, 0, 7,7,7, 0,7,7, 7,7, 0, 7...]); Drea re-lock + stress;
+      Kaa'to event at Combat start (End phase clears tokens, so assert on
+      the event); Hot Shot fires outside the arc then is discarded;
+      Inertial Dampeners: pose unchanged, stress 1, card gone; Dead Man's
+      Switch: Z-95 with hull 1/shields 0 killed by the TIE (use run_combat
+      to pick it), TIE and a friendly Y-Wing at Range 1 each lose 1;
+      Feedback Array: ion 1, 1 self damage, enemy −1, no attack record;
+      Unhinged: `maneuver_difficulty` of a 3-turn is Easy; Salvaged
+      Astromech: find a roll v with `!crit::draw(v).is_pilot_trait()`,
+      hull unchanged and card gone; R4 Agromech: focus spent → lock;
+      R4-B11: lock kept through [0,0] attack, defender [0,0,0] rerolled to
+      [7,7,7] → TIE hull 1. Also a squad.rs test that Scum ships accept
+      Illicit/Salvaged cards and refuse a Rebel Astromech. (2) Playtest on
+      screen: Scum builder page, Firespray sprite/arc, then cut v0.6.0
+      (proto unchanged: 4; ShipView unchanged). (3) Later Scum waves (the
+      reference folder has cards for 16 Scum ships), Rebel Z-95 pilots
+      (reference pilots/rebels/z95headhunter), Emon's bomb template.
+      >>> (older) RESUME HERE: card automation is essentially COMPLETE
       (2026-09-09, 216 tests). Upgrade-effect batches 1-3 (commits
       0c80143, 85bf2e1, ea58b3e) and pilot-ability batches A-B
       (add020a, c709fd4) are in. Machinery worth knowing: `used_round`
@@ -323,7 +387,7 @@ and Server `ws://127.0.0.1:7777`.
       take_lock/drop_lock` helpers used at every lock site; a lock action
       also locks the nearest other enemy; `ShipView.lock2`). The card
       automation list is now COMPLETE for the encoded cards.
-      >>> NEXT (agreed 2026-09-11): (1) LARGE-SHIP MODIFICATIONS for the
+      >>> (DONE 2026-09-11, see the block above) NEXT (agreed 2026-09-11): (1) LARGE-SHIP MODIFICATIONS for the
       ships we fly — Anti-Pursuit Lasers, Ion Projector (bump hook),
       Countermeasures (once-per-game toggle), Tactical Jammer (large base
       obstructs), Smuggling Compartment (grants Illicit), Bomb Loadout
