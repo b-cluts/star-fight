@@ -55,6 +55,35 @@ pub struct Maneuver {
     pub difficulty: Difficulty,
 }
 
+impl Maneuver {
+    /// "bank left 2 (green)", for the log.
+    pub fn label(&self) -> String {
+        let steer = match self.steer {
+            Steer::Straight if self.distance == 0 => "stationary",
+            Steer::Straight => "straight",
+            Steer::BankLeft => "bank left",
+            Steer::BankRight => "bank right",
+            Steer::TurnLeft => "turn left",
+            Steer::TurnRight => "turn right",
+            Steer::TallonLeft => "Tallon roll left",
+            Steer::TallonRight => "Tallon roll right",
+            Steer::KTurn => "Koiogran turn",
+            Steer::SegnorLeft => "Segnor's loop left",
+            Steer::SegnorRight => "Segnor's loop right",
+        };
+        let color = match self.difficulty {
+            Difficulty::Easy => "green",
+            Difficulty::Normal => "white",
+            Difficulty::Hard => "red",
+        };
+        if self.distance == 0 {
+            format!("{steer} ({color})")
+        } else {
+            format!("{steer} {} ({color})", self.distance)
+        }
+    }
+}
+
 /// The maneuvers available to one agility tier of ship,
 /// loaded from `assets/data/maneuvers.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

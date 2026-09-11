@@ -200,6 +200,12 @@ pub struct ShipState {
     /// Satellite tokens carried (mission 3, "Dark Whispers").
     #[serde(default)]
     pub satellites: u8,
+    /// Cards switched on for this round (secret; see `plan_card_use`).
+    #[serde(default)]
+    pub card_uses: Vec<crate::upgrade::UpgradeId>,
+    /// Snap Shot already fired this Activation phase.
+    #[serde(default)]
+    pub snap_shot_fired: bool,
 }
 
 impl ShipState {
@@ -244,6 +250,8 @@ impl ShipState {
             destroyed: false,
             escaped: false,
             satellites: 0,
+            card_uses: Vec::new(),
+            snap_shot_fired: false,
         }
     }
 }

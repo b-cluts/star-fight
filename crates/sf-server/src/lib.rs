@@ -764,6 +764,28 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
+                    ClientMsg::PlanCardUse { ship_id, card, on } => {
+                        match gs.plan_card_use(&content, player, ship_id, card, on) {
+                            // Plans are secret: only the planner's view changes.
+                            Ok(()) => send_to!(
+                                seat,
+                                ServerMsg::Snapshot {
+                                    phase: gs.phase,
+                                    turn: gs.turn,
+                                    ships: gs.snapshot_for(&content, player),
+                                    committed: gs.committed.clone(),
+                                    initiative: gs.initiative.0 as u8,
+                                    squad_totals: gs.squad_totals.clone(),
+                                    teams: gs.teams.clone(),
+                                    bombs: gs.bombs.clone(),
+                                    obstacles: gs.obstacles.clone(),
+                                    zones: gs.deploy_zones(player),
+                                    mission: gs.mission_view(player),
+                                }
+                            ),
+                            Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
+                        }
+                    }
                     ClientMsg::PlanManeuver { ship_id, maneuver_index } => {
                         match gs.plan_maneuver(&content, player, ship_id, maneuver_index) {
                             // Plans are secret: only the planner's view changes.

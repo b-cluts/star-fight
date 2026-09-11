@@ -305,6 +305,7 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         destroyed: false,
         escaped: false,
         satellites: 0,
+        card_uses: Vec::new(),
         on_asteroid: false,
         plan: None,
         planned_action: None,
@@ -627,9 +628,20 @@ fn poll_net(mut online: ResMut<Online>, mut game: ResMut<Game>) {
                     online.waiting_on = None;
                     online.combat_log = events;
                     let tokens = online.snap.as_ref().map(|s| s.bombs.clone()).unwrap_or_default();
+                    // Snap Shot attacks play right after the move they answer.
+                    let mut items = Vec::new();
+                    for mut m in moves {
+                        let snaps = std::mem::take(&mut m.snap_shots);
+                        items.push(AnimItem::Move(m));
+                        for rec in snaps {
+                            let line = attack_line(&online, &game, &rec);
+                            online.combat_log.push(line.clone());
+                            items.push(AnimItem::Attack { rec, line });
+                        }
+                    }
                     let anim = online.anim.get_or_insert_with(|| Anim::new(tokens));
-                    for m in moves {
-                        anim.push(AnimItem::Move(m));
+                    for it in items {
+                        anim.push(it);
                     }
                     for p in pulls {
                         anim.push(AnimItem::Pull(p));
@@ -1431,6 +1443,30 @@ fn planning_input(
         };
         online.send(ClientMsg::PlanBomb { ship_id: ShipId(selected), bomb });
     }
+    // U: switch the next toggle card on (Lightning Reflexes, Electronic
+    // Baffle, Jan Ors, Decoy); with every one on, switch them all off.
+    if keys.just_pressed(KeyCode::KeyU) && !extras.toggles.is_empty() {
+        let on: Vec<UpgradeId> = online
+            .snap
+            .as_ref()
+            .and_then(|s| s.ships.iter().find(|v| v.id.0 == selected))
+            .map(|v| v.card_uses.clone())
+            .unwrap_or_default();
+        match extras.toggles.iter().find(|c| !on.contains(c)) {
+            Some(&card) => {
+                online.send(ClientMsg::PlanCardUse { ship_id: ShipId(selected), card, on: true });
+            }
+            None => {
+                for card in extras.toggles.clone() {
+                    online.send(ClientMsg::PlanCardUse {
+                        ship_id: ShipId(selected),
+                        card,
+                        on: false,
+                    });
+                }
+            }
+        }
+    }
     // K: cycle the card actions (Marksmanship, Rage, Expose, R2-F2), then Pass.
     if keys.just_pressed(KeyCode::KeyK) && !extras.card_actions.is_empty() {
         let cards = &extras.card_actions;
@@ -1787,6 +1823,9 @@ fn second_action_label(kind: SecondActionKind) -> &'static str {
         SecondActionKind::RepositionAfterFocus => "Jake Farrell: boost/roll after a focus",
         SecondActionKind::RollOnGreenReveal => "BB-8: barrel roll before a green move",
         SecondActionKind::RepositionAfterAttack => "Turr Phennir: boost/roll after attacking",
+        SecondActionKind::CardActionThenStress => {
+            "Experimental Interface: free card action (K), then stress"
+        }
     }
 }
 
@@ -2397,6 +2436,10 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if let Some(b) = view.bomb {
             line.push_str(&format!(" | bomb: {} (drops on reveal)", card_name(&game, b)));
         }
+        if !view.card_uses.is_empty() {
+            let names: Vec<String> = view.card_uses.iter().map(|c| card_name(&game, *c)).collect();
+            line.push_str(&format!(" | using: {}", names.join(", ")));
+        }
         if snap.phase == Phase::Planning {
             let dial = game.dial(class);
             if !dial.is_empty() {
@@ -2497,6 +2540,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
             }
             if !extras.card_actions.is_empty() {
                 acts.push("K Card action");
+            }
+            if !extras.toggles.is_empty() {
+                acts.push("U Use card");
             }
             let second = match extras.second {
                 Some(k) => format!(" • 0 then a key: 2nd action ({})", second_action_label(k)),

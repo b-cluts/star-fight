@@ -58,6 +58,13 @@ pub enum ClientMsg {
         ship_id: ShipId,
         bomb: Option<UpgradeId>,
     },
+    /// Secretly switch a card's "use it this round" effect on or off
+    /// (Lightning Reflexes, Electronic Baffle, Jan Ors, Decoy).
+    PlanCardUse {
+        ship_id: ShipId,
+        card: UpgradeId,
+        on: bool,
+    },
     /// Secretly plan a second action where an ability grants one
     /// (ShipView.extras.second); None clears it.
     PlanSecondAction {

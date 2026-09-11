@@ -343,6 +343,15 @@ impl UpgradeEffect {
                 | CrewRollDefenseForTokensAction
                 | CrewSaboteurAction
                 | DiscardFacedownOnDefenseDie
+                | SetupSkillOverride
+                | ExtraActionThenStress
+                | SystemDamageToDiscardToken
+                | CrewPeekEnemyDial
+                | CrewEvadeInsteadOfFocusForFriendly
+                | SwapSkillWithFriendly
+                | SnapShotReaction
+                | RedTurn1Action
+                | RotateShip180Discard
                 | OrdnanceTokens
                 | ResolveStressAfterAction
                 | StressAllowsRepositionUnder3

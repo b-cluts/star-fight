@@ -49,6 +49,9 @@ pub enum SecondActionKind {
     /// Turr Phennir: a free boost or barrel roll after performing an
     /// attack (resolved in the Combat phase, recorded on the attack).
     RepositionAfterAttack,
+    /// Experimental Interface: once per round, a free card action after
+    /// the first action, then a stress token.
+    CardActionThenStress,
 }
 
 /// What a ship may plan beyond the basic action bar (own ships only).
@@ -68,6 +71,16 @@ pub struct ActionExtras {
     /// Expert Handling: a barrel roll without the icon on the bar (stress
     /// if it is missing), removing one enemy target lock afterwards.
     pub expert_roll: bool,
+    /// Daredevil: a red turn-1 as an action (`Boost` with a turn
+    /// template), without the boost icon; 2 attack dice of self-damage
+    /// when the icon is missing.
+    #[serde(default)]
+    pub daredevil: bool,
+    /// Cards with a "use it this round" switch (Lightning Reflexes,
+    /// Electronic Baffle, Jan Ors, Decoy), planned with
+    /// `plan_card_use`.
+    #[serde(default)]
+    pub toggles: Vec<UpgradeId>,
 }
 
 /// The 1-speed maneuver a boost flies. Boosting does NOT count as

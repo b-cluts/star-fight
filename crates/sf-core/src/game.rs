@@ -200,6 +200,10 @@ pub struct MoveRecord {
     /// Left the board alive under a mission rule (see `destroyed`).
     #[serde(default)]
     pub escaped: bool,
+    /// Snap Shot attacks enemies fired at this ship right after its
+    /// maneuver, before its action.
+    #[serde(default)]
+    pub snap_shots: Vec<AttackRecord>,
     /// Flew off the board and is destroyed.
     pub destroyed: bool,
     /// Stress tokens after the maneuver.
@@ -346,6 +350,8 @@ struct Shot {
     second: bool,
     /// Luke Skywalker (crew): one focus result becomes a hit for free.
     focus_hit: bool,
+    /// Snap Shot: the attacker may not modify the dice.
+    no_mods: bool,
 }
 
 /// An attack whose owner must Declare Target (core rules p.10): more than
@@ -437,6 +443,9 @@ pub struct ShipView {
     /// Satellite tokens carried (mission 3).
     #[serde(default)]
     pub satellites: u8,
+    /// Cards switched on for this round (own ships only).
+    #[serde(default)]
+    pub card_uses: Vec<UpgradeId>,
     /// Ended its move on an asteroid: no attack this round.
     #[serde(default)]
     pub on_asteroid: bool,
@@ -1195,6 +1204,16 @@ impl GameState {
         }
         self.ships[i].stress += 1;
         let who = self.label(content, i);
+        // Electronic Baffle (switched on): one damage sheds the token —
+        // never when that damage would destroy the ship.
+        if self.using(content, i, UpgradeEffect::SystemDamageToDiscardToken).is_some()
+            && (self.ships[i].shields > 0 || self.ships[i].hull > 1)
+        {
+            self.damage_point(i);
+            self.ships[i].stress -= 1;
+            events.push(format!("{who}: Electronic Baffle — 1 damage, stress token discarded"));
+            return;
+        }
         match self.ability(content, &self.ships[i]) {
             Some(PilotAbility::DiscardStressIfEnemyInArcRange1)
                 if self.enemy_in_arc_at_range1(content, i) =>
@@ -2195,6 +2214,20 @@ impl GameState {
         }
         self.ships[i].pose = Some(pose);
         if self.ships.iter().all(|s| s.pose.is_some()) {
+            // Hyperwave Comm Scanner: at setup, every other friendly ship
+            // placed at Range 1-2 gets a token (policy: focus). The skill
+            // override for placement order has no meaning with hidden,
+            // simultaneous placement.
+            if self.turn == 1 {
+                for k in 0..self.ships.len() {
+                    if !self.has_effect(content, k, UpgradeEffect::SetupSkillOverride) {
+                        continue;
+                    }
+                    for f in self.friends_within(content, k, 2) {
+                        self.ships[f].focus += 1;
+                    }
+                }
+            }
             self.phase = Phase::Planning;
         }
         Ok(())
@@ -2263,9 +2296,15 @@ impl GameState {
             return Err(Rejection::ShipDestroyed);
         }
         let extras = self.action_extras(content, &self.ships[i]);
+        let daredevil_turn = extras.daredevil
+            && matches!(
+                planned,
+                PlannedAction::Boost(action::BoostDir::TurnLeft | action::BoostDir::TurnRight)
+            );
         if let Some(kind) = planned.kind()
             && !self.action_bar(content, &self.ships[i]).contains(&kind)
             && !(kind == ActionKind::BarrelRoll && extras.expert_roll)
+            && !daredevil_turn
         {
             return Err(Rejection::ActionNotOnBar);
         }
@@ -2317,7 +2356,7 @@ impl GameState {
                 }
             }
             PlannedAction::Boost(action::BoostDir::TurnLeft | action::BoostDir::TurnRight)
-                if !extras.turn_boost =>
+                if !extras.turn_boost && !extras.daredevil =>
             {
                 Err(Rejection::TemplateNotAllowed)
             }
@@ -2374,6 +2413,9 @@ impl GameState {
                         .is_some_and(|k| self.action_bar(content, &self.ships[i]).contains(&k))
             }
             SecondActionKind::TwoActions => planned != PlannedAction::Pass,
+            SecondActionKind::CardActionThenStress => {
+                matches!(planned, PlannedAction::CardAction(_) | PlannedAction::CardActionAt(..))
+            }
             SecondActionKind::BoostAfterMove => matches!(planned, PlannedAction::Boost(_)),
             SecondActionKind::RepositionAfterFocus | SecondActionKind::RepositionAfterAttack => {
                 reposition
@@ -2424,6 +2466,12 @@ impl GameState {
             Some(SecondActionKind::RollOnGreenReveal)
         } else if ability == Some(PilotAbility::FreeRepositionAfterAttack) {
             Some(SecondActionKind::RepositionAfterAttack)
+        } else if s.upgrades.iter().any(|u| {
+            content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                == Some(UpgradeEffect::ExtraActionThenStress)
+                && !s.used_round.contains(u)
+        }) {
+            Some(SecondActionKind::CardActionThenStress)
         } else {
             None
         };
@@ -2478,6 +2526,8 @@ impl GameState {
             bank_roll: ability == Some(PilotAbility::BarrelRollWithBank1ForStress),
             expert_roll: self.count_effect(content, s, UpgradeEffect::BarrelRollActionDiscardLock)
                 > 0,
+            daredevil: self.count_effect(content, s, UpgradeEffect::RedTurn1Action) > 0,
+            toggles: self.toggle_cards(content, s),
         }
     }
 
@@ -2553,6 +2603,30 @@ impl GameState {
             }
             PlannedAction::Focus => {
                 self.ships[i].focus += 1;
+                // Jan Ors (crew, switched on, once per round) on a friend
+                // at Range 1-3: an evade token instead.
+                let jan = (0..self.ships.len()).find(|&j| {
+                    j != i
+                        && !self.ships[j].destroyed
+                        && self.allied(self.ships[j].owner, self.ships[i].owner)
+                        && self.range_between(content, i, j).is_some()
+                        && self
+                            .using(content, j, UpgradeEffect::CrewEvadeInsteadOfFocusForFriendly)
+                            .is_some_and(|c| !self.ships[j].used_round.contains(&c))
+                });
+                if let Some(j) = jan {
+                    let card = self
+                        .using(content, j, UpgradeEffect::CrewEvadeInsteadOfFocusForFriendly)
+                        .expect("found above");
+                    self.ships[j].used_round.push(card);
+                    self.ships[i].focus -= 1;
+                    self.ships[i].evade += 1;
+                    events.push(format!(
+                        "{}: Jan Ors — evade token instead of focus for {}",
+                        self.label(content, j),
+                        self.label(content, i)
+                    ));
+                }
                 // Recon Specialist: a second focus token.
                 if self.has_effect(content, i, UpgradeEffect::CrewExtraFocusOnFocusAction) {
                     self.ships[i].focus += 1;
@@ -2602,11 +2676,26 @@ impl GameState {
             }
             PlannedAction::Boost(dir) => {
                 // Not a maneuver: no stress interaction. Blocked if it
-                // would overlap a ship or leave the board.
+                // would overlap a ship or leave the board. Daredevil (a
+                // turn without Blue Ace's free template): the turn is red
+                // — a stress token — and without the boost icon two
+                // attack dice of damage are rolled against the ship.
+                let daredevil =
+                    matches!(dir, action::BoostDir::TurnLeft | action::BoostDir::TurnRight)
+                        && self.ability(content, &self.ships[i])
+                            != Some(PilotAbility::BoostWithTurnTemplate)
+                        && self.has_effect(content, i, UpgradeEffect::RedTurn1Action);
                 match maneuver::apply(pose, action::boost_maneuver(dir)) {
                     Ok(candidate) if clear(&self.board, candidate) => {
                         self.ships[i].pose = Some(candidate);
                         self.after_reposition_cards(content, i, events);
+                        if daredevil {
+                            events.push(format!(
+                                "{}: Daredevil — red turn 1, stress",
+                                self.label(content, i)
+                            ));
+                            self.gain_stress(content, i, events);
+                        }
                         ActionResult::Performed
                     }
                     _ => ActionResult::Failed,
@@ -3083,6 +3172,67 @@ impl GameState {
     /// Secretly choose a bomb card to drop when the dial is revealed
     /// (None = keep it). Only dial-reveal bombs qualify; mines are
     /// dropped through `PlannedAction::DropMine`.
+    /// Cards whose effect is a per-round choice: switched on with the dial.
+    fn toggle_cards(&self, content: &Content, s: &ShipState) -> Vec<UpgradeId> {
+        s.upgrades
+            .iter()
+            .copied()
+            .filter(|u| {
+                matches!(
+                    content.upgrades.upgrade(*u).and_then(|c| c.effect),
+                    Some(
+                        UpgradeEffect::RotateShip180Discard
+                            | UpgradeEffect::SystemDamageToDiscardToken
+                            | UpgradeEffect::CrewEvadeInsteadOfFocusForFriendly
+                            | UpgradeEffect::SwapSkillWithFriendly
+                    )
+                )
+            })
+            .collect()
+    }
+
+    /// Secretly switch one of the ship's toggle cards on or off for this
+    /// round (see `toggle_cards`).
+    pub fn plan_card_use(
+        &mut self,
+        content: &Content,
+        player: PlayerId,
+        ship_id: ShipId,
+        card: UpgradeId,
+        on: bool,
+    ) -> Result<(), Rejection> {
+        if self.phase != Phase::Planning {
+            return Err(Rejection::WrongPhase);
+        }
+        if self.committed[player.0 as usize] {
+            return Err(Rejection::AlreadyCommitted);
+        }
+        let i = self.ship_index(ship_id)?;
+        if self.ships[i].owner != player {
+            return Err(Rejection::NotYourShip);
+        }
+        if self.ships[i].destroyed {
+            return Err(Rejection::ShipDestroyed);
+        }
+        if !self.toggle_cards(content, &self.ships[i]).contains(&card) {
+            return Err(Rejection::NoSuchUpgrade);
+        }
+        self.ships[i].card_uses.retain(|c| *c != card);
+        if on {
+            self.ships[i].card_uses.push(card);
+        }
+        Ok(())
+    }
+
+    /// Is `card`'s effect switched on for this round?
+    fn using(&self, content: &Content, i: usize, effect: UpgradeEffect) -> Option<UpgradeId> {
+        self.ships[i]
+            .card_uses
+            .iter()
+            .copied()
+            .find(|u| content.upgrades.upgrade(*u).and_then(|c| c.effect) == Some(effect))
+    }
+
     pub fn plan_bomb(
         &mut self,
         content: &Content,
@@ -3366,6 +3516,28 @@ impl GameState {
                 ));
             }
         }
+        // Decoy (switched on): swap pilot skill with a friend at Range 1-2
+        // for the phase — policy: the friend with the highest skill.
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.ships[i].pose.is_none()
+                || self.using(content, i, UpgradeEffect::SwapSkillWithFriendly).is_none()
+            {
+                continue;
+            }
+            if let Some(f) =
+                self.friends_within(content, i, 2).into_iter().max_by_key(|&f| skills[f])
+            {
+                skills.swap(i, f);
+                events.push(format!(
+                    "{}: Decoy — swaps pilot skill with {} ({} / {})",
+                    self.label(content, i),
+                    self.label(content, f),
+                    skills[i],
+                    skills[f]
+                ));
+            }
+        }
         let combatants: Vec<(ShipId, u8, PlayerId)> = self
             .ships
             .iter()
@@ -3543,6 +3715,7 @@ impl GameState {
                         weapon: o.weapon,
                         second: false,
                         focus_hit: false,
+                        no_mods: false,
                     };
                     return Ok(CombatStep::Attack(self.fire(content, a_idx, shot, roll)));
                 }
@@ -3598,7 +3771,7 @@ impl GameState {
         let a_idx = self.ship_index(pending.attacker)?;
         let d_idx = self.ship_index(target)?;
         self.combat.as_mut().expect("checked above").pending = None;
-        let shot = Shot { d_idx, range, weapon, second: false, focus_hit: false };
+        let shot = Shot { d_idx, range, weapon, second: false, focus_hit: false, no_mods: false };
         Ok(self.fire(content, a_idx, shot, roll))
     }
 
@@ -3673,6 +3846,7 @@ impl GameState {
                             weapon: None,
                             second: false,
                             focus_hit: luke,
+                            no_mods: false,
                         },
                     ));
                 }
@@ -3716,6 +3890,7 @@ impl GameState {
                         weapon: o.weapon,
                         second: false,
                         focus_hit: false,
+                        no_mods: false,
                     },
                 ));
             }
@@ -3757,6 +3932,7 @@ impl GameState {
                             weapon: None,
                             second: false,
                             focus_hit: false,
+                            no_mods: false,
                         },
                     ));
                 }
@@ -3812,6 +3988,44 @@ impl GameState {
         );
         let mut records = Vec::new();
         let mut events: Vec<String> = Vec::new();
+        for s in self.ships.iter_mut() {
+            s.snap_shot_fired = false;
+        }
+        // Intelligence Agent (crew): at the start of the Activation phase
+        // the nearest enemy dial at Range 1-2 is read out (flavour only —
+        // plans are already fixed).
+        for k in 0..self.ships.len() {
+            if self.ships[k].destroyed
+                || !self.has_effect(content, k, UpgradeEffect::CrewPeekEnemyDial)
+            {
+                continue;
+            }
+            let target = (0..self.ships.len())
+                .filter(|&e| {
+                    !self.ships[e].destroyed
+                        && !self.allied(self.ships[e].owner, self.ships[k].owner)
+                        && self.ships[e].plan.is_some()
+                })
+                .filter_map(|e| {
+                    self.range_between(content, k, e).filter(|r| *r <= 2).map(|r| (r, e))
+                })
+                .min();
+            if let Some((_, e)) = target {
+                let s = &self.ships[e];
+                let dial = &content
+                    .dials
+                    .set(self.class_of(content, s).maneuver_set)
+                    .expect("dial")
+                    .maneuvers;
+                let man = dial[s.plan.expect("filtered") as usize];
+                events.push(format!(
+                    "{}: Intelligence Agent — {} has dialed {}",
+                    self.label(content, k),
+                    self.label(content, e),
+                    man.label()
+                ));
+            }
+        }
         // Leia Organa (crew): discarded at the start of the Activation
         // phase when a friendly ship revealed a red maneuver.
         let planned_red = |gs: &Self, j: usize| -> bool {
@@ -3994,7 +4208,7 @@ impl GameState {
                 stop -= 1;
                 bumped = true;
             }
-            let end = used_path[stop];
+            let mut end = used_path[stop];
             let fled = !rules::within_board(&self.board, &rules::footprint_corners(end, fp));
             let exit = mission::exit_edge(&self.board, combat::base_center(end, fp));
             let escaped = fled && self.mission_escape(i, exit);
@@ -4223,6 +4437,65 @@ impl GameState {
                 let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
                 events.push(format!("{label}: Stunned Pilot — 1 damage from the collision{died}"));
             }
+            // Snap Shot: an enemy carrying it fires at this ship right
+            // after its maneuver (Range 1, in arc; unmodified dice; once
+            // per Activation phase — policy: always, at the first chance).
+            let mut snap_shots = Vec::new();
+            if !self.ships[i].destroyed {
+                for s in 0..self.ships.len() {
+                    if s == i
+                        || self.ships[s].destroyed
+                        || self.ships[s].snap_shot_fired
+                        || self.allied(self.ships[s].owner, self.ships[i].owner)
+                        || self.ships[i].destroyed
+                    {
+                        continue;
+                    }
+                    let Some(card) =
+                        self.card_with_effect(content, s, UpgradeEffect::SnapShotReaction)
+                    else {
+                        continue;
+                    };
+                    if self.range_between(content, s, i) != Some(1)
+                        || !self.ship_in_front_arc(content, s, i)
+                    {
+                        continue;
+                    }
+                    self.ships[s].snap_shot_fired = true;
+                    events.push(format!(
+                        "{}: Snap Shot at {} as it completes its maneuver",
+                        self.label(content, s),
+                        self.label(content, i)
+                    ));
+                    let shot = Shot {
+                        d_idx: i,
+                        range: 1,
+                        weapon: Some(card),
+                        second: false,
+                        focus_hit: false,
+                        no_mods: true,
+                    };
+                    snap_shots.push(self.perform_attack_on(content, s, shot, roll, &mut events));
+                }
+            }
+            // Lightning Reflexes (switched on this round): after a white or
+            // green maneuver the ship spins 180° in place, the card is
+            // discarded and a stress token follows.
+            if !self.ships[i].destroyed
+                && difficulty != Difficulty::Hard
+                && let Some(card) = self.using(content, i, UpgradeEffect::RotateShip180Discard)
+            {
+                let centre = combat::base_center(end, fp);
+                end = Pose::new(
+                    2.0 * centre.x - end.anchor.x,
+                    2.0 * centre.y - end.anchor.y,
+                    end.heading + std::f64::consts::PI,
+                );
+                self.ships[i].pose = Some(end);
+                let e = self.discard_card(content, i, card, "rotated 180°, then stress");
+                events.push(e);
+                self.gain_stress(content, i, &mut events);
+            }
             let destroyed = self.ships[i].destroyed;
 
             // "Snap" Wexley: a free boost after a 2-4 speed maneuver when
@@ -4296,6 +4569,21 @@ impl GameState {
                     self.perform_action(content, i, planned, fp, &obstacles, &mut events)
                 };
                 dropped_after = tokens;
+                // Daredevil without the boost icon: the dice are rolled here,
+                // where dice are available.
+                if r == ActionResult::Performed
+                    && extras.daredevil
+                    && !extras.turn_boost
+                    && matches!(
+                        planned,
+                        PlannedAction::Boost(
+                            action::BoostDir::TurnLeft | action::BoostDir::TurnRight
+                        )
+                    )
+                    && !self.action_bar(content, &self.ships[i]).contains(&ActionKind::Boost)
+                {
+                    self.daredevil_damage(content, i, roll, &mut events);
+                }
                 // Second action: Darth Vader (always), Push the Limit
                 // (after a performed action, then stress), Jake Farrell
                 // (a reposition after a focus action).
@@ -4306,6 +4594,9 @@ impl GameState {
                     }
                     Some(SecondActionKind::RepositionAfterFocus) => {
                         r == ActionResult::Performed && planned == PlannedAction::Focus
+                    }
+                    Some(SecondActionKind::CardActionThenStress) => {
+                        r == ActionResult::Performed && planned != PlannedAction::Pass
                     }
                     _ => false,
                 };
@@ -4319,6 +4610,18 @@ impl GameState {
                     if extras.second == Some(SecondActionKind::FreeBarAction) {
                         events.push(format!(
                             "{}: Push the Limit — second action, then stress",
+                            self.label(content, i)
+                        ));
+                        self.gain_stress(content, i, &mut events);
+                    }
+                    if extras.second == Some(SecondActionKind::CardActionThenStress) {
+                        if let Some(card) =
+                            self.card_with_effect(content, i, UpgradeEffect::ExtraActionThenStress)
+                        {
+                            self.ships[i].used_round.push(card);
+                        }
+                        events.push(format!(
+                            "{}: Experimental Interface — free card action, then stress",
                             self.label(content, i)
                         ));
                         self.gain_stress(content, i, &mut events);
@@ -4337,6 +4640,7 @@ impl GameState {
                 bumped,
                 destroyed,
                 escaped: self.ships[i].escaped,
+                snap_shots,
                 stress,
                 action: planned,
                 action_result,
@@ -4479,7 +4783,9 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) {
-        // End of the Combat phase: Fel's Wrath finally goes down.
+        // End of the Combat phase: Electronic Baffle sheds ion tokens, and
+        // Fel's Wrath finally goes down.
+        self.baffle_ion(content, events);
         for i in 0..self.ships.len() {
             if self.ships[i].hull == 0 && !self.ships[i].destroyed {
                 self.ships[i].destroyed = true;
@@ -4589,6 +4895,7 @@ impl GameState {
             ship.evade = if keep { ship.evade.min(1) } else { 0 };
             ship.tractor = 0;
             ship.used_round.clear();
+            ship.card_uses.clear();
             ship.shield_lost_round = false;
             ship.on_asteroid = false;
             ship.card_actions.clear();
@@ -4799,7 +5106,7 @@ impl GameState {
         roll: &mut dyn FnMut() -> u8,
         events: &mut Vec<String>,
     ) -> AttackRecord {
-        let Shot { d_idx, range, weapon, second, focus_hit } = shot;
+        let Shot { d_idx, range, weapon, second, focus_hit, no_mods: _ } = shot;
         let attacker = self.ships[a_idx].id;
         let defender = self.ships[d_idx].id;
         let a_pose = self.ships[a_idx].pose.expect("attackers are on the board");
@@ -5009,7 +5316,8 @@ impl GameState {
         // Dark Curse: attackers cannot spend focus tokens or reroll.
         let omega = PilotAbility::LockedEnemiesCannotModifyDice;
         let attacker_may_modify = !(self.ability(content, &self.ships[d_idx]) == Some(omega)
-            && self.ships[d_idx].lock == Some(attacker));
+            && self.ships[d_idx].lock == Some(attacker))
+            && !shot.no_mods;
         let defender_may_modify = !(self.ability(content, &self.ships[a_idx]) == Some(omega)
             && self.ships[a_idx].lock == Some(defender));
         let dark_curse = self.ability(content, &self.ships[d_idx])
@@ -5956,6 +6264,7 @@ impl GameState {
                     destroyed: s.destroyed,
                     escaped: s.escaped,
                     satellites: s.satellites,
+                    card_uses: if own { s.card_uses.clone() } else { Vec::new() },
                     on_asteroid: s.on_asteroid,
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
@@ -6294,11 +6603,75 @@ impl GameState {
     }
 }
 
+impl GameState {
+    /// Daredevil without the boost icon: two attack dice against the
+    /// ship — hits are damage, criticals faceup cards.
+    fn daredevil_damage(
+        &mut self,
+        content: &Content,
+        i: usize,
+        roll: &mut dyn FnMut() -> u8,
+        events: &mut Vec<String>,
+    ) {
+        let faces = [AttackFace::from_d8(roll()), AttackFace::from_d8(roll())];
+        let mut hits = 0;
+        let mut crits = 0;
+        for f in faces {
+            match f {
+                AttackFace::Hit => hits += 1,
+                AttackFace::Crit => crits += 1,
+                _ => {}
+            }
+        }
+        for _ in 0..hits {
+            if !self.ships[i].destroyed {
+                self.damage_point(i);
+            }
+        }
+        for _ in 0..crits {
+            if self.ships[i].destroyed {
+                break;
+            }
+            if self.damage_point(i) == DamagePoint::Hull && !self.ships[i].destroyed {
+                let effect = crit::draw(roll());
+                self.apply_crit_effect(content, i, effect, roll, events);
+            }
+        }
+        let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
+        events.push(format!(
+            "{}: Daredevil — no boost icon: {hits} hit(s), {crits} critical(s) suffered{died}",
+            self.label(content, i)
+        ));
+    }
+
+    /// Electronic Baffle (switched on): at the end of the Combat phase each
+    /// ion token is shed for one damage, never a fatal one. (The card acts
+    /// on receipt; this happens before the next reveal, when ion matters.)
+    fn baffle_ion(&mut self, content: &Content, events: &mut Vec<String>) {
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.using(content, i, UpgradeEffect::SystemDamageToDiscardToken).is_none()
+            {
+                continue;
+            }
+            while self.ships[i].ion > 0 && (self.ships[i].shields > 0 || self.ships[i].hull > 1) {
+                self.damage_point(i);
+                self.ships[i].ion -= 1;
+                events.push(format!(
+                    "{}: Electronic Baffle — 1 damage, ion token discarded",
+                    self.label(content, i)
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::action::{BoostDir, Side};
     use crate::ship::ShipClassId;
+    use crate::squad::SquadShip;
     use std::f64::consts::FRAC_PI_2;
 
     const TIE: ShipClassId = ShipClassId(1);
@@ -6413,6 +6786,253 @@ mod tests {
                 .any(|e| e.contains("Garven Dreis — spent focus token passed to Red-2")),
             "{:?}",
             rec.events
+        );
+    }
+
+    #[test]
+    fn lightning_reflexes_spins_and_electronic_baffle_sheds_the_stress() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let lightning = UpgradeId(125);
+        let baffle = UpgradeId(205);
+        // A green straight 2, then the switched-on Lightning Reflexes spins
+        // the X-Wing to face north, discards the card and stresses it.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 12.0, south), 2)],
+        );
+        gs.ships[1].upgrades.push(lightning);
+        assert_eq!(gs.action_extras(&c, &gs.ships[1]).toggles, vec![lightning]);
+        assert_eq!(
+            gs.plan_card_use(&c, P1, ShipId(1), UpgradeId(108), true),
+            Err(Rejection::NoSuchUpgrade)
+        );
+        gs.plan_card_use(&c, P1, ShipId(1), lightning, true).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 30]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert!(
+            (mv.end.heading - north).abs() < 1e-9
+                || (mv.end.heading - north - 2.0 * std::f64::consts::PI).abs() < 1e-9,
+            "{}",
+            mv.end.heading
+        );
+        assert!((mv.end.anchor.y - 11.0).abs() < 1e-9, "spun about the base centre: {:?}", mv.end);
+        assert!(!gs.ships[1].upgrades.contains(&lightning));
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(gs.ships[1].card_uses.is_empty(), "toggles are per round");
+
+        // With Electronic Baffle switched on too, the stress costs a shield.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 12.0, south), 2)],
+        );
+        gs.ships[1].upgrades.extend([lightning, baffle]);
+        gs.plan_card_use(&c, P1, ShipId(1), lightning, true).unwrap();
+        gs.plan_card_use(&c, P1, ShipId(1), baffle, true).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 30]);
+        assert_eq!((gs.ships[1].stress, gs.ships[1].shields), (0, 2));
+        assert!(rec.events.iter().any(|e| e.contains("Electronic Baffle — 1 damage, stress")));
+        // Ion tokens received during the round are shed at the end of the
+        // Combat phase the same way.
+        gs.plan_card_use(&c, P1, ShipId(1), baffle, true).unwrap();
+        for id in [0u32, 1] {
+            let k = id as usize;
+            let (owner, class) = (gs.ships[k].owner, gs.ships[k].class);
+            let m = dial_index(&c, class, |m| {
+                m.steer == crate::maneuver::Steer::Straight && m.distance == 2
+            });
+            gs.plan_maneuver(&c, owner, ShipId(id), m).unwrap();
+        }
+        let mut rolls = scripted(vec![7; 30]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        gs.ships[1].ion = 2;
+        run_combat(&c, &mut gs, &mut rolls, |_| unreachable!("one target each"));
+        assert_eq!((gs.ships[1].ion, gs.ships[1].shields), (0, 0));
+    }
+
+    #[test]
+    fn jan_ors_swaps_a_friends_focus_for_evade_and_decoy_swaps_skill() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let jan = UpgradeId(165);
+        let decoy = UpgradeId(120);
+        // Red-leader (PS4, Jan Ors on) and Red-2 (PS2, Decoy on, focus
+        // action) at Range 1 of each other; the TIE ends at Range 1 of both.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("redsquadronveteran", Pose::new(8.0, 8.0, south), 2),
+                ("bluesquadronnovice", Pose::new(10.0, 8.0, south), 2),
+            ],
+        );
+        gs.ships[1].upgrades.push(jan);
+        gs.ships[2].upgrades.push(decoy);
+        gs.plan_card_use(&c, P1, ShipId(1), jan, true).unwrap();
+        gs.plan_card_use(&c, P1, ShipId(2), decoy, true).unwrap();
+        gs.plan_action(&c, P1, ShipId(2), PlannedAction::Focus).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(
+            rec.events
+                .iter()
+                .any(|e| e.contains("Jan Ors — evade token instead of focus for Red-2")),
+            "{:?}",
+            rec.events
+        );
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(2)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        assert!(
+            rec.events
+                .iter()
+                .any(|e| e.contains("Decoy — swaps pilot skill with Red-leader (4 / 2)")),
+            "{:?}",
+            rec.events
+        );
+        // Red-2 now fires first (skill 4), then Red-leader, then the TIE.
+        let order: Vec<ShipId> = rec.attacks.iter().map(|a| a.attacker).collect();
+        assert_eq!(order, vec![ShipId(2), ShipId(1), ShipId(0)]);
+    }
+
+    #[test]
+    fn daredevil_red_turn_and_experimental_interface_free_card_action() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let daredevil = UpgradeId(118);
+        // A T-65 (no boost icon) plans the Daredevil turn as its action:
+        // it turns 90°, takes a stress and two attack dice (both hits) hit
+        // its shields.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("redsquadronpilot", Pose::new(10.0, 8.0, south), 2)],
+        );
+        gs.ships[1].upgrades.push(daredevil);
+        assert!(gs.action_extras(&c, &gs.ships[1]).daredevil);
+        assert_eq!(
+            gs.plan_action(&c, P1, ShipId(1), PlannedAction::Boost(BoostDir::Straight)),
+            Err(Rejection::ActionNotOnBar)
+        );
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Boost(BoostDir::TurnLeft)).unwrap();
+        let rec = resolve(&c, &mut gs, vec![0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.action_result, ActionResult::Performed);
+        let turned = (gs.ships[1].pose.unwrap().heading - south).abs();
+        assert!((turned - FRAC_PI_2).abs() < 1e-9, "turned 90°: {turned}");
+        assert_eq!((gs.ships[1].stress, gs.ships[1].shields), (1, 0));
+        assert!(
+            rec.events.iter().any(|e| e.contains("Daredevil — no boost icon: 2 hit(s)")),
+            "{:?}",
+            rec.events
+        );
+
+        // Experimental Interface: Focus, then Marksmanship as a free card
+        // action, then a stress token.
+        let ei = UpgradeId(82);
+        let marksmanship = UpgradeId(108);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 12.0, south), 2)],
+        );
+        gs.ships[1].upgrades.extend([ei, marksmanship]);
+        assert_eq!(
+            gs.action_extras(&c, &gs.ships[1]).second,
+            Some(SecondActionKind::CardActionThenStress)
+        );
+        gs.plan_action(&c, P1, ShipId(1), PlannedAction::Focus).unwrap();
+        assert_eq!(
+            gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::Evade)),
+            Err(Rejection::SecondActionNotAllowed)
+        );
+        gs.plan_second_action(&c, P1, ShipId(1), Some(PlannedAction::CardAction(marksmanship)))
+            .unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 30]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(
+            mv.second,
+            Some((PlannedAction::CardAction(marksmanship), ActionResult::Performed))
+        );
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Experimental Interface")));
+    }
+
+    #[test]
+    fn hyperwave_setup_tokens_intelligence_agent_reads_a_dial_and_snap_shot_fires() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let scanner = UpgradeId(26);
+        let agent = UpgradeId(163);
+        let snap = UpgradeId(130);
+        // Hyperwave on the first TIE: the second, placed at Range 1, gets a
+        // focus token as placement completes.
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let imperial = Squad {
+            name: "i".into(),
+            faction: crate::ship::Faction::Empire,
+            ships: vec![
+                SquadShip {
+                    pilot: pilot("academypilot"),
+                    upgrades: vec![scanner],
+                    callsign: String::new(),
+                },
+                SquadShip {
+                    pilot: pilot("academypilot"),
+                    upgrades: vec![],
+                    callsign: String::new(),
+                },
+            ],
+        };
+        let rebel = Squad {
+            name: "r".into(),
+            faction: crate::ship::Faction::RebelAlliance,
+            ships: vec![SquadShip {
+                pilot: pilot("redsquadronveteran"),
+                upgrades: vec![agent, snap],
+                callsign: String::new(),
+            }],
+        };
+        let mut gs =
+            GameState::from_squads(board(), &c, &[&imperial, &rebel], &[0, 1], AttackFace::Hit)
+                .unwrap();
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(8.0, 2.5, north)).unwrap();
+        gs.place_ship(&c, P0, ShipId(1), Pose::new(10.0, 2.5, north)).unwrap();
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(10.0, 17.5, south)).unwrap();
+        assert_eq!((gs.ships[0].focus, gs.ships[1].focus), (0, 1));
+        // Stage: TIE #1 ends its straight 2 at Range 1 in the X-Wing's arc,
+        // so Snap Shot fires (2 unmodified dice) during the move; the
+        // X-Wing still attacks in the Combat phase. Intelligence Agent read
+        // TIE #1's dial (Range 2) at the start of the phase.
+        gs.ships[0].pose = Some(Pose::new(2.0, 2.5, north));
+        gs.ships[1].pose = Some(Pose::new(10.0, 4.0, north));
+        gs.ships[2].pose = Some(Pose::new(10.0, 8.0, south));
+        let tie_s2 = straight(&c, TIE, 2);
+        let xw_s1 = dial_index(&c, XWING, |m| {
+            m.steer == crate::maneuver::Steer::Straight && m.distance == 1
+        });
+        gs.plan_maneuver(&c, P0, ShipId(0), tie_s2).unwrap();
+        gs.plan_maneuver(&c, P0, ShipId(1), tie_s2).unwrap();
+        gs.plan_maneuver(&c, P1, ShipId(2), xw_s1).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(
+            rec.events.iter().any(
+                |e| e.contains("Intelligence Agent — Obsidian-2 has dialed straight 2 (green)")
+            ),
+            "{:?}",
+            rec.events
+        );
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert_eq!(mv.snap_shots.len(), 1, "{:?}", rec.events);
+        let shot = &mv.snap_shots[0];
+        assert_eq!(
+            (shot.attacker, shot.defender, shot.weapon, shot.attack_faces.len()),
+            (ShipId(2), ShipId(1), Some(snap), 2)
+        );
+        assert!(
+            rec.attacks.iter().any(|a| a.attacker == ShipId(2) && a.weapon.is_none()),
+            "normal attack still happens"
         );
     }
 
