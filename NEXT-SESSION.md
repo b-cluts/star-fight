@@ -890,9 +890,11 @@ pins.txt + last-used menu values), starfield.rs.
 
 ## Open items / needed from the user
 
-- Stressed-red-reveal rule: PROVISIONAL auto-substitution (slowest white
-  straight, effective-color aware; marked in game.rs) — user is
-  considering an alternative approach.
+- Stressed-red-reveal rule: DECIDED 2026-09-11 — stays automatic (slowest
+  white straight, effective-color aware). It can only fire through Captain
+  Yorr absorbing a friend's stress before his own reveal, since planning a
+  red maneuver while stressed is rejected. Revisit only if more cards that
+  stress other ships mid-activation enter the data.
 - Real squad costs, pilot roster (abilities would activate Injured
   Pilot), ordnance content, faction rosters for the squad builder.
 - 3+ players: DONE 2026-09-09 (teams / free-for-all, 2-4 seats; unique cards one per game).

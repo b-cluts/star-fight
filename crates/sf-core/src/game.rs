@@ -3855,11 +3855,12 @@ impl GameState {
             let (mut difficulty, mut rush) = self.maneuver_difficulty(content, i, &man);
             // p.17: a ship that is ALREADY stressed when it reveals a red
             // maneuver doesn't fly it — the opposing player picks any
-            // non-red replacement. Unreachable through normal play until
-            // external stress sources exist (planning red while stressed
-            // is rejected), and automated here as the slowest white
-            // straight, an adversarial stand-in for the opponent's choice.
-            // PROVISIONAL: the user may replace this policy.
+            // non-red replacement. Planning a red maneuver while stressed
+            // is rejected, so this only fires when stress arrives during
+            // another ship's activation (Captain Yorr absorbing a friend's
+            // stress). Automated as the slowest white straight, an
+            // adversarial stand-in for the opponent's choice — decided
+            // 2026-09-11 to stay automatic while the event is this rare.
             if self.ships[i].stress > 0
                 && difficulty == Difficulty::Hard
                 && let Some(sub) = substitute_non_red(dial, &self.ships[i].crits)
