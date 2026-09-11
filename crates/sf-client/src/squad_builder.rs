@@ -230,16 +230,21 @@ fn rebuild_slots(r: &mut Row, game: &Game) {
     let Some(pilot) = content.pilots.pilot(r.pilot) else { return };
     let Some(class) = content.ships.class(pilot.class) else { return };
     let mut slots: Vec<Slot> = class.upgrade_bar.clone();
-    let granted_talent = r
+    if pilot.talent_slot {
+        slots.push(Slot::Talent);
+    }
+    slots.extend(Slot::implicit());
+    // Slots granted by equipped cards (R2-D6, Bomb Loadout, Smuggling
+    // Compartment, ...), as the squad rules count them.
+    let granted: Vec<Slot> = r
         .slots
         .iter()
         .filter_map(|(_, u)| *u)
         .filter_map(|u| content.upgrades.upgrade(u))
-        .any(|u| u.effect == Some(UpgradeEffect::BarGainsTalent));
-    if pilot.talent_slot || granted_talent {
-        slots.push(Slot::Talent);
-    }
-    slots.extend(Slot::implicit());
+        .flat_map(|u| u.effect.map(UpgradeEffect::granted_slots).unwrap_or(&[]))
+        .copied()
+        .collect();
+    slots.extend(granted);
     let old = std::mem::take(&mut r.slots);
     let mut picks: Vec<Option<UpgradeId>> = old.iter().map(|(_, u)| *u).collect();
     r.slots = slots

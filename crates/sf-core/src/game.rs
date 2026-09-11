@@ -776,7 +776,8 @@ impl GameState {
         (self.printed(content, s).agility
             + self.count_effect(content, s, UpgradeEffect::AgilityPlus1DiscardWhenHit)
             + u8::from(gemmer)
-            + r2f2)
+            + r2f2
+            + s.agility_bonus)
             .saturating_sub(structural + expose + s.tractor)
     }
 
@@ -3229,6 +3230,7 @@ impl GameState {
                             | UpgradeEffect::SystemDamageToDiscardToken
                             | UpgradeEffect::CrewEvadeInsteadOfFocusForFriendly
                             | UpgradeEffect::SwapSkillWithFriendly
+                            | UpgradeEffect::CountermeasuresDiscard
                     )
                 )
             })
@@ -3530,6 +3532,7 @@ impl GameState {
         }
         let (moves, pulls, detonations, mut events) = self.resolve_movement(content, roll);
         self.combat_start_stress_relief(content, &mut events);
+        self.countermeasures(content, &mut events);
 
         // Combat order: highest pilot skill first (initiative breaks
         // ties), grouped by skill; each group's survivors are fixed when
@@ -4482,6 +4485,53 @@ impl GameState {
                 let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
                 events.push(format!("{label}: Stunned Pilot — 1 damage from the collision{died}"));
             }
+            // Anti-Pursuit Lasers / Ion Projector: every enemy large ship
+            // the maneuver would have overlapped (the first blocked pose
+            // along the template) rolls one attack die at the mover.
+            if bumped && !self.ships[i].destroyed {
+                let blocked = rules::footprint_corners(used_path[stop + 1], fp);
+                let owner = self.ships[i].owner;
+                let hitters: Vec<usize> = (0..self.ships.len())
+                    .filter(|&k| {
+                        k != i
+                            && !self.ships[k].destroyed
+                            && !self.allied(self.ships[k].owner, owner)
+                            && self.ships[k].pose.is_some_and(|p| {
+                                let c = rules::footprint_corners(
+                                    p,
+                                    self.class_of(content, &self.ships[k]).footprint,
+                                );
+                                rules::obbs_overlap(&blocked, &c)
+                            })
+                    })
+                    .collect();
+                for k in hitters {
+                    for (effect, name) in [
+                        (UpgradeEffect::BumpedEnemyDamage, "Anti-Pursuit Lasers"),
+                        (UpgradeEffect::BumpedEnemyIon, "Ion Projector"),
+                    ] {
+                        if self.ships[i].destroyed || !self.has_effect(content, k, effect) {
+                            continue;
+                        }
+                        let face = AttackFace::from_d8(roll());
+                        let who = self.label(content, i);
+                        let by = self.label(content, k);
+                        if !matches!(face, AttackFace::Hit | AttackFace::Crit) {
+                            events
+                                .push(format!("{who}: {name} ({by}) — rolled {face:?}, no effect"));
+                            continue;
+                        }
+                        if effect == UpgradeEffect::BumpedEnemyDamage {
+                            self.damage_point(i);
+                            let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
+                            events.push(format!("{who}: {name} ({by}) — 1 damage{died}"));
+                        } else {
+                            self.ships[i].ion += 1;
+                            events.push(format!("{who}: {name} ({by}) — 1 ion token"));
+                        }
+                    }
+                }
+            }
             // Snap Shot: an enemy carrying it fires at this ship right
             // after its maneuver (Range 1, in arc; unmodified dice; once
             // per Activation phase — policy: always, at the first chance).
@@ -4939,6 +4989,7 @@ impl GameState {
             ship.focus = 0;
             ship.evade = if keep { ship.evade.min(1) } else { 0 };
             ship.tractor = 0;
+            ship.agility_bonus = 0;
             ship.used_round.clear();
             ship.card_uses.clear();
             ship.shield_lost_round = false;
@@ -5104,7 +5155,8 @@ impl GameState {
                     AttackRequirement::Focus => self.ships[a_idx].focus > 0,
                 };
                 if armed {
-                    let obstructed = self.obstructed_between(&a_corners, &corners);
+                    let obstructed =
+                        self.obstructed_attack(content, a_idx, &a_corners, s, &corners);
                     options.push(AttackOption {
                         weapon,
                         target: s.id,
@@ -5162,8 +5214,11 @@ impl GameState {
             let d_pose = self.ships[d_idx].pose.expect("targets are on the board");
             let a_fp = self.class_of(content, &self.ships[a_idx]).footprint;
             let d_fp = self.class_of(content, &self.ships[d_idx]).footprint;
-            self.obstructed_between(
+            self.obstructed_attack(
+                content,
+                a_idx,
                 &rules::footprint_corners(a_pose, a_fp),
+                &self.ships[d_idx],
                 &rules::footprint_corners(d_pose, d_fp),
             )
         };
@@ -6260,6 +6315,76 @@ impl GameState {
     pub fn obstructed_between(&self, a: &[Vec2; 4], b: &[Vec2; 4]) -> bool {
         let (p, q) = combat::closest_points(a, b);
         self.obstacles.iter().any(|o| obstacle::segment_hits_polygon(p, q, &o.polygon()))
+    }
+
+    /// An attack from `attacker` (base `a`) on `defender` (base `b`) is
+    /// obstructed by an obstacle token or, with Tactical Jammer, by a
+    /// large ship friendly to the defender that the range line crosses.
+    fn obstructed_attack(
+        &self,
+        content: &Content,
+        attacker: usize,
+        a: &[Vec2; 4],
+        defender: &ShipState,
+        b: &[Vec2; 4],
+    ) -> bool {
+        if self.obstructed_between(a, b) {
+            return true;
+        }
+        let (p, q) = combat::closest_points(a, b);
+        (0..self.ships.len()).any(|k| {
+            let s = &self.ships[k];
+            k != attacker
+                && s.id != defender.id
+                && !s.destroyed
+                && self.allied(s.owner, defender.owner)
+                && !self.allied(s.owner, self.ships[attacker].owner)
+                && self.has_effect(content, k, UpgradeEffect::ObstructsEnemyAttacks)
+                && s.pose.is_some_and(|pose| {
+                    let c = rules::footprint_corners(pose, self.class_of(content, s).footprint);
+                    obstacle::segment_hits_polygon(p, q, &c)
+                })
+        })
+    }
+
+    /// Countermeasures, switched on during planning: at the start of the
+    /// Combat phase the card is discarded for +1 agility until the End
+    /// phase, and one enemy target lock on the ship is removed (policy:
+    /// the highest-skill enemy's lock).
+    fn countermeasures(&mut self, content: &Content, events: &mut Vec<String>) {
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed {
+                continue;
+            }
+            let Some(card) = self.using(content, i, UpgradeEffect::CountermeasuresDiscard) else {
+                continue;
+            };
+            let id = self.ships[i].id;
+            self.ships[i].upgrades.retain(|u| *u != card);
+            self.ships[i].card_uses.retain(|u| *u != card);
+            self.ships[i].agility_bonus += 1;
+            let owner = self.ships[i].owner;
+            let locker = (0..self.ships.len())
+                .filter(|&e| {
+                    !self.ships[e].destroyed
+                        && !self.allied(self.ships[e].owner, owner)
+                        && self.ships[e].locks_on(id)
+                })
+                .max_by_key(|&e| self.effective_skill(content, &self.ships[e]));
+            let who = self.label(content, i);
+            match locker {
+                Some(e) => {
+                    self.ships[e].drop_lock(id);
+                    events.push(format!(
+                        "{who}: Countermeasures — card discarded, agility +1 this round, {}'s lock removed",
+                        self.label(content, e)
+                    ));
+                }
+                None => events.push(format!(
+                    "{who}: Countermeasures — card discarded, agility +1 this round"
+                )),
+            }
+        }
     }
 
     /// What `viewer` is allowed to see right now.
@@ -11059,6 +11184,129 @@ mod tests {
         assert!(gs.ships[0].destroyed);
         assert!(rec.events.iter().any(|e| e.contains("swallowed")), "{:?}", rec.events);
         assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(0)));
+    }
+
+    #[test]
+    fn anti_pursuit_lasers_and_ion_projector_punish_a_bump() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let lasers = UpgradeId(84);
+        let projector = UpgradeId(85);
+        // The shuttle's straight 2 puts its base at y 4.5..6.5; the X-Wing's
+        // straight 4 from y 8 would end inside it and stops short.
+        let setup = |c: &Content| {
+            let mut gs = skirmish(
+                c,
+                &[("omicrongrouppilot", Pose::new(10.0, 4.5, north), 2)],
+                &[("redsquadronveteran", Pose::new(10.0, 8.0, south), 4)],
+            );
+            gs.ships[0].upgrades.extend([lasers, projector]);
+            gs
+        };
+        let mut gs = setup(&c);
+        let shields = gs.ships[1].shields;
+        // The lasers roll a hit, the projector a blank.
+        let mut rolls = vec![0, 7];
+        rolls.extend([7; 40]);
+        let rec = resolve(&c, &mut gs, rolls);
+        let xw = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert!(xw.bumped, "{:?}", xw.end);
+        assert_eq!(gs.ships[1].shields, shields - 1);
+        assert_eq!(gs.ships[1].ion, 0);
+        assert!(
+            rec.events.iter().any(|e| e.contains("Anti-Pursuit Lasers") && e.contains("1 damage")),
+            "{:?}",
+            rec.events
+        );
+        assert!(
+            rec.events.iter().any(|e| e.contains("Ion Projector") && e.contains("no effect")),
+            "{:?}",
+            rec.events
+        );
+        // The other way round: blank lasers, a crit for the projector.
+        let mut gs = setup(&c);
+        let mut rolls = vec![7, 3];
+        rolls.extend([7; 40]);
+        let rec = resolve(&c, &mut gs, rolls);
+        assert_eq!(gs.ships[1].shields, shields);
+        assert_eq!(gs.ships[1].ion, 1, "{:?}", rec.events);
+        // A clean move triggers nothing: the X-Wing starts further back.
+        let mut gs = skirmish(
+            &c,
+            &[("omicrongrouppilot", Pose::new(10.0, 4.5, north), 2)],
+            &[("redsquadronveteran", Pose::new(10.0, 12.0, south), 4)],
+        );
+        gs.ships[0].upgrades.extend([lasers, projector]);
+        let mut rolls = vec![0, 3];
+        rolls.extend([7; 40]);
+        let rec = resolve(&c, &mut gs, rolls);
+        assert!(!rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap().bumped);
+        assert_eq!((gs.ships[1].shields, gs.ships[1].ion), (shields, 0));
+    }
+
+    #[test]
+    fn countermeasures_add_agility_for_the_round_and_strip_a_lock() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let card = UpgradeId(86);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("outerrimsmuggler", Pose::new(10.0, 9.0, south), 1)],
+        );
+        gs.ships[1].upgrades.push(card);
+        gs.ships[0].take_lock(ShipId(1), false);
+        assert!(gs.ships[0].locks_on(ShipId(1)));
+        assert_eq!(gs.agility(&c, &gs.ships[1]), 1);
+        assert!(gs.action_extras(&c, &gs.ships[1]).toggles.contains(&card));
+        gs.plan_card_use(&c, P1, ShipId(1), card, true).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let shot = imperial_shot(&rec);
+        assert_eq!((shot.defender, shot.range), (ShipId(1), 2));
+        assert_eq!(shot.defense_faces.len(), 2, "agility 1 + 1");
+        assert!(!shot.lock_spent);
+        assert!(!gs.ships[0].locks_on(ShipId(1)), "the TIE's lock was removed");
+        assert!(!gs.ships[1].upgrades.contains(&card), "the card is discarded");
+        assert!(
+            rec.events.iter().any(|e| e.contains("Countermeasures") && e.contains("lock removed")),
+            "{:?}",
+            rec.events
+        );
+        assert_eq!(gs.agility(&c, &gs.ships[1]), 1, "the bonus ends with the round");
+    }
+
+    #[test]
+    fn tactical_jammer_obstructs_an_enemy_shot_at_a_friend() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let jammer = UpgradeId(87);
+        // After moving: TIE front at y 4.5, the YT-1300 at y 7..9 on the
+        // line to the X-Wing at y 10.5..11.5 (Range 3).
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("outerrimsmuggler", Pose::new(10.0, 8.0, south), 1),
+                ("redsquadronveteran", Pose::new(10.0, 11.5, south), 1),
+            ],
+        );
+        gs.ships[1].upgrades.push(jammer);
+        let mut rolls = scripted(vec![7; 60]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| {
+            // The TIE picks the X-Wing; everyone else has one option.
+            let t = if p.attacker == ShipId(0) { ShipId(2) } else { p.options[0].target };
+            (t, None)
+        });
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).unwrap();
+        assert_eq!((shot.defender, shot.range), (ShipId(2), 3));
+        assert!(shot.obstructed);
+        assert_eq!(shot.defense_faces.len(), 4, "agility 2, +1 Range 3, +1 obstructed");
+        // A friendly jammer never obstructs its own side's shots.
+        let back = rec.attacks.iter().find(|a| a.attacker == ShipId(2)).unwrap();
+        assert_eq!(back.defender, ShipId(0));
+        assert!(!back.obstructed);
     }
 
     #[test]

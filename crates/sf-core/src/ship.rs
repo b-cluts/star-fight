@@ -193,6 +193,9 @@ pub struct ShipState {
     /// Weapons Engineer (crew): a second lock, on a different ship.
     #[serde(default)]
     pub lock2: Option<ShipId>,
+    /// Countermeasures: +1 agility until the End phase.
+    #[serde(default)]
+    pub agility_bonus: u8,
     /// Active (faceup) critical effects — public information.
     pub crits: Vec<crate::crit::CritEffect>,
     pub destroyed: bool,
@@ -254,6 +257,7 @@ impl ShipState {
             ion: 0,
             lock: None,
             lock2: None,
+            agility_bonus: 0,
             crits: Vec::new(),
             destroyed: false,
             escaped: false,

@@ -126,6 +126,23 @@ pub enum UpgradeEffect {
     BarGainsBoost,
     BarGainsBarrelRoll,
     BarGainsTalent,
+    /// Bomb Loadout: a Bomb slot.
+    BarGainsBomb,
+    /// Smuggling Compartment: an Illicit slot plus a second Modification
+    /// slot whose card must cost 3 or fewer points.
+    BarGainsIllicitAndCheapModification,
+    // large-ship modifications
+    /// Anti-Pursuit Lasers: an enemy whose maneuver overlaps this ship
+    /// rolls one attack die and suffers 1 damage on a hit or crit.
+    BumpedEnemyDamage,
+    /// Ion Projector: as above, but an ion token instead of damage.
+    BumpedEnemyIon,
+    /// Countermeasures: switched on for a round (key U), discarded at the
+    /// start of the Combat phase for +1 agility until the End phase and
+    /// the removal of one enemy target lock.
+    CountermeasuresDiscard,
+    /// Tactical Jammer: this ship obstructs enemy attacks on friends.
+    ObstructsEnemyAttacks,
     // dice
     FocusToHitSpendFocus,
     BlankToHitSpendFocus,
@@ -289,11 +306,32 @@ pub enum UpgradeEffect {
 
 impl UpgradeEffect {
     /// Whether the rules engine currently applies this effect.
+    /// Upgrade slots an equipped card adds to the ship's bar (R2-D6's
+    /// talent slot, the TIE/x1 System slot, the Royal Guard TIE's second
+    /// Modification, Bomb Loadout, Smuggling Compartment).
+    pub fn granted_slots(self) -> &'static [Slot] {
+        use UpgradeEffect::*;
+        match self {
+            BarGainsTalent => &[Slot::Talent],
+            BarGainsSystemCheaper => &[Slot::System],
+            TwoDifferentModifications => &[Slot::Modification],
+            BarGainsBomb => &[Slot::Bomb],
+            BarGainsIllicitAndCheapModification => &[Slot::Illicit, Slot::Modification],
+            _ => &[],
+        }
+    }
+
     pub fn implemented(self) -> bool {
         use UpgradeEffect::*;
         matches!(
             self,
             HullPlus1
+                | BarGainsBomb
+                | BarGainsIllicitAndCheapModification
+                | BumpedEnemyDamage
+                | BumpedEnemyIon
+                | CountermeasuresDiscard
+                | ObstructsEnemyAttacks
                 | ShieldPlus1
                 | AgilityPlus1DiscardWhenHit
                 | SkillPlus2
@@ -456,7 +494,8 @@ pub struct Upgrade {
     pub xws: String,
     pub name: String,
     pub slot: Slot,
-    pub cost: u8,
+    /// Squad points; Chardaan Refit is the one negative card.
+    pub cost: i8,
     /// Named cards: at most one copy per squad.
     #[serde(default)]
     pub unique: bool,

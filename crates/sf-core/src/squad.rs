@@ -138,17 +138,22 @@ impl Squad {
 }
 
 pub fn ship_cost(content: &Content, ship: &SquadShip) -> u32 {
-    let pilot = content.pilots.pilot(ship.pilot).map(|p| p.cost as u32).unwrap_or(0);
+    let pilot = content.pilots.pilot(ship.pilot).map(|p| i32::from(p.cost)).unwrap_or(0);
     let cards: Vec<_> = ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)).collect();
-    let ups: u32 = cards.iter().map(|u| u.cost as u32).sum();
+    // Chardaan Refit costs -2, so the sum is signed.
+    let ups: i32 = cards.iter().map(|u| i32::from(u.cost)).sum();
     // TIE/x1: the first System card costs 4 less (to a minimum of 0).
     let x1 = cards.iter().any(|u| u.effect == Some(UpgradeEffect::BarGainsSystemCheaper));
     let rebate = if x1 {
-        cards.iter().find(|u| u.slot == Slot::System).map(|u| (u.cost as u32).min(4)).unwrap_or(0)
+        cards
+            .iter()
+            .find(|u| u.slot == Slot::System)
+            .map(|u| i32::from(u.cost).clamp(0, 4))
+            .unwrap_or(0)
     } else {
         0
     };
-    pilot + ups - rebate
+    (pilot + ups - rebate).max(0) as u32
 }
 
 /// Every problem with a squad, or its point total.
@@ -212,19 +217,27 @@ pub fn validate_squad(
         let cards: Vec<_> =
             ship.upgrades.iter().filter_map(|u| content.upgrades.upgrade(*u)).collect();
         for u in &cards {
-            match u.effect {
-                Some(UpgradeEffect::BarGainsTalent) => {
-                    *slots.entry(Slot::Talent).or_default() += 1;
-                }
-                // TIE/x1: a System slot. Royal Guard TIE: a second
-                // Modification slot.
-                Some(UpgradeEffect::BarGainsSystemCheaper) => {
-                    *slots.entry(Slot::System).or_default() += 1;
-                }
-                Some(UpgradeEffect::TwoDifferentModifications) => {
-                    *slots.entry(Slot::Modification).or_default() += 1;
-                }
-                _ => {}
+            for s in u.effect.map(UpgradeEffect::granted_slots).unwrap_or(&[]) {
+                *slots.entry(*s).or_default() += 1;
+            }
+        }
+        // Smuggling Compartment: the extra Modification must cost 3 or
+        // fewer points.
+        if cards
+            .iter()
+            .any(|u| u.effect == Some(UpgradeEffect::BarGainsIllicitAndCheapModification))
+        {
+            for u in cards.iter().filter(|u| {
+                u.slot == Slot::Modification
+                    && u.effect != Some(UpgradeEffect::BarGainsIllicitAndCheapModification)
+                    && u.cost > 3
+            }) {
+                errors.push(SquadError::Restricted {
+                    ship: i,
+                    upgrade: u.name.clone(),
+                    why: "Smuggling Compartment: the extra Modification must cost 3 or fewer"
+                        .into(),
+                });
             }
         }
         // Action icons including ones granted by modifications.
@@ -517,6 +530,67 @@ mod tests {
         );
         assert!(e.iter().any(|x| matches!(x, SquadError::WrongFaction { ship: 3 })), "{e:?}");
         assert!(e.iter().any(|x| matches!(x, SquadError::OverBudget { .. })), "{e:?}");
+    }
+
+    #[test]
+    fn bomb_loadout_smuggling_compartment_large_only_mods_and_chardaan_refit() {
+        let c = content();
+        let rules = SquadRules::default();
+        let squad =
+            |s: SquadShip| Squad { name: "t".into(), faction: s_faction(&c, &s), ships: vec![s] };
+        // Bomb Loadout opens a Bomb slot on the Y-Wing.
+        assert!(
+            validate_squad(
+                &squad(ship(&c, "goldsquadronpilot", &["bombloadout", "protonbombs"])),
+                &c,
+                &rules
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_squad(&squad(ship(&c, "goldsquadronpilot", &["protonbombs"])), &c, &rules)
+                .is_err()
+        );
+        // Smuggling Compartment: a second Modification of 3 or fewer points.
+        assert!(
+            validate_squad(
+                &squad(ship(&c, "outerrimsmuggler", &["smugglingcompartment", "hullupgrade"])),
+                &c,
+                &rules
+            )
+            .is_ok()
+        );
+        let e = errs(validate_squad(
+            &squad(ship(&c, "outerrimsmuggler", &["smugglingcompartment", "shieldupgrade"])),
+            &c,
+            &rules,
+        ));
+        assert!(e.iter().any(|x| matches!(x, SquadError::Restricted { .. })), "{e:?}");
+        // Large ship only.
+        let e = errs(validate_squad(
+            &squad(ship(&c, "academypilot", &["countermeasures"])),
+            &c,
+            &rules,
+        ));
+        assert!(e.iter().any(|x| matches!(x, SquadError::Restricted { .. })), "{e:?}");
+        assert!(
+            validate_squad(&squad(ship(&c, "outerrimsmuggler", &["countermeasures"])), &c, &rules)
+                .is_ok()
+        );
+        // Chardaan Refit refunds 2 points on an A-Wing and nothing else.
+        let refit = ship(&c, "greensquadronpilot", &["chardaanrefit"]);
+        let plain = ship(&c, "greensquadronpilot", &[]);
+        assert_eq!(ship_cost(&c, &refit) + 2, ship_cost(&c, &plain));
+        assert!(validate_squad(&squad(refit), &c, &rules).is_ok());
+        assert!(
+            validate_squad(&squad(ship(&c, "redsquadronveteran", &["chardaanrefit"])), &c, &rules)
+                .is_err()
+        );
+    }
+
+    fn s_faction(c: &Content, s: &SquadShip) -> Faction {
+        let p = c.pilots.pilot(s.pilot).unwrap();
+        c.ships.class(p.class).unwrap().faction
     }
 
     #[test]
