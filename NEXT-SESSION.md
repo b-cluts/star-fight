@@ -917,5 +917,6 @@ pins.txt + last-used menu values), starfield.rs.
 - Real squad costs, pilot roster (abilities would activate Injured
   Pilot), ordnance content, faction rosters for the squad builder.
 - 3+ players: DONE 2026-09-09 (teams / free-for-all, 2-4 seats; unique cards one per game).
-- Boost exists as an action (T-70 bar) — sandbox/online action keys
-  cover it; no dedicated preview arrows yet.
+- Boost preview arrows: DONE 2026-09-11 (`reposition_preview` in
+  online.rs: planned boost/roll drawn from the ghost's end in cyan, red if
+  illegal; faint candidate boost arrows when none is planned).

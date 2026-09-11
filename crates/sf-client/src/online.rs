@@ -6,12 +6,14 @@ use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::f64::consts::FRAC_PI_2;
 
-use sf_core::action::{ActionKind, ActionResult, BoostDir, PlannedAction, SecondActionKind, Side};
+use sf_core::action::{
+    self, ActionKind, ActionResult, BoostDir, PlannedAction, SecondActionKind, Side,
+};
 use sf_core::board::Seat;
 use sf_core::bombs::{BombKind, BombToken, Detonation};
 use sf_core::combat;
 use sf_core::game::{AttackRecord, MoveRecord, Phase, ShipView};
-use sf_core::geometry::{Pose, Vec2 as GVec2};
+use sf_core::geometry::{Footprint, Pose, Vec2 as GVec2};
 use sf_core::maneuver::{self, Difficulty};
 use sf_core::mission::{MissionKind, MissionView};
 use sf_core::obstacle::{self, Obstacle, ObstacleKind, Pull};
@@ -2293,6 +2295,41 @@ fn draw(
     render::draw_path(&mut gizmos, &game, &path, color);
     render::draw_base(&mut gizmos, &game, end, class.footprint, color);
     render::draw_heading_arrow(&mut gizmos, &game, end, color);
+    // Repositions after the move: the planned boost or barrel roll (and a
+    // reposition second action) drawn from the maneuver's end, in cyan
+    // (red when it would leave the board or land on an obstacle); with
+    // nothing planned, faint arrows show every boost the ship could take.
+    let fp = class.footprint;
+    let planned: Vec<PlannedAction> =
+        [view.planned_action, view.planned_action2].into_iter().flatten().collect();
+    let mut from = end;
+    let mut any_reposition = false;
+    for a in &planned {
+        let Some((rpath, rend)) = reposition_preview(from, fp, *a) else { continue };
+        any_reposition = true;
+        let corners = rules::footprint_corners(rend, fp);
+        let legal = rules::within_board(&game.board, &corners)
+            && snap.obstacles.iter().all(|o| !obstacle::convex_overlap(&corners, &o.polygon()));
+        let c = if legal { Color::srgb(0.4, 0.95, 1.0) } else { Color::srgb(1.0, 0.35, 0.35) };
+        render::draw_path(&mut gizmos, &game, &rpath, c);
+        render::draw_base(&mut gizmos, &game, rend, fp, c);
+        render::draw_heading_arrow(&mut gizmos, &game, rend, c);
+        from = rend;
+    }
+    if !any_reposition && (view.actions.contains(&ActionKind::Boost) || view.extras.daredevil) {
+        let mut dirs = vec![BoostDir::Straight, BoostDir::BankLeft, BoostDir::BankRight];
+        if view.extras.turn_boost || view.extras.daredevil {
+            dirs.extend([BoostDir::TurnLeft, BoostDir::TurnRight]);
+        }
+        for dir in dirs {
+            if let Ok(bpath) = maneuver::sample_path(end, action::boost_maneuver(dir)) {
+                let faint = Color::srgba(0.4, 0.95, 1.0, 0.35);
+                render::draw_path(&mut gizmos, &game, &bpath, faint);
+                render::draw_heading_arrow(&mut gizmos, &game, *bpath.last().unwrap(), faint);
+            }
+        }
+    }
+    let end = from;
     if arcs.0 {
         render::draw_firing_arc_with(
             &mut gizmos,
@@ -2310,6 +2347,27 @@ fn draw(
     gsprite.color = Color::srgba(1.0, 1.0, 1.0, 0.35);
     *gtf = tf;
     *gvis = Visibility::Visible;
+}
+
+/// Where a reposition action takes the ship from `start`: the sampled
+/// path (a straight line for rolls) and the final pose.
+fn reposition_preview(start: Pose, fp: Footprint, a: PlannedAction) -> Option<(Vec<Pose>, Pose)> {
+    let straight = |end: Pose| (vec![start, end], end);
+    Some(match a {
+        PlannedAction::Boost(dir) => {
+            let path = maneuver::sample_path(start, action::boost_maneuver(dir)).ok()?;
+            let end = *path.last()?;
+            (path, end)
+        }
+        PlannedAction::BarrelRoll(side) => straight(action::barrel_roll_pose(start, fp, side)),
+        PlannedAction::BarrelRollFar(side) => {
+            straight(action::barrel_roll_pose_with(start, fp, side, 2.0))
+        }
+        PlannedAction::BarrelRollBank(side, forward) => {
+            straight(action::barrel_roll_bank_pose(start, fp, side, forward))
+        }
+        _ => return None,
+    })
 }
 
 fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudText>>) {

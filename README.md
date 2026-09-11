@@ -62,6 +62,10 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    Lieutenant Lorrir bank-rolls on **;** / **'** (hold Shift to bend the
    template backward), Expert Handling rolls on 4 / 5 without the icon.
    Weapons fire from the Declare Target prompt (number keys or click).
+   The planning ghost shows the maneuver's end; a planned boost or barrel
+   roll (and a reposition second action) is drawn on from there in cyan,
+   red if it would leave the board or land on an obstacle, and with no
+   reposition planned faint arrows mark every boost the ship could take.
 
 **Effects Demo** in the menu plays every weapon impact, missile flight,
 bomb token and detonation in a loop on a fake board so you can review the
