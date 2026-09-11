@@ -322,7 +322,24 @@ and Server `ws://127.0.0.1:7777`.
       Weapons Engineer (`ShipState.lock2` + `locks_on/lock_free/
       take_lock/drop_lock` helpers used at every lock site; a lock action
       also locks the nearest other enemy; `ShipView.lock2`). The card
-      automation list is now COMPLETE for the encoded cards. MULTI-PLAYER SEATS DONE 2026-09-09 (PROTOCOL 4,
+      automation list is now COMPLETE for the encoded cards.
+      >>> NEXT (agreed 2026-09-11): (1) LARGE-SHIP MODIFICATIONS for the
+      ships we fly — Anti-Pursuit Lasers, Ion Projector (bump hook),
+      Countermeasures (once-per-game toggle), Tactical Jammer (large base
+      obstructs), Smuggling Compartment (grants Illicit), Bomb Loadout
+      (Y-Wing bomb slot), Chardaan Refit (A-Wing, needs a signed cost).
+      (2) SCUM AND VILLAINY, starting with the Most Wanted trio. The user
+      put source images in the repo root (ALL GITIGNORED — retailer /
+      unknown-license images, never commit; sprites must go through the
+      image-scan procedure in memory before any enters assets/):
+      `z95.jpeg` + `z95_dial.jpg`, `scum_ywing.jpeg` + `scum_ywing_dial.jpg`,
+      `firespray.jpeg` + `firespray_dial.jpg`. Read the dials from the
+      photos (crop + upscale with PIL, as done for the Interceptor), check
+      each ship image's license/watermark before using it as art (else
+      ask the user for a PD/CC0/CC-BY render), then: Faction::Scum,
+      classes + dials + pilots + Illicit/Salvaged Astromech cards, squad
+      names, bot squads, builder faction picker, laser colour.
+      MULTI-PLAYER SEATS DONE 2026-09-09 (PROTOCOL 4,
       unreleased): `GameSetup.players` 2-4 + `teams: Vec<u8>` (side per
       seat; empty = free-for-all; `set_teams`, `points_for_seat` =
       points / seats on the side per core rules p.20, `mode_name`);
