@@ -128,7 +128,10 @@ pub fn weapon_status(
                                 content.upgrades.upgrade(*u).and_then(|c| c.effect)
                                     == Some(UpgradeEffect::LockBecomesFocus)
                             });
-                        match candidates.iter().find(|c| Some(c.0) == me.lock) {
+                        match candidates
+                            .iter()
+                            .find(|c| me.lock == Some(c.0) || me.lock2 == Some(c.0))
+                        {
                             Some(&&(locked, band, _, _, obstructed)) => {
                                 WeaponState::Ready { target: locked, range: band, obstructed }
                             }

@@ -352,6 +352,7 @@ impl UpgradeEffect {
                 | SnapShotReaction
                 | RedTurn1Action
                 | RotateShip180Discard
+                | CrewTwoLocks
                 | OrdnanceTokens
                 | ResolveStressAfterAction
                 | StressAllowsRepositionUnder3

@@ -298,12 +298,31 @@ and Server `ws://127.0.0.1:7777`.
       enemy), `white_reds` (Leia), `lingers` (Fel's Wrath), `tractor`,
       `stored_focus` (Rey), `CritEffect::severity` (Maarek).
       Policies chosen for "may" effects are documented at each hook.
-      STILL DATA-ONLY (need a player choice or a bigger refactor):
-      upgrades Electronic Baffle, Weapons Engineer (two locks), Jan Ors,
-      Lightning Reflexes, Millennium Falcon title, Daredevil,
-      Experimental Interface, Snap Shot, Decoy, Hyperwave Comm Scanner,
-      Intelligence Agent; pilot Han Solo HotR (setup anywhere beyond
-      Range 3). MULTI-PLAYER SEATS DONE 2026-09-09 (PROTOCOL 4,
+      ~~STILL DATA-ONLY~~ ALL DONE 2026-09-11 (commits 8ca5653, 6630358,
+      + Weapons Engineer): per-round CARD TOGGLES (`ShipState.card_uses`,
+      `plan_card_use`, `ClientMsg::PlanCardUse`, `ActionExtras.toggles`,
+      client key U, HUD "using:") for Lightning Reflexes (spin 180° after
+      a non-red move, `end` updated), Electronic Baffle (stress on receipt
+      in `gain_stress`; ion tokens at the START of the End phase in
+      `baffle_ion`; never fatal), Jan Ors (friend's focus action → evade,
+      once per round), Decoy (swap skill with the highest-skill friend at
+      Range 1-2 at combat start). No toggle needed: Daredevil (`Boost`
+      with a turn template without the icon; `extras.daredevil`; red →
+      stress; no boost icon → 2 attack dice via `daredevil_damage` in the
+      move loop), Experimental Interface (`SecondActionKind::
+      CardActionThenStress`, once per round), Hyperwave Comm Scanner
+      (focus to friends at Range 1-2 when setup completes; the PS override
+      is moot with simultaneous placement), Intelligence Agent (flavour
+      log line at Activation start, `Maneuver::label`), Snap Shot (fired
+      in the move loop after an enemy's maneuver: Range 1, in arc, once
+      per phase, `Shot.no_mods`; `MoveRecord.snap_shots` played by the
+      client after the move), Han Solo HotR (`ShipState.late_setup`:
+      placed after all others, poses public via `late_setup_pending`,
+      zone = whole board, `Rejection::{PlaceLast, TooCloseToEnemy}`),
+      Weapons Engineer (`ShipState.lock2` + `locks_on/lock_free/
+      take_lock/drop_lock` helpers used at every lock site; a lock action
+      also locks the nearest other enemy; `ShipView.lock2`). The card
+      automation list is now COMPLETE for the encoded cards. MULTI-PLAYER SEATS DONE 2026-09-09 (PROTOCOL 4,
       unreleased): `GameSetup.players` 2-4 + `teams: Vec<u8>` (side per
       seat; empty = free-for-all; `set_teams`, `points_for_seat` =
       points / seats on the side per core rules p.20, `mode_name`);

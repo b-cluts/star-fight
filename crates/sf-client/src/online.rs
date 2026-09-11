@@ -301,6 +301,7 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         evade: 0,
         ion: 0,
         lock: None,
+        lock2: None,
         crits: Vec::new(),
         destroyed: false,
         escaped: false,
@@ -2402,6 +2403,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         }
         if let Some(l) = view.lock {
             line.push_str(&format!(" lock {}", callsign(Some(snap), l.0)));
+        }
+        if let Some(l) = view.lock2 {
+            line.push_str(&format!(" + lock {}", callsign(Some(snap), l.0)));
         }
         if view.on_asteroid {
             line.push_str(" | ON ASTEROID: no attack this round");

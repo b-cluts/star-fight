@@ -190,6 +190,9 @@ pub struct ShipState {
     pub ion: u8,
     /// Acquired target lock (public). Persists until re-locked or spent.
     pub lock: Option<ShipId>,
+    /// Weapons Engineer (crew): a second lock, on a different ship.
+    #[serde(default)]
+    pub lock2: Option<ShipId>,
     /// Active (faceup) critical effects — public information.
     pub crits: Vec<crate::crit::CritEffect>,
     pub destroyed: bool,
@@ -250,6 +253,7 @@ impl ShipState {
             evade: 0,
             ion: 0,
             lock: None,
+            lock2: None,
             crits: Vec::new(),
             destroyed: false,
             escaped: false,
@@ -257,6 +261,38 @@ impl ShipState {
             card_uses: Vec::new(),
             snap_shot_fired: false,
             late_setup: false,
+        }
+    }
+
+    /// Does the ship hold a target lock on `t` (either slot)?
+    pub fn locks_on(&self, t: ShipId) -> bool {
+        self.lock == Some(t) || self.lock2 == Some(t)
+    }
+
+    /// Room for another lock: the first slot, or the second with Weapons
+    /// Engineer (`two`).
+    pub fn lock_free(&self, two: bool) -> bool {
+        self.lock.is_none() || (two && self.lock2.is_none())
+    }
+
+    /// Acquire a lock on `t`. With `two` (Weapons Engineer) the previous
+    /// lock slides into the second slot; otherwise it is replaced.
+    pub fn take_lock(&mut self, t: ShipId, two: bool) {
+        if self.locks_on(t) {
+            return;
+        }
+        if two && self.lock.is_some() {
+            self.lock2 = self.lock;
+        }
+        self.lock = Some(t);
+    }
+
+    /// Spend or lose the lock on `t`; a second lock moves up.
+    pub fn drop_lock(&mut self, t: ShipId) {
+        if self.lock == Some(t) {
+            self.lock = self.lock2.take();
+        } else if self.lock2 == Some(t) {
+            self.lock2 = None;
         }
     }
 }

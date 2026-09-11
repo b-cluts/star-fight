@@ -440,6 +440,9 @@ pub struct ShipView {
     #[serde(default)]
     pub ion: u8,
     pub lock: Option<ShipId>,
+    /// Weapons Engineer: the second target lock.
+    #[serde(default)]
+    pub lock2: Option<ShipId>,
     /// Active critical effects — public, like faceup cards.
     pub crits: Vec<CritEffect>,
     pub destroyed: bool,
@@ -957,7 +960,7 @@ impl GameState {
     /// holds a lock on `target` and shares it.
     fn synced_lock(&self, content: &Content, a_idx: usize, target: ShipId) -> bool {
         self.friends_within(content, a_idx, 2).into_iter().any(|f| {
-            self.ships[f].lock == Some(target)
+            self.ships[f].locks_on(target)
                 && self.has_effect(content, f, UpgradeEffect::ShareLockWithFriendly)
         })
     }
@@ -1046,14 +1049,16 @@ impl GameState {
         why: &str,
         events: &mut Vec<String>,
     ) -> bool {
-        if self.ships[i].lock.is_some() || self.ships[i].destroyed {
+        if !self.ships[i].lock_free(self.two_locks(content, i)) || self.ships[i].destroyed {
             return false;
         }
         let Some(p) = self.ships[i].pose else { return false };
         let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
         let candidates: Vec<(usize, f64)> = (0..self.ships.len())
             .filter(|&e| {
-                !self.allied(self.ships[e].owner, self.ships[i].owner) && !self.ships[e].destroyed
+                !self.allied(self.ships[e].owner, self.ships[i].owner)
+                    && !self.ships[e].destroyed
+                    && !self.ships[i].locks_on(self.ships[e].id)
             })
             .filter_map(|e| {
                 let q = self.ships[e].pose?;
@@ -1069,7 +1074,9 @@ impl GameState {
         let target =
             kagi.or_else(|| candidates.iter().min_by(|a, b| a.1.total_cmp(&b.1))).map(|(e, _)| *e);
         let Some(e) = target else { return false };
-        self.ships[i].lock = Some(self.ships[e].id);
+        let two = self.two_locks(content, i);
+        let eid = self.ships[e].id;
+        self.ships[i].take_lock(eid, two);
         events.push(format!(
             "{}: {why} — locks {}",
             self.label(content, i),
@@ -1089,10 +1096,10 @@ impl GameState {
         friends.extend(self.friends_at_range1(content, i));
         for f in friends {
             let fid = self.ships[f].id;
-            if let Some(e) = (0..self.ships.len()).find(|&e| {
-                !self.allied(self.ships[e].owner, owner) && self.ships[e].lock == Some(fid)
-            }) {
-                self.ships[e].lock = None;
+            if let Some(e) = (0..self.ships.len())
+                .find(|&e| !self.allied(self.ships[e].owner, owner) && self.ships[e].locks_on(fid))
+            {
+                self.ships[e].drop_lock(fid);
                 events.push(format!(
                     "{}: Black One — {}'s lock on {} removed",
                     self.label(content, i),
@@ -1485,10 +1492,11 @@ impl GameState {
             self.gain_stress(content, d_idx, events);
         }
         if landing(faces)
-            && self.ships[d_idx].lock == Some(self.ships[a_idx].id)
+            && self.ships[d_idx].locks_on(self.ships[a_idx].id)
             && self.has_effect(content, d_idx, UpgradeEffect::ForceRerollWithLock)
         {
-            self.ships[d_idx].lock = None;
+            let aid = self.ships[a_idx].id;
+            self.ships[d_idx].drop_lock(aid);
             let n =
                 reroll_matching(faces, &[AttackFace::Crit, AttackFace::Hit], u8::MAX, &mut || {
                     AttackFace::from_d8(roll())
@@ -1505,7 +1513,7 @@ impl GameState {
         let holders: Vec<usize> = (0..self.ships.len())
             .filter(|&k| {
                 !self.ships[k].destroyed
-                    && self.ships[k].lock == Some(attacker)
+                    && self.ships[k].locks_on(attacker)
                     && self.has_effect(content, k, UpgradeEffect::ForceRerollLockedAttacker)
             })
             .collect();
@@ -1729,13 +1737,13 @@ impl GameState {
     ) -> bool {
         let ship = &self.ships[a_idx];
         if self.ability(content, ship) != Some(PilotAbility::SpendLockAndFocusForAllCrits)
-            || ship.lock != Some(defender)
+            || !ship.locks_on(defender)
             || ship.focus == 0
             || faces.is_empty()
         {
             return false;
         }
-        self.ships[a_idx].lock = None;
+        self.ships[a_idx].drop_lock(defender);
         self.ships[a_idx].focus -= 1;
         faces.fill(AttackFace::Crit);
         events.push(format!(
@@ -1900,12 +1908,13 @@ impl GameState {
                         j != a_idx
                             && self.allied(self.ships[j].owner, self.ships[a_idx].owner)
                             && !self.ships[j].destroyed
-                            && self.ships[j].lock.is_none()
+                            && self.ships[j].lock_free(self.two_locks(content, j))
                             && matches!(self.range_between(content, a_idx, j), Some(1 | 2))
                     })
                     .collect();
                 for j in friends {
-                    self.ships[j].lock = Some(defender);
+                    let two = self.two_locks(content, j);
+                    self.ships[j].take_lock(defender, two);
                     events
                         .push(format!("{}: locks {who} (thread tracers)", self.label(content, j)));
                 }
@@ -1987,21 +1996,23 @@ impl GameState {
         }
         // Fire-Control System: a lock on the defender afterwards.
         if !self.ships[d_idx].destroyed
-            && self.ships[a_idx].lock != Some(defender)
+            && !self.ships[a_idx].locks_on(defender)
             && self.has_effect(content, a_idx, UpgradeEffect::SystemLockAfterAttack)
         {
-            self.ships[a_idx].lock = Some(defender);
+            let two = self.two_locks(content, a_idx);
+            self.ships[a_idx].take_lock(defender, two);
             events
                 .push(format!("{who}: Fire-Control System — locks {}", self.label(content, d_idx)));
         }
         // R5-K6: after spending the lock, a defense die may bring it back.
         if outcome.lock_spent
             && !self.ships[d_idx].destroyed
-            && self.ships[a_idx].lock.is_none()
+            && !self.ships[a_idx].locks_on(defender)
             && self.has_effect(content, a_idx, UpgradeEffect::ReLockOnEvadeDie)
         {
             if DefenseFace::from_d8(roll()) == DefenseFace::Evade {
-                self.ships[a_idx].lock = Some(defender);
+                let two = self.two_locks(content, a_idx);
+                self.ships[a_idx].take_lock(defender, two);
                 events.push(format!(
                     "{who}: R5-K6 — evade rolled, lock on {} re-acquired",
                     self.label(content, d_idx)
@@ -2780,7 +2791,11 @@ impl GameState {
                     })
                     .is_some();
                 if in_range {
-                    self.ships[i].lock = Some(target);
+                    let two = self.two_locks(content, i);
+                    self.ships[i].take_lock(target, two);
+                    if two {
+                        self.weapons_engineer_second_lock(content, i, target, events);
+                    }
                     // Dutch Vander: a friend at Range 1-2 locks too.
                     if self.ability(content, &self.ships[i])
                         == Some(PilotAbility::FriendlyLockAfterLock)
@@ -2883,7 +2898,9 @@ impl GameState {
                             return (ActionResult::Failed, Vec::new());
                         };
                         if self.ship_in_front_arc(content, e, i) {
-                            self.ships[i].lock = Some(self.ships[e].id);
+                            let two = self.two_locks(content, i);
+                            let eid = self.ships[e].id;
+                            self.ships[i].take_lock(eid, two);
                             events.push(format!(
                                 "{}: R7-T1 — locks {}",
                                 self.label(content, i),
@@ -3176,9 +3193,9 @@ impl GameState {
         let me = self.ships[i].id;
         let owner = self.ships[i].owner;
         if let Some(e) = (0..self.ships.len())
-            .find(|&e| !self.allied(self.ships[e].owner, owner) && self.ships[e].lock == Some(me))
+            .find(|&e| !self.allied(self.ships[e].owner, owner) && self.ships[e].locks_on(me))
         {
-            self.ships[e].lock = None;
+            self.ships[e].drop_lock(me);
             events.push(format!(
                 "{label}: Expert Handling — {}'s target lock removed",
                 self.label(content, e)
@@ -3618,10 +3635,11 @@ impl GameState {
                 && let Some(f) = self
                     .friends_at_range1(content, i)
                     .into_iter()
-                    .find(|&f| self.ships[f].lock.is_none())
+                    .find(|&f| self.ships[f].lock_free(self.two_locks(content, f)))
             {
-                self.ships[f].lock = Some(l);
-                self.ships[i].lock = None;
+                let two = self.two_locks(content, f);
+                self.ships[f].take_lock(l, two);
+                self.ships[i].drop_lock(l);
                 events.push(format!(
                     "{}: Colonel Jendon — hands his target lock to {}",
                     self.label(content, i),
@@ -4836,7 +4854,7 @@ impl GameState {
             if self.ships[e].destroyed || self.facedown_cards(content, e) == 0 {
                 continue;
             }
-            self.ships[i].lock = None;
+            self.ships[i].drop_lock(l);
             let effect = crit::draw(roll());
             events.push(format!(
                 "{}: Lieutenant Colzet — lock spent, {}'s facedown card turns faceup: {}",
@@ -4927,10 +4945,10 @@ impl GameState {
             ship.on_asteroid = false;
             ship.card_actions.clear();
             ship.planned_action2 = None;
-            if let Some(l) = ship.lock
-                && dead.contains(&l)
-            {
-                ship.lock = None;
+            for l in [ship.lock, ship.lock2].into_iter().flatten() {
+                if dead.contains(&l) {
+                    ship.drop_lock(l);
+                }
             }
             for c in ship.crits.iter_mut() {
                 if let CritEffect::WeaponsFailure { rounds } = c {
@@ -5079,7 +5097,7 @@ impl GameState {
                 let armed = match req {
                     AttackRequirement::Free => true,
                     AttackRequirement::TargetLock => {
-                        self.ships[a_idx].lock == Some(s.id)
+                        self.ships[a_idx].locks_on(s.id)
                             || deadeye
                             || self.synced_lock(content, a_idx, s.id)
                     }
@@ -5195,8 +5213,8 @@ impl GameState {
             events.push(format!("{}: fires {name}{again}", self.label(content, a_idx)));
             if sw.spend && !second {
                 match sw.requires {
-                    AttackRequirement::TargetLock if self.ships[a_idx].lock == Some(defender) => {
-                        self.ships[a_idx].lock = None;
+                    AttackRequirement::TargetLock if self.ships[a_idx].locks_on(defender) => {
+                        self.ships[a_idx].drop_lock(defender);
                         lock_spent = true;
                     }
                     // Targeting Synchronizer: a friend's lock counts, and
@@ -5343,10 +5361,10 @@ impl GameState {
         // Dark Curse: attackers cannot spend focus tokens or reroll.
         let omega = PilotAbility::LockedEnemiesCannotModifyDice;
         let attacker_may_modify = !(self.ability(content, &self.ships[d_idx]) == Some(omega)
-            && self.ships[d_idx].lock == Some(attacker))
+            && self.ships[d_idx].locks_on(attacker))
             && !shot.no_mods;
         let defender_may_modify = !(self.ability(content, &self.ships[a_idx]) == Some(omega)
-            && self.ships[a_idx].lock == Some(defender));
+            && self.ships[a_idx].locks_on(defender));
         let dark_curse = self.ability(content, &self.ships[d_idx])
             == Some(PilotAbility::DefenderDeniesFocusAndRerolls);
         let attacker_may_spend = attacker_may_modify && !dark_curse;
@@ -5358,7 +5376,7 @@ impl GameState {
                 self.label(content, d_idx)
             ));
         } else if dark_curse
-            && (self.ships[a_idx].focus > 0 || self.ships[a_idx].lock == Some(defender))
+            && (self.ships[a_idx].focus > 0 || self.ships[a_idx].locks_on(defender))
         {
             events.push(format!(
                 "{}: ability — attacker cannot spend focus or reroll",
@@ -5403,7 +5421,7 @@ impl GameState {
         let mut lock_frozen = false;
         if attacker_may_modify
             && secondary.is_none()
-            && self.ships[a_idx].lock == Some(defender)
+            && self.ships[a_idx].locks_on(defender)
             && self.has_effect(content, a_idx, UpgradeEffect::SystemAddCritWithLock)
         {
             attack_faces.push(AttackFace::Crit);
@@ -5417,7 +5435,7 @@ impl GameState {
         // when there is no token for them and that beats rerolling blanks.
         if attacker_may_spend
             && !lock_frozen
-            && self.ships[a_idx].lock == Some(defender)
+            && self.ships[a_idx].locks_on(defender)
             && self.ships[a_idx].focus == 0
             && self.has_effect(content, a_idx, UpgradeEffect::CrewLockAllFocusToHit)
         {
@@ -5427,7 +5445,7 @@ impl GameState {
                 for f in attack_faces.iter_mut().filter(|f| **f == AttackFace::Focus) {
                     *f = AttackFace::Hit;
                 }
-                self.ships[a_idx].lock = None;
+                self.ships[a_idx].drop_lock(defender);
                 lock_spent = true;
                 lock_frozen = true;
                 events.push(format!(
@@ -5440,10 +5458,7 @@ impl GameState {
             && !lock_frozen
             && self.spend_for_all_crits(content, a_idx, defender, &mut attack_faces, events);
         lock_spent |= all_crits;
-        if attacker_may_spend
-            && !all_crits
-            && !lock_frozen
-            && self.ships[a_idx].lock == Some(defender)
+        if attacker_may_spend && !all_crits && !lock_frozen && self.ships[a_idx].locks_on(defender)
         {
             let reroll_eyes = self.ships[a_idx].focus == 0;
             let mut any = false;
@@ -5454,7 +5469,7 @@ impl GameState {
                 }
             }
             if any {
-                self.ships[a_idx].lock = None;
+                self.ships[a_idx].drop_lock(defender);
                 lock_spent = true;
             }
         }
@@ -6291,6 +6306,7 @@ impl GameState {
                     evade: s.evade,
                     ion: s.ion,
                     lock: s.lock,
+                    lock2: s.lock2,
                     crits: s.crits.clone(),
                     destroyed: s.destroyed,
                     escaped: s.escaped,
@@ -6649,6 +6665,50 @@ impl GameState {
 }
 
 impl GameState {
+    /// Weapons Engineer (crew): two target locks may be held.
+    fn two_locks(&self, content: &Content, i: usize) -> bool {
+        self.has_effect(content, i, UpgradeEffect::CrewTwoLocks)
+    }
+
+    /// Weapons Engineer: acquiring a lock may lock a second, different
+    /// ship too — policy: the nearest other enemy within Range 1-3.
+    fn weapons_engineer_second_lock(
+        &mut self,
+        content: &Content,
+        i: usize,
+        first: ShipId,
+        events: &mut Vec<String>,
+    ) {
+        let Some(p) = self.ships[i].pose else { return };
+        let mine = rules::footprint_corners(p, self.class_of(content, &self.ships[i]).footprint);
+        let other = (0..self.ships.len())
+            .filter(|&e| {
+                let s = &self.ships[e];
+                s.id != first
+                    && !s.destroyed
+                    && !self.allied(s.owner, self.ships[i].owner)
+                    && !self.ships[i].locks_on(s.id)
+            })
+            .filter_map(|e| {
+                let q = self.ships[e].pose?;
+                let theirs =
+                    rules::footprint_corners(q, self.class_of(content, &self.ships[e]).footprint);
+                let d = combat::base_distance(&mine, &theirs);
+                (d <= 3.0 * combat::RANGE_BAND_UNITS).then_some((e, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(e, _)| e);
+        if let Some(e) = other {
+            let eid = self.ships[e].id;
+            self.ships[i].take_lock(eid, true);
+            events.push(format!(
+                "{}: Weapons Engineer — second lock on {}",
+                self.label(content, i),
+                self.label(content, e)
+            ));
+        }
+    }
+
     /// Daredevil without the boost icon: two attack dice against the
     /// ship — hits are damage, criticals faceup cards.
     fn daredevil_damage(
@@ -7079,6 +7139,44 @@ mod tests {
             rec.attacks.iter().any(|a| a.attacker == ShipId(2) && a.weapon.is_none()),
             "normal attack still happens"
         );
+    }
+
+    #[test]
+    fn weapons_engineer_holds_two_locks_and_spends_one() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let engineer = UpgradeId(160);
+        // Two TIEs end at Range 1 of the X-Wing, which locks one of them:
+        // Weapons Engineer locks the other as well.
+        let mut gs = skirmish(
+            &c,
+            &[
+                ("academypilot", Pose::new(8.0, 2.5, north), 2),
+                ("academypilot", Pose::new(12.0, 2.5, north), 2),
+            ],
+            &[("redsquadronveteran", Pose::new(10.0, 8.0, south), 2)],
+        );
+        gs.ships[2].upgrades.push(engineer);
+        gs.plan_action(&c, P1, ShipId(2), PlannedAction::TargetLock(ShipId(0))).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(
+            rec.events.iter().any(|e| e.contains("Weapons Engineer — second lock on")),
+            "{:?}",
+            rec.events
+        );
+        // The attack spent the lock on its target; the other lock stays.
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(2)).unwrap();
+        assert!(shot.lock_spent);
+        let xw = &gs.ships[2];
+        assert!(!xw.locks_on(shot.defender));
+        let other = if shot.defender == ShipId(0) { ShipId(1) } else { ShipId(0) };
+        assert!(xw.locks_on(other), "{:?} / {:?}", xw.lock, xw.lock2);
+        assert!(xw.lock2.is_none(), "the remaining lock moved into the first slot");
+        // Without the card a new lock replaces the old one.
+        let mut plain = ShipState::new(ShipId(9), P0, TIE, gs.ships[0].pilot, "x".into(), 3, 0);
+        plain.take_lock(ShipId(1), false);
+        plain.take_lock(ShipId(2), false);
+        assert_eq!((plain.lock, plain.lock2), (Some(ShipId(2)), None));
     }
 
     #[test]
