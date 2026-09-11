@@ -152,6 +152,10 @@ pub enum Rejection {
     ShipDisabled,
     /// The action exists only in a mission (Protect, mission 1).
     NotInThisMission,
+    /// Han Solo (HotR) is placed after every other ship.
+    PlaceLast,
+    /// Han Solo (HotR) must be placed beyond Range 3 of every enemy ship.
+    TooCloseToEnemy,
     /// No obstacle with that id is on the board.
     NoSuchObstacle,
 }
@@ -181,6 +185,8 @@ impl std::fmt::Display for Rejection {
             Rejection::TooCloseToObstacle => "must deploy beyond Range 1 of every asteroid",
             Rejection::ShipDisabled => "the disabled ship flies only speed 1-2 until Round 5",
             Rejection::NotInThisMission => "that action is not available in this game",
+            Rejection::PlaceLast => "this ship is placed after every other ship",
+            Rejection::TooCloseToEnemy => "must be placed beyond Range 3 of every enemy ship",
             Rejection::NoSuchObstacle => "there is no such obstacle on the board",
         };
         f.write_str(s)
@@ -562,8 +568,9 @@ impl GameState {
                     class.hull,
                     class.shields,
                 );
-                ship.lingers = content.pilots.pilot(pilot_id).and_then(|p| p.ability)
-                    == Some(PilotAbility::SurviveUntilEndOfCombat);
+                let ability = content.pilots.pilot(pilot_id).and_then(|p| p.ability);
+                ship.lingers = ability == Some(PilotAbility::SurviveUntilEndOfCombat);
+                ship.late_setup = ability == Some(PilotAbility::SetupAnywhereBeyondRange3);
                 ship.upgrades = entry.upgrades.clone();
                 if entry.upgrades.iter().any(|u| {
                     content.upgrades.upgrade(*u).and_then(|c| c.effect)
@@ -2179,7 +2186,27 @@ impl GameState {
         if self.ships[i].owner != player {
             return Err(Rejection::NotYourShip);
         }
+        // Han Solo (HotR): after everyone else, in the open, beyond Range 3
+        // of every enemy.
+        if self.ships[i].late_setup && self.turn == 1 && !self.late_setup_pending() {
+            return Err(Rejection::PlaceLast);
+        }
         let fp = self.class_of(content, &self.ships[i]).footprint;
+        if self.ships[i].late_setup && self.turn == 1 {
+            let corners = rules::footprint_corners(pose, fp);
+            let near = self.ships.iter().any(|s| {
+                !s.destroyed
+                    && !self.allied(s.owner, player)
+                    && s.pose.is_some_and(|p| {
+                        let theirs =
+                            rules::footprint_corners(p, self.class_of(content, s).footprint);
+                        combat::range_band_between(&corners, &theirs).is_some()
+                    })
+            });
+            if near {
+                return Err(Rejection::TooCloseToEnemy);
+            }
+        }
         // Legality vs the player's OWN placed ships only — zones are
         // disjoint, and checking the opponent's would leak hidden info.
         let own_placed: Vec<(ShipId, Pose, Footprint)> = self
@@ -6248,7 +6275,11 @@ impl GameState {
                     upgrade_ids: s.upgrades.clone(),
                     // Setup placement is hidden; a mission reinforcement
                     // is placed in the open.
-                    pose: if own || self.phase != Phase::Placement || self.turn > 1 {
+                    pose: if own
+                        || self.phase != Phase::Placement
+                        || self.turn > 1
+                        || self.late_setup_pending()
+                    {
                         s.pose
                     } else {
                         None
@@ -6381,9 +6412,23 @@ impl GameState {
         Ok(())
     }
 
+    /// Setup has reached the late placements (Han Solo, HotR): every
+    /// ordinary ship is down, and poses are public from here on.
+    fn late_setup_pending(&self) -> bool {
+        self.turn == 1
+            && self.phase == Phase::Placement
+            && self.ships.iter().all(|s| s.late_setup || s.pose.is_some())
+            && self.ships.iter().any(|s| s.late_setup && s.pose.is_none())
+    }
+
     /// Where `player` may place ships right now: the mission's zones,
     /// or the standard deployment band.
     pub fn deploy_zones(&self, player: PlayerId) -> Vec<mission::Rect> {
+        if self.late_setup_pending()
+            && self.ships.iter().any(|s| s.owner == player && s.late_setup && s.pose.is_none())
+        {
+            return vec![(0.0, 0.0, self.board.width, self.board.height)];
+        }
         let own = self.seat_of(player);
         match &self.mission {
             None => vec![self.board.deploy_zone(own)],
@@ -7034,6 +7079,36 @@ mod tests {
             rec.attacks.iter().any(|a| a.attacker == ShipId(2) && a.weapon.is_none()),
             "normal attack still happens"
         );
+    }
+
+    #[test]
+    fn han_solo_hotr_is_placed_last_in_the_open_beyond_range_3() {
+        let c = content();
+        let pilot = |x: &str| c.pilots.pilots.iter().find(|p| p.xws == x).unwrap().id;
+        let imperial = Squad::basic(&c, "i", &[pilot("academypilot")]);
+        let rebel = Squad::basic(&c, "r", &[pilot("hansolo_2"), pilot("rookiepilot")]);
+        let mut gs =
+            GameState::from_squads(board(), &c, &[&imperial, &rebel], &[0, 1], AttackFace::Hit)
+                .unwrap();
+        assert!(gs.ships[1].late_setup && !gs.ships[2].late_setup);
+        // Han waits for everyone else; meanwhile placement stays hidden.
+        assert_eq!(
+            gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 17.5, -FRAC_PI_2)),
+            Err(Rejection::PlaceLast)
+        );
+        gs.place_ship(&c, P0, ShipId(0), Pose::new(10.0, 2.5, FRAC_PI_2)).unwrap();
+        assert!(gs.snapshot_for(&c, P1)[0].pose.is_none(), "hidden until the late step");
+        gs.place_ship(&c, P1, ShipId(2), Pose::new(5.0, 17.5, -FRAC_PI_2)).unwrap();
+        // Now the board is public and Han may go anywhere beyond Range 3
+        // of the TIE.
+        assert!(gs.snapshot_for(&c, P1)[0].pose.is_some());
+        assert_eq!(gs.deploy_zones(P1), vec![(0.0, 0.0, 20.0, 20.0)]);
+        assert_eq!(
+            gs.place_ship(&c, P1, ShipId(1), Pose::new(10.0, 8.0, -FRAC_PI_2)),
+            Err(Rejection::TooCloseToEnemy)
+        );
+        gs.place_ship(&c, P1, ShipId(1), Pose::new(15.0, 12.0, -FRAC_PI_2)).unwrap();
+        assert_eq!(gs.phase, Phase::Planning);
     }
 
     #[test]

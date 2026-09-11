@@ -49,7 +49,9 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
 4. In a game, plan with the keys shown in the HUD help line: Tab selects a
    ship, Left/Right + Enter set the maneuver, number keys pick the action
    (6 then click an enemy = target lock), **B** cycles a bomb to drop on
-   dial reveal, **M** makes a mine drop the action, **K** cycles card
+   dial reveal, **M** makes a mine drop the action, **U** switches a
+   card's once-a-round choice on (Lightning Reflexes, Electronic Baffle,
+   Jan Ors, Decoy), **K** cycles card
    actions (Marksmanship, Rage, Expose, R2-F2, Fleet Officer, Squad
    Leader, R7-T1, Lando, Saboteur, R5-D8; Seismic Torpedo then asks you
    to click the obstacle to blast), C commits, X resigns. Pilots

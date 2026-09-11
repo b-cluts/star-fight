@@ -206,6 +206,10 @@ pub struct ShipState {
     /// Snap Shot already fired this Activation phase.
     #[serde(default)]
     pub snap_shot_fired: bool,
+    /// Han Solo (Heroes of the Resistance): placed after every other ship,
+    /// anywhere beyond Range 3 of enemy ships.
+    #[serde(default)]
+    pub late_setup: bool,
 }
 
 impl ShipState {
@@ -252,6 +256,7 @@ impl ShipState {
             satellites: 0,
             card_uses: Vec::new(),
             snap_shot_fired: false,
+            late_setup: false,
         }
     }
 }
