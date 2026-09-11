@@ -96,6 +96,7 @@ impl MissionKind {
             (MissionKind::DarkWhispers, Faction::Empire) => {
                 "Scan every satellite, then fly a ship carrying one off the Imperial edge."
             }
+            (_, Faction::Scum) => "Scum and Villainy take no part in the rulebook missions.",
         }
     }
 
@@ -118,6 +119,7 @@ impl MissionKind {
             (MissionKind::DarkWhispers, Faction::Empire) => {
                 &[("blacksquadronpilot", &["determination"]), ("obsidiansquadronpilot", &[])]
             }
+            (_, Faction::Scum) => &[],
         }
     }
 
@@ -197,6 +199,8 @@ impl MissionState {
         match faction {
             Faction::RebelAlliance => self.rebel_side,
             Faction::Empire => self.imperial_side,
+            // Scum never fly missions; treat them as the Rebel side.
+            Faction::Scum => self.rebel_side,
         }
     }
 
@@ -263,7 +267,7 @@ pub fn deploy_zones(
     match (kind, faction) {
         (MissionKind::PoliticalEscort, _) => vec![edge(own, R2)],
         (MissionKind::AsteroidRun, Faction::Empire) => vec![edge(own, R1), edge(other, R1)],
-        (MissionKind::AsteroidRun, Faction::RebelAlliance) => {
+        (MissionKind::AsteroidRun, Faction::RebelAlliance | Faction::Scum) => {
             let all = (0.0, 0.0, board.width, board.height);
             vec![beyond(beyond(all, own, R3), other, R3)]
         }

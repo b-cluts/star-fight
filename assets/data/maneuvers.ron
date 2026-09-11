@@ -294,5 +294,54 @@
                 (steer: BankRight, distance: 1, difficulty: Normal),
             ],
         ),
+        (
+            id: 13, // Z-95 Headhunter dial, read from a photo of the First
+                    // Edition dial: 1 straight green, 1 banks white; 2 banks
+                    // and straight green, 2 turns white; the whole speed-3
+                    // row white with a red K-turn; 4 straight white.
+            maneuvers: [
+                (steer: BankLeft,  distance: 1, difficulty: Normal),
+                (steer: Straight,  distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Normal),
+                (steer: TurnLeft,  distance: 2, difficulty: Normal),
+                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: Straight,  distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: TurnRight, distance: 2, difficulty: Normal),
+                (steer: TurnLeft,  distance: 3, difficulty: Normal),
+                (steer: BankLeft,  distance: 3, difficulty: Normal),
+                (steer: Straight,  distance: 3, difficulty: Normal),
+                (steer: BankRight, distance: 3, difficulty: Normal),
+                (steer: TurnRight, distance: 3, difficulty: Normal),
+                (steer: KTurn,     distance: 3, difficulty: Hard),
+                (steer: Straight,  distance: 4, difficulty: Normal),
+            ],
+        ),
+        (
+            id: 14, // Firespray-31 dial (First Edition card, from the Slave I
+                    // expansion; the supplied dial photo is Second Edition,
+                    // which adds 1-turns and Tallon rolls): speed 1 all
+                    // green; 2 banks and straight green, turns white; the
+                    // speed-3 row white with a red K-turn; 4 straight white
+                    // and a red K-turn.
+            maneuvers: [
+                (steer: BankLeft,  distance: 1, difficulty: Easy),
+                (steer: Straight,  distance: 1, difficulty: Easy),
+                (steer: BankRight, distance: 1, difficulty: Easy),
+                (steer: TurnLeft,  distance: 2, difficulty: Normal),
+                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: Straight,  distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: TurnRight, distance: 2, difficulty: Normal),
+                (steer: TurnLeft,  distance: 3, difficulty: Normal),
+                (steer: BankLeft,  distance: 3, difficulty: Normal),
+                (steer: Straight,  distance: 3, difficulty: Normal),
+                (steer: BankRight, distance: 3, difficulty: Normal),
+                (steer: TurnRight, distance: 3, difficulty: Normal),
+                (steer: KTurn,     distance: 3, difficulty: Hard),
+                (steer: Straight,  distance: 4, difficulty: Normal),
+                (steer: KTurn,     distance: 4, difficulty: Hard),
+            ],
+        ),
     ],
 )

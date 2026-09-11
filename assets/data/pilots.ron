@@ -117,5 +117,23 @@
         // ---------------- Senator's shuttle (class 12, mission 1 token) ----------------
         // Not a card: skill 0 so it moves first, cost 0, never in a squad.
         (id: 1201, class: 12, name: "Senator", xws: "senatorsshuttle", unique: false, skill: 0, cost: 0, talent_slot: false, source: OriginalCoreSet, ability: None),
+
+        // ---------------- Scum and Villainy: Z-95 Headhunter (class 13) ----------------
+        (id: 1304, class: 13, name: "N'dru Suhlak", xws: "ndrusuhlak",       unique: true,  skill: 7, cost: 17, talent_slot: true,  source: MostWanted, ability: Some(ExtraAttackDieIfNoFriendsRange1To2)),
+        (id: 1303, class: 13, name: "Kaa'to Leeachos", xws: "kaatoleeachos", unique: true,  skill: 5, cost: 15, talent_slot: true,  source: MostWanted, ability: Some(StealTokenAtCombatStart)),
+        (id: 1302, class: 13, name: "Black Sun Soldier", xws: "blacksunsoldier", unique: false, skill: 3, cost: 13, talent_slot: false, source: MostWanted, ability: None),
+        (id: 1301, class: 13, name: "Binayre Pirate", xws: "binayrepirate", unique: false, skill: 1, cost: 12, talent_slot: false, source: MostWanted, ability: None),
+
+        // ---------------- Scum and Villainy: Y-Wing (class 14) ----------------
+        (id: 1404, class: 14, name: "Kavil", xws: "kavil",                  unique: true,  skill: 7, cost: 24, talent_slot: true,  source: MostWanted, ability: Some(ExtraAttackDieOutsideOwnArc)),
+        (id: 1403, class: 14, name: "Drea Renthal", xws: "drearenthal",     unique: true,  skill: 5, cost: 22, talent_slot: false, source: MostWanted, ability: Some(StressToReacquireLockAfterSpending)),
+        (id: 1402, class: 14, name: "Hired Gun", xws: "hiredgun",           unique: false, skill: 4, cost: 20, talent_slot: false, source: MostWanted, ability: None),
+        (id: 1401, class: 14, name: "Syndicate Thug", xws: "syndicatethug", unique: false, skill: 2, cost: 18, talent_slot: false, source: MostWanted, ability: None),
+
+        // ---------------- Scum and Villainy: Firespray-31 (class 15) ----------------
+        (id: 1504, class: 15, name: "Boba Fett", xws: "bobafett",           unique: true,  skill: 8, cost: 39, talent_slot: true,  source: MostWanted, ability: Some(RerollPerEnemyRange1)),
+        (id: 1503, class: 15, name: "Kath Scarlet", xws: "kathscarlet",      unique: true, skill: 7, cost: 38, talent_slot: true,  source: MostWanted, ability: Some(ExtraAttackDieInAuxiliaryArc)),
+        (id: 1502, class: 15, name: "Emon Azzameen", xws: "emonazzameen",   unique: true,  skill: 6, cost: 36, talent_slot: true,  source: MostWanted, ability: Some(BombWithSpeed3Template)),
+        (id: 1501, class: 15, name: "Mandalorian Mercenary", xws: "mandalorianmercenary", unique: false, skill: 5, cost: 35, talent_slot: true, source: MostWanted, ability: None),
     ],
 )

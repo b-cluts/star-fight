@@ -143,6 +143,28 @@ pub enum UpgradeEffect {
     CountermeasuresDiscard,
     /// Tactical Jammer: this ship obstructs enemy attacks on friends.
     ObstructsEnemyAttacks,
+    // Scum and Villainy (Most Wanted)
+    /// Inertial Dampeners: switched on for a round (key U), the revealed
+    /// maneuver becomes a white stationary one, the card is discarded and
+    /// the ship takes a stress token.
+    StationaryOnRevealDiscard,
+    /// Dead Man's Switch: when destroyed, every ship at Range 1 suffers 1
+    /// damage.
+    DamageNeighboursWhenDestroyed,
+    /// Feedback Array: switched on for a round (key U), the ship skips its
+    /// attacks, takes an ion token and 1 damage, and deals 1 damage to an
+    /// enemy at Range 1.
+    FeedbackArray,
+    /// Unhinged Astromech: 3-speed maneuvers are green.
+    Speed3Green,
+    /// Salvaged Astromech: a Ship-trait damage card is discarded along
+    /// with this card.
+    DiscardSelfToCancelShipDamage,
+    /// R4 Agromech: spending a focus token while attacking acquires a lock
+    /// on the defender.
+    LockAfterSpendingFocus,
+    /// R4-B11: spend a lock on the defender to make it reroll its evades.
+    SpendLockToRerollDefenseDice,
     // dice
     FocusToHitSpendFocus,
     BlankToHitSpendFocus,
@@ -332,6 +354,13 @@ impl UpgradeEffect {
                 | BumpedEnemyIon
                 | CountermeasuresDiscard
                 | ObstructsEnemyAttacks
+                | StationaryOnRevealDiscard
+                | DamageNeighboursWhenDestroyed
+                | FeedbackArray
+                | Speed3Green
+                | DiscardSelfToCancelShipDamage
+                | LockAfterSpendingFocus
+                | SpendLockToRerollDefenseDice
                 | ShieldPlus1
                 | AgilityPlus1DiscardWhenHit
                 | SkillPlus2

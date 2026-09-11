@@ -270,5 +270,77 @@
             anchor_px: (152, 0),
             portrait: None,
         ),
+
+        // ---------------- Scum and Villainy (Most Wanted) ----------------
+        (
+            id: 13,
+            name: "Z-95 Headhunter",
+            xws: "z95headhunter",
+            faction: Scum,
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 13,
+            attack_dice: 2,
+            agility: 2,
+            hull: 2,
+            shields: 2,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [Missile, Illicit],
+
+            // License-free render sheet (see assets/ships/SOURCES.md): the
+            // top-down view keyed out and turned nose-up; the nose tip is
+            // the topmost pixel.
+            sprite: "ships/z95-headhunter.png",
+            sprite_px: (208, 200),
+            anchor_px: (108, 0),
+            portrait: None,
+        ),
+        (
+            id: 14,
+            name: "Y-Wing (Scum)",
+            xws: "ywing",
+            faction: Scum,
+            size: Small,
+            footprint: (length: 1.0, width: 1.0),
+            maneuver_set: 4, // the BTL-A4 dial, shared with the Rebel Y-Wing
+            attack_dice: 2,
+            agility: 1,
+            hull: 5,
+            shields: 3,
+            action_bar: [Focus, TargetLock],
+            upgrade_bar: [Turret, Torpedo, Torpedo, SalvagedAstromech],
+
+            // License-free top-down photo of a brick model (see
+            // assets/ships/SOURCES.md), keyed out; the sensor prongs are
+            // the topmost pixels.
+            sprite: "ships/y-wing-scum.png",
+            sprite_px: (300, 564),
+            anchor_px: (151, 0),
+            portrait: None,
+        ),
+        (
+            id: 15,
+            name: "Firespray-31",
+            xws: "firespray31",
+            faction: Scum,
+            size: Large,
+            footprint: (length: 2.0, width: 2.0), // large base: 80 x 80 mm
+            maneuver_set: 14,
+            attack_dice: 3,
+            agility: 2,
+            hull: 6,
+            shields: 4,
+            action_bar: [Focus, TargetLock, Evade],
+            upgrade_bar: [Cannon, Bomb, Crew, Missile, Illicit],
+            // The primary weapon also fires into the auxiliary (rear) arc.
+            rear_arc: true,
+
+            // License-free render sheet (see assets/ships/SOURCES.md): the
+            // top-down view keyed out, cockpit (front) up.
+            sprite: "ships/firespray-31.png",
+            sprite_px: (174, 199),
+            anchor_px: (75, 0),
+            portrait: None,
+        ),
     ],
 )

@@ -841,6 +841,25 @@ impl GameState {
         Self::base_in_front_arc(s_pose, s_fp, &rules::footprint_corners(t_pose, t_fp))
     }
 
+    /// Is any part of `target`'s base inside `shooter`'s auxiliary (rear)
+    /// arc? Always false for ships without one.
+    fn ship_in_rear_arc(&self, content: &Content, shooter: usize, target: usize) -> bool {
+        let class = self.class_of(content, &self.ships[shooter]);
+        if !class.rear_arc {
+            return false;
+        }
+        let (Some(s_pose), Some(t_pose)) = (self.ships[shooter].pose, self.ships[target].pose)
+        else {
+            return false;
+        };
+        let t_fp = self.class_of(content, &self.ships[target]).footprint;
+        Self::base_in_front_arc(
+            combat::rear_pose(s_pose, class.footprint),
+            class.footprint,
+            &rules::footprint_corners(t_pose, t_fp),
+        )
+    }
+
     /// Range band between two ships (None if either is off the board
     /// or they are beyond Range 3).
     fn range_between(&self, content: &Content, i: usize, j: usize) -> Option<u8> {
@@ -1179,6 +1198,7 @@ impl GameState {
             && self.has_effect(content, i, UpgradeEffect::Speed1And2AreGreen))
             || (straight && self.has_effect(content, i, UpgradeEffect::CrewStraightsAreGreen))
             || (bank && self.has_effect(content, i, UpgradeEffect::BanksAreGreen))
+            || (man.distance == 3 && self.has_effect(content, i, UpgradeEffect::Speed3Green))
         {
             d = Difficulty::Easy;
         }
@@ -1573,6 +1593,16 @@ impl GameState {
         if self.ability(content, &self.ships[s]) == Some(PilotAbility::RerollPerFriendlyRange1) {
             n += friends.len() as u8;
         }
+        // Boba Fett (Scum): one reroll per enemy ship at Range 1.
+        if self.ability(content, &self.ships[s]) == Some(PilotAbility::RerollPerEnemyRange1) {
+            n += (0..self.ships.len())
+                .filter(|&e| {
+                    !self.allied(self.ships[e].owner, self.ships[s].owner)
+                        && !self.ships[e].destroyed
+                        && self.range_between(content, s, e) == Some(1)
+                })
+                .count() as u8;
+        }
         if attacking
             && friends.iter().any(|&f| {
                 self.ability(content, &self.ships[f])
@@ -1646,6 +1676,21 @@ impl GameState {
             PilotAbility::StressForExtraAttackDie if self.ships[a_idx].stress == 0 => {
                 self.gain_stress(content, a_idx, events);
                 "takes stress"
+            }
+            PilotAbility::ExtraAttackDieIfNoFriendsRange1To2
+                if self.friends_within(content, a_idx, 2).is_empty() =>
+            {
+                "no friendly ship at Range 1-2"
+            }
+            PilotAbility::ExtraAttackDieOutsideOwnArc
+                if !self.ship_in_front_arc(content, a_idx, d_idx) =>
+            {
+                "defender outside the firing arc"
+            }
+            PilotAbility::ExtraAttackDieInAuxiliaryArc
+                if self.ship_in_rear_arc(content, a_idx, d_idx) =>
+            {
+                "defender in the auxiliary arc"
             }
             _ => return 0,
         };
@@ -2138,6 +2183,23 @@ impl GameState {
             self.ships[i].hull += 1;
             let e =
                 self.discard_card(content, i, astro, "Integrated Astromech: damage card discarded");
+            events.push(e);
+            return (0, 0);
+        }
+        // Salvaged Astromech: a Ship-trait card is discarded with it.
+        if !effect.is_pilot_trait()
+            && let Some(card) = self.ships[i].upgrades.iter().copied().find(|u| {
+                content.upgrades.upgrade(*u).and_then(|c| c.effect)
+                    == Some(UpgradeEffect::DiscardSelfToCancelShipDamage)
+            })
+        {
+            self.ships[i].hull += 1;
+            let e = self.discard_card(
+                content,
+                i,
+                card,
+                "Salvaged Astromech: Ship damage card discarded",
+            );
             events.push(e);
             return (0, 0);
         }
@@ -3231,6 +3293,8 @@ impl GameState {
                             | UpgradeEffect::CrewEvadeInsteadOfFocusForFriendly
                             | UpgradeEffect::SwapSkillWithFriendly
                             | UpgradeEffect::CountermeasuresDiscard
+                            | UpgradeEffect::StationaryOnRevealDiscard
+                            | UpgradeEffect::FeedbackArray
                     )
                 )
             })
@@ -3533,6 +3597,7 @@ impl GameState {
         let (moves, pulls, detonations, mut events) = self.resolve_movement(content, roll);
         self.combat_start_stress_relief(content, &mut events);
         self.countermeasures(content, &mut events);
+        self.steal_tokens(content, &mut events);
 
         // Combat order: highest pilot skill first (initiative breaks
         // ties), grouped by skill; each group's survivors are fixed when
@@ -3751,6 +3816,12 @@ impl GameState {
                 self.combat.as_mut().expect("in combat").events.push(msg);
                 continue;
             }
+            let mut zap = Vec::new();
+            if self.feedback_array(content, a_idx, &mut zap) {
+                self.dead_mans_switches(content, &mut zap);
+                self.combat.as_mut().expect("in combat").events.extend(zap);
+                continue;
+            }
             let options = self.attack_options(content, a_idx);
             match options.len() {
                 0 => continue,
@@ -3835,6 +3906,7 @@ impl GameState {
     ) -> AttackRecord {
         let mut ev = Vec::new();
         let rec = self.perform_attack_on(content, a_idx, shot, roll, &mut ev);
+        self.dead_mans_switches(content, &mut ev);
         let twice = matches!(
             shot.weapon.and_then(|u| content.upgrades.upgrade(u)).and_then(|c| c.effect),
             Some(UpgradeEffect::MissileAttackTwice | UpgradeEffect::TurretTwinLaserTwiceOneDamage)
@@ -4173,6 +4245,28 @@ impl GameState {
                 man = alt;
                 (difficulty, rush) = self.maneuver_difficulty(content, i, &man);
             }
+            // Inertial Dampeners, switched on: the revealed maneuver becomes
+            // a white stationary one; the stress comes after the "move".
+            let dampened = if let Some(card) =
+                self.using(content, i, UpgradeEffect::StationaryOnRevealDiscard)
+            {
+                man = Maneuver {
+                    steer: maneuver::Steer::Straight,
+                    distance: 0,
+                    difficulty: Difficulty::Normal,
+                };
+                (difficulty, rush) = self.maneuver_difficulty(content, i, &man);
+                let e = self.discard_card(
+                    content,
+                    i,
+                    card,
+                    "Inertial Dampeners: holds position instead of the maneuver",
+                );
+                events.push(e);
+                true
+            } else {
+                false
+            };
             let extras = self.action_extras(content, &self.ships[i]);
             // Turr Phennir's reposition waits for his attack.
             let mut planned2 = if extras.second == Some(SecondActionKind::RepositionAfterAttack) {
@@ -4485,6 +4579,11 @@ impl GameState {
                 let died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
                 events.push(format!("{label}: Stunned Pilot — 1 damage from the collision{died}"));
             }
+            if dampened && !self.ships[i].destroyed {
+                self.gain_stress(content, i, &mut events);
+                events
+                    .push(format!("{}: Inertial Dampeners — stress token", self.label(content, i)));
+            }
             // Anti-Pursuit Lasers / Ion Projector: every enemy large ship
             // the maneuver would have overlapped (the first blocked pose
             // along the template) rolls one attack die at the mover.
@@ -4788,6 +4887,8 @@ impl GameState {
                 events.push(format!("{label}: Console Fire burns for 1{died}"));
             }
         }
+
+        self.dead_mans_switches(content, &mut events);
 
         (records, pulls, detonations, events)
     }
@@ -5105,7 +5206,10 @@ impl GameState {
         for &u in &self.ships[a_idx].upgrades {
             if let Some(card) = content.upgrades.upgrade(u)
                 && let Some(sw) = card.attack
-                && matches!(card.slot, Slot::Torpedo | Slot::Missile | Slot::Cannon | Slot::Turret)
+                && matches!(
+                    card.slot,
+                    Slot::Torpedo | Slot::Missile | Slot::Cannon | Slot::Turret | Slot::Illicit
+                )
             {
                 // Major Rhymer: secondary weapon ranges stretch by one
                 // band each way (within Range 1-3).
@@ -5116,7 +5220,13 @@ impl GameState {
                 } else {
                     (sw.range_min, sw.range_max)
                 };
-                weapons.push((Some(u), lo, hi, card.slot != Slot::Turret || arc_only, sw.requires));
+                // "Hot Shot" Blaster (Illicit) ignores the arc outright.
+                let needs_arc = match card.slot {
+                    Slot::Turret => arc_only,
+                    Slot::Illicit => false,
+                    _ => true,
+                };
+                weapons.push((Some(u), lo, hi, needs_arc, sw.requires));
             }
         }
         let mut options = Vec::new();
@@ -5129,6 +5239,9 @@ impl GameState {
             let corners = rules::footprint_corners(pose, fp);
             let dist = combat::base_distance(&a_corners, &corners);
             let in_arc = Self::base_in_front_arc(a_pose, a_fp, &corners);
+            // Firespray-31: the primary weapon also fires into the rear arc.
+            let in_rear = class.rear_arc
+                && Self::base_in_front_arc(combat::rear_pose(a_pose, a_fp), a_fp, &corners);
             // Touching bases cannot be targeted — except by Arvel Crynyd,
             // who may shoot a touching ship inside his arc.
             let arvel = self.ability(content, &self.ships[a_idx])
@@ -5140,7 +5253,8 @@ impl GameState {
                 continue;
             };
             for &(weapon, lo, hi, needs_arc, req) in &weapons {
-                if band < lo || band > hi || (needs_arc && !in_arc) {
+                let covered = in_arc || (weapon.is_none() && in_rear);
+                if band < lo || band > hi || (needs_arc && !covered) {
                     continue;
                 }
                 let deadeye = self.ships[a_idx].focus > 0
@@ -5527,6 +5641,21 @@ impl GameState {
                 self.ships[a_idx].drop_lock(defender);
                 lock_spent = true;
             }
+        }
+        // Drea Renthal: a spent lock comes straight back for a stress
+        // token (policy: whenever she is unstressed).
+        if lock_spent
+            && self.ships[a_idx].stress == 0
+            && self.ability(content, &self.ships[a_idx])
+                == Some(PilotAbility::StressToReacquireLockAfterSpending)
+        {
+            self.gain_stress(content, a_idx, events);
+            let two = self.two_locks(content, a_idx);
+            self.ships[a_idx].take_lock(defender, two);
+            events.push(format!(
+                "{}: Drea Renthal — stress token taken, lock re-acquired",
+                self.label(content, a_idx)
+            ));
         }
         if attacker_may_spend && !all_crits {
             let n = self.friendly_rerolls(content, a_idx, true);
@@ -5970,6 +6099,26 @@ impl GameState {
             ));
         }
         // Homing Missiles: the defender cannot spend evade tokens.
+        // R4-B11: a lock still held on the defender is spent to make it
+        // reroll every evade result (policy: whenever one shows).
+        if attacker_may_modify
+            && evades > 0
+            && self.ships[a_idx].locks_on(defender)
+            && self.has_effect(content, a_idx, UpgradeEffect::SpendLockToRerollDefenseDice)
+        {
+            self.ships[a_idx].drop_lock(defender);
+            lock_spent = true;
+            let mut n = 0;
+            for f in defense_faces.iter_mut().filter(|f| **f == DefenseFace::Evade) {
+                *f = DefenseFace::from_d8(roll());
+                n += 1;
+            }
+            evades = defense_faces.iter().filter(|f| **f == DefenseFace::Evade).count() as u8;
+            events.push(format!(
+                "{}: R4-B11 — lock spent, the defender rerolls {n} evade dice",
+                self.label(content, a_idx)
+            ));
+        }
         let evade_allowed = weapon_effect != Some(UpgradeEffect::MissileDenyEvadeTokens);
         let mut evade_spent = false;
         if defender_may_spend && evade_allowed && self.ships[d_idx].evade > 0 && evades < incoming {
@@ -6241,6 +6390,19 @@ impl GameState {
             let to = self.ships[a_idx].pose.expect("attacker stays on the board");
             reposition = Some(Reposition { action: a, result, to });
         }
+        // R4 Agromech: a spent focus token buys a lock on the defender.
+        if attacker_focus_spent
+            && !self.ships[a_idx].destroyed
+            && !self.ships[a_idx].locks_on(defender)
+            && self.has_effect(content, a_idx, UpgradeEffect::LockAfterSpendingFocus)
+        {
+            let two = self.two_locks(content, a_idx);
+            self.ships[a_idx].take_lock(defender, two);
+            events.push(format!(
+                "{}: R4 Agromech — focus spent, lock acquired on the defender",
+                self.label(content, a_idx)
+            ));
+        }
         AttackRecord {
             attacker,
             defender,
@@ -6345,6 +6507,119 @@ impl GameState {
                     obstacle::segment_hits_polygon(p, q, &c)
                 })
         })
+    }
+
+    /// Kaa'to Leeachos at the start of the Combat phase (policy: a focus
+    /// token when he holds none, else an evade token when he holds none,
+    /// from the friend at Range 1-2 holding the most of them).
+    fn steal_tokens(&mut self, content: &Content, events: &mut Vec<String>) {
+        for i in 0..self.ships.len() {
+            if self.ships[i].destroyed
+                || self.ships[i].pose.is_none()
+                || self.ability(content, &self.ships[i])
+                    != Some(PilotAbility::StealTokenAtCombatStart)
+            {
+                continue;
+            }
+            let friends = self.friends_within(content, i, 2);
+            let richest = |focus: bool| {
+                let count =
+                    |f: usize| if focus { self.ships[f].focus } else { self.ships[f].evade };
+                friends.iter().copied().filter(|&f| count(f) > 0).max_by_key(|&f| count(f))
+            };
+            let pick =
+                if self.ships[i].focus == 0 { richest(true).map(|f| (f, true)) } else { None }
+                    .or_else(|| {
+                        if self.ships[i].evade == 0 {
+                            richest(false).map(|f| (f, false))
+                        } else {
+                            None
+                        }
+                    });
+            let Some((f, focus)) = pick else { continue };
+            if focus {
+                self.ships[f].focus -= 1;
+                self.ships[i].focus += 1;
+            } else {
+                self.ships[f].evade -= 1;
+                self.ships[i].evade += 1;
+            }
+            events.push(format!(
+                "{}: ability — takes a {} token from {}",
+                self.label(content, i),
+                if focus { "focus" } else { "evade" },
+                self.label(content, f)
+            ));
+        }
+    }
+
+    /// Dead Man's Switch: a destroyed ship still on the board deals 1
+    /// damage to every ship at Range 1, once; chains until nothing new
+    /// goes off.
+    fn dead_mans_switches(&mut self, content: &Content, events: &mut Vec<String>) {
+        loop {
+            let armed = (0..self.ships.len()).find(|&i| {
+                let s = &self.ships[i];
+                s.destroyed
+                    && !s.switch_fired
+                    && !s.escaped
+                    && s.pose.is_some_and(|p| {
+                        let fp = self.class_of(content, s).footprint;
+                        rules::within_board(&self.board, &rules::footprint_corners(p, fp))
+                    })
+                    && self.has_effect(content, i, UpgradeEffect::DamageNeighboursWhenDestroyed)
+            });
+            let Some(i) = armed else { break };
+            self.ships[i].switch_fired = true;
+            let victims: Vec<usize> = (0..self.ships.len())
+                .filter(|&k| {
+                    k != i
+                        && !self.ships[k].destroyed
+                        && self.range_between(content, i, k) == Some(1)
+                })
+                .collect();
+            let who = self.label(content, i);
+            if victims.is_empty() {
+                events.push(format!("{who}: Dead Man's Switch — nothing at Range 1"));
+            }
+            for k in victims {
+                self.damage_point(k);
+                let died = if self.ships[k].destroyed { " — DESTROYED" } else { "" };
+                events.push(format!(
+                    "{}: Dead Man's Switch ({who}) — 1 damage{died}",
+                    self.label(content, k)
+                ));
+            }
+        }
+    }
+
+    /// Feedback Array, switched on during planning: at the ship's turn to
+    /// attack it zaps the weakest enemy at Range 1 instead (policy: the
+    /// enemy with the fewest hull and shield points left), taking an ion
+    /// token and 1 damage. Without an enemy at Range 1 it attacks as usual.
+    fn feedback_array(&mut self, content: &Content, i: usize, events: &mut Vec<String>) -> bool {
+        if self.using(content, i, UpgradeEffect::FeedbackArray).is_none() {
+            return false;
+        }
+        let target = (0..self.ships.len())
+            .filter(|&e| {
+                !self.allied(self.ships[e].owner, self.ships[i].owner)
+                    && !self.ships[e].destroyed
+                    && self.range_between(content, i, e) == Some(1)
+            })
+            .min_by_key(|&e| (self.ships[e].hull + self.ships[e].shields, self.ships[e].id.0));
+        let Some(e) = target else { return false };
+        self.ships[i].ion += 1;
+        self.damage_point(i);
+        self.damage_point(e);
+        let self_died = if self.ships[i].destroyed { " — DESTROYED" } else { "" };
+        let died = if self.ships[e].destroyed { " — DESTROYED" } else { "" };
+        events.push(format!(
+            "{}: Feedback Array — ion token and 1 damage{self_died}; {} suffers 1 damage{died}",
+            self.label(content, i),
+            self.label(content, e)
+        ));
+        true
     }
 
     /// Countermeasures, switched on during planning: at the start of the
@@ -11307,6 +11582,34 @@ mod tests {
         let back = rec.attacks.iter().find(|a| a.attacker == ShipId(2)).unwrap();
         assert_eq!(back.defender, ShipId(0));
         assert!(!back.obstructed);
+    }
+
+    #[test]
+    fn firespray_primary_weapon_fires_into_the_rear_arc() {
+        let c = content();
+        let north = FRAC_PI_2;
+        // Both fly north; the TIE ends at y 3.5..4.5, directly behind the
+        // Firespray's base at y 8..10 — inside its auxiliary arc only.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("mandalorianmercenary", Pose::new(10.0, 9.0, north), 1)],
+        );
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(gs.ships[1].pose.is_some_and(|p| (p.anchor.y - 10.0).abs() < 1e-9));
+        assert!(!gs.ship_in_front_arc(&c, 1, 0));
+        assert!(gs.ship_in_rear_arc(&c, 1, 0));
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).expect("rear-arc shot");
+        assert_eq!((shot.defender, shot.weapon, shot.range), (ShipId(0), None, 2));
+        // The Scum Y-Wing in the same spot has no rear arc and no shot.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("syndicatethug", Pose::new(10.0, 9.0, north), 1)],
+        );
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(!gs.ship_in_rear_arc(&c, 1, 0));
+        assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(1)));
     }
 
     #[test]

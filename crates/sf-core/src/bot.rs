@@ -361,6 +361,9 @@ mod tests {
         let imp = squad(&c, Faction::Empire, 100);
         assert_eq!(imp.ships.len(), 8, "eight Academy Pilots");
         let reb = squad(&c, Faction::RebelAlliance, 100);
+        let scum = squad(&c, Faction::Scum, 100);
+        assert_eq!(scum.faction, Faction::Scum);
+        assert!(scum.ships.len() >= 4 && scum.cost(&c) <= 100);
         assert!(reb.ships.len() >= 4 && reb.cost(&c) <= 100);
         assert!(crate::squad::validate_squad(&imp, &c, &Default::default()).is_ok());
         assert!(crate::squad::validate_squad(&reb, &c, &Default::default()).is_ok());

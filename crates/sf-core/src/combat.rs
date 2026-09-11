@@ -45,6 +45,17 @@ pub fn base_center(pose: Pose, fp: Footprint) -> Vec2 {
 }
 
 /// Is `target` inside the 90° forward cone from the base center?
+/// The pose of a ship's rear edge facing backwards: a Firespray-31's
+/// auxiliary firing arc is the front arc of this pose.
+pub fn rear_pose(pose: Pose, fp: Footprint) -> Pose {
+    let c = base_center(pose, fp);
+    Pose::new(
+        2.0 * c.x - pose.anchor.x,
+        2.0 * c.y - pose.anchor.y,
+        pose.heading + std::f64::consts::PI,
+    )
+}
+
 pub fn in_front_arc(pose: Pose, fp: Footprint, target: Vec2) -> bool {
     let d = target - base_center(pose, fp);
     if d.x == 0.0 && d.y == 0.0 {

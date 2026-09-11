@@ -42,6 +42,8 @@ pub enum Source {
     ImperialAces,
     LambdaShuttleExpansion,
     XWingExpansion,
+    /// Most Wanted (Scum and Villainy: Z-95, Y-Wing, Firespray-31 repaints).
+    MostWanted,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -220,6 +222,26 @@ pub enum PilotAbility {
     /// equals or exceeds your hull value, you are not destroyed until
     /// the end of the Combat phase.
     SurviveUntilEndOfCombat,
+    // ---- Scum and Villainy (Most Wanted) ----
+    /// Kaa'to Leeachos: at the start of the Combat phase, take one focus or
+    /// evade token from a friendly ship at Range 1-2.
+    StealTokenAtCombatStart,
+    /// N'dru Suhlak: +1 attack die with no other friendly ship at Range 1-2.
+    ExtraAttackDieIfNoFriendsRange1To2,
+    /// Drea Renthal: after spending a target lock, take a stress token to
+    /// acquire a target lock.
+    StressToReacquireLockAfterSpending,
+    /// Kavil: +1 attack die against a ship outside your firing arc.
+    ExtraAttackDieOutsideOwnArc,
+    /// Emon Azzameen: bombs may be dropped with the turn-3 or straight-3
+    /// template.
+    BombWithSpeed3Template,
+    /// Kath Scarlet (Scum): +1 attack die against a ship inside your
+    /// auxiliary firing arc.
+    ExtraAttackDieInAuxiliaryArc,
+    /// Boba Fett (Scum): when attacking or defending, reroll 1 die for
+    /// each enemy ship at Range 1.
+    RerollPerEnemyRange1,
     /// Lieutenant Lorrir: when performing a barrel roll, you may receive
     /// 1 stress token to use the bank 1 templates instead of straight 1.
     BarrelRollWithBank1ForStress,
@@ -284,6 +306,27 @@ impl PilotAbility {
             }
             PilotAbility::BoostWithTurnTemplate => {
                 "Blue Ace: when performing a boost action, you may use the left or right turn 1 template."
+            }
+            PilotAbility::StealTokenAtCombatStart => {
+                "Kaa'to Leeachos: at the start of the Combat phase, you may remove 1 focus or evade token from another friendly ship at Range 1-2 and assign it to yourself."
+            }
+            PilotAbility::ExtraAttackDieIfNoFriendsRange1To2 => {
+                "N'dru Suhlak: when attacking, if there are no other friendly ships at Range 1-2, roll 1 additional attack die."
+            }
+            PilotAbility::StressToReacquireLockAfterSpending => {
+                "Drea Renthal: after you spend a target lock, you may receive 1 stress token to acquire a target lock."
+            }
+            PilotAbility::ExtraAttackDieOutsideOwnArc => {
+                "Kavil: when attacking a ship outside your firing arc, roll 1 additional attack die."
+            }
+            PilotAbility::BombWithSpeed3Template => {
+                "Emon Azzameen: when dropping a bomb, you may use the turn-left 3, straight 3 or turn-right 3 template instead of the straight 1 template."
+            }
+            PilotAbility::ExtraAttackDieInAuxiliaryArc => {
+                "Kath Scarlet: when attacking a ship inside your auxiliary firing arc, roll 1 additional attack die."
+            }
+            PilotAbility::RerollPerEnemyRange1 => {
+                "Boba Fett: when attacking or defending, you may reroll 1 of your dice for each enemy ship at Range 1."
             }
             PilotAbility::RerollPerFriendlyRange1 => {
                 "Jess Pava: when attacking or defending, you may reroll 1 die for each other friendly ship at Range 1."
@@ -441,6 +484,12 @@ impl PilotAbility {
         matches!(
             self,
             PilotAbility::FocusToResult
+                | PilotAbility::StealTokenAtCombatStart
+                | PilotAbility::ExtraAttackDieIfNoFriendsRange1To2
+                | PilotAbility::StressToReacquireLockAfterSpending
+                | PilotAbility::ExtraAttackDieOutsideOwnArc
+                | PilotAbility::ExtraAttackDieInAuxiliaryArc
+                | PilotAbility::RerollPerEnemyRange1
                 | PilotAbility::ExtraAttackDieAtRange1
                 | PilotAbility::ExtraAttackDieOutsideDefenderArc
                 | PilotAbility::ExtraAttackDieVsDamaged

@@ -575,6 +575,7 @@ async fn session(
                     let side = match f {
                         sf_core::ship::Faction::RebelAlliance => "Rebel",
                         sf_core::ship::Faction::Empire => "Imperial",
+                        sf_core::ship::Faction::Scum => "Scum",
                     };
                     let _ = resp.send(Err(format!(
                         "squad rejected: this seat flies the {side} side of the mission"

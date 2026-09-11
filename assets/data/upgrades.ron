@@ -370,6 +370,34 @@
         // Bomblet Generator (unique, takes two Bomb slots, not discarded)
         // is left out until double-slot cards are supported.
 
+        // ---------------- Illicit (Most Wanted) ----------------
+        (id: 210, xws: "hotshotblaster", name: "\"Hot Shot\" Blaster", slot: Illicit, cost: 3,
+         attack: Some((dice: 3, range_min: 1, range_max: 2, requires: Free, discard_to_fire: true)),
+         text: "Attack: Discard this card to attack 1 ship (even a ship outside your firing arc)."),
+        (id: 211, xws: "inertialdampeners", name: "Inertial Dampeners", slot: Illicit, cost: 1,
+         effect: Some(StationaryOnRevealDiscard),
+         text: "When you reveal your maneuver, you may discard this card to instead perform a white [0] maneuver. Then receive 1 stress token."),
+        (id: 212, xws: "deadmansswitch", name: "Dead Man's Switch", slot: Illicit, cost: 2,
+         effect: Some(DamageNeighboursWhenDestroyed),
+         text: "When you are destroyed, each ship at Range 1 suffers 1 damage."),
+        (id: 213, xws: "feedbackarray", name: "Feedback Array", slot: Illicit, cost: 2,
+         effect: Some(FeedbackArray),
+         text: "During the Combat phase, instead of performing any attacks, you may receive 1 ion token and suffer 1 damage to choose 1 enemy ship at Range 1. That ship suffers 1 damage."),
+
+        // ---------------- Salvaged Astromechs (Most Wanted) ----------------
+        (id: 220, xws: "unhingedastromech", name: "Unhinged Astromech", slot: SalvagedAstromech, cost: 1,
+         effect: Some(Speed3Green),
+         text: "You may treat all 3-speed maneuvers as green maneuvers."),
+        (id: 221, xws: "salvagedastromech", name: "Salvaged Astromech", slot: SalvagedAstromech, cost: 2,
+         effect: Some(DiscardSelfToCancelShipDamage),
+         text: "When you are dealt a Damage card with the Ship trait, you may immediately discard that card (before resolving its effect). Then, discard this Upgrade card."),
+        (id: 222, xws: "r4agromech", name: "R4 Agromech", slot: SalvagedAstromech, cost: 2,
+         effect: Some(LockAfterSpendingFocus),
+         text: "When attacking, after you spend a focus token, you may acquire a target lock on the defender."),
+        (id: 223, xws: "r4b11", name: "R4-B11", slot: SalvagedAstromech, cost: 3, unique: true,
+         effect: Some(SpendLockToRerollDefenseDice),
+         text: "When attacking, if you have a target lock on the defender, you may spend the target lock to choose any or all defense dice. The defender must reroll the chosen dice."),
+
         // ---------------- Crew ----------------
         // A starter set for the YT-1300 (Rebel and generic crew); the
         // Imperial/Scum crew and the rest of the roster can follow.

@@ -268,6 +268,24 @@ fn shadows(
 /// them. A guide only — the rules measure obstruction along the range
 /// ruler between the two bases, so the prompt's "(obstructed)" tag is
 /// the authority.
+/// Every firing arc of a ship class: the front arc, plus the auxiliary
+/// (rear) arc of a Firespray-31.
+pub fn draw_arcs(
+    gizmos: &mut Gizmos,
+    game: &Game,
+    class: &sf_core::ship::ShipClass,
+    pose: Pose,
+    obstacles: &[sf_core::obstacle::Obstacle],
+    alpha: f32,
+) {
+    let fp = class.footprint;
+    draw_firing_arc_with(gizmos, game, pose, fp, obstacles, alpha);
+    if class.rear_arc {
+        let rear = sf_core::combat::rear_pose(pose, fp);
+        draw_firing_arc_with(gizmos, game, rear, fp, obstacles, alpha * 0.8);
+    }
+}
+
 pub fn draw_firing_arc_with(
     gizmos: &mut Gizmos,
     game: &Game,

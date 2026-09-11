@@ -19,6 +19,8 @@ pub struct PlayerId(pub u32);
 pub enum Faction {
     RebelAlliance,
     Empire,
+    /// Scum and Villainy (Most Wanted).
+    Scum,
 }
 
 impl Faction {
@@ -27,6 +29,7 @@ impl Faction {
         match self {
             Faction::RebelAlliance => "rebels",
             Faction::Empire => "imperial",
+            Faction::Scum => "scum",
         }
     }
 }
@@ -96,6 +99,10 @@ pub struct ShipClass {
     /// firing arc (YT-1300). Arc-dependent effects still use the arc.
     #[serde(default)]
     pub turret_primary: bool,
+    /// Auxiliary (rear) firing arc: the primary weapon may also target
+    /// ships inside the 90° arc behind the ship (Firespray-31).
+    #[serde(default)]
+    pub rear_arc: bool,
     /// Board sprite asset path (orthographic top-down), e.g. "ships/scout.png".
     pub sprite: String,
     /// Sprite image dimensions (width, height) in pixels.
@@ -196,6 +203,9 @@ pub struct ShipState {
     /// Countermeasures: +1 agility until the End phase.
     #[serde(default)]
     pub agility_bonus: u8,
+    /// Dead Man's Switch already went off for this (destroyed) ship.
+    #[serde(default)]
+    pub switch_fired: bool,
     /// Active (faceup) critical effects — public information.
     pub crits: Vec<crate::crit::CritEffect>,
     pub destroyed: bool,
@@ -258,6 +268,7 @@ impl ShipState {
             lock: None,
             lock2: None,
             agility_bonus: 0,
+            switch_fired: false,
             crits: Vec::new(),
             destroyed: false,
             escaped: false,
@@ -306,7 +317,8 @@ pub const CALLSIGN_MAX: usize = 20;
 
 /// Squad name for the `nth` squad (0-based) of a faction in a game: the
 /// first Rebel squad is Red, then Gold, Blue, Green; Imperial squadrons
-/// are Obsidian, Onyx, Black, Scimitar — so mirror matches and team
+/// are Obsidian, Onyx, Black, Scimitar; Scum gangs Black Sun, Binayre,
+/// Kihraxz, Hutt — so mirror matches and team
 /// games stay distinguishable while a lone squad gets the classic name.
 pub fn default_squad_name(faction: Faction, nth: usize) -> &'static str {
     match (faction, nth % 4) {
@@ -318,6 +330,10 @@ pub fn default_squad_name(faction: Faction, nth: usize) -> &'static str {
         (Faction::RebelAlliance, 1) => "Gold",
         (Faction::RebelAlliance, 2) => "Blue",
         (Faction::RebelAlliance, _) => "Green",
+        (Faction::Scum, 0) => "Black Sun",
+        (Faction::Scum, 1) => "Binayre",
+        (Faction::Scum, 2) => "Kihraxz",
+        (Faction::Scum, _) => "Hutt",
     }
 }
 

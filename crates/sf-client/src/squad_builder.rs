@@ -413,7 +413,8 @@ fn input(
     if keys.just_pressed(KeyCode::KeyF) {
         b.faction = match b.faction {
             Faction::RebelAlliance => Faction::Empire,
-            Faction::Empire => Faction::RebelAlliance,
+            Faction::Empire => Faction::Scum,
+            Faction::Scum => Faction::RebelAlliance,
         };
         b.rows.clear();
         b.row = 0;
@@ -574,6 +575,7 @@ fn show(
     let faction = match b.faction {
         Faction::RebelAlliance => "Rebel Alliance / Resistance",
         Faction::Empire => "Galactic Empire / First Order",
+        Faction::Scum => "Scum and Villainy",
     };
     let mut lines = vec![
         format!("SQUAD BUILDER — {} [{faction}] — {points} / 100 pts", b.name),

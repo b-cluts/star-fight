@@ -1583,6 +1583,7 @@ fn draw_attack_fx(
     let bolt_color = match atk_class.faction {
         Faction::RebelAlliance => Color::srgb(1.0, 0.25, 0.15),
         Faction::Empire => Color::srgb(0.25, 1.0, 0.3),
+        Faction::Scum => Color::srgb(1.0, 0.8, 0.2),
     };
     // Ordnance (torpedoes, missiles) flies as a warhead; turret weapons
     // and turret primaries fire from the base center, all round.
@@ -2167,8 +2168,8 @@ fn draw(
         && let Some(v) = snap.ships.iter().find(|v| v.id.0 == 1)
         && let Some(p) = v.pose
     {
-        let fp = game.ships.classes[game.class_index(v.class)].footprint;
-        render::draw_firing_arc_with(&mut gizmos, &game, p, fp, &snap.obstacles, 0.5);
+        let class = &game.ships.classes[game.class_index(v.class)];
+        render::draw_arcs(&mut gizmos, &game, class, p, &snap.obstacles, 0.5);
     }
     for t in tokens {
         draw_bomb_token(&mut gizmos, &game, t, t.owner.0 == u32::from(seat));
@@ -2238,6 +2239,12 @@ fn draw(
                 .find(|v| v.id.0 == id)
                 .map(|v| game.ships.classes[game.class_index(v.class)].footprint)
         };
+        let class_of = |id: u32| {
+            snap.ships
+                .iter()
+                .find(|v| v.id.0 == id)
+                .map(|v| &game.ships.classes[game.class_index(v.class)])
+        };
         match &a.current {
             Some(AnimItem::Move(mv)) => {
                 render::draw_path(
@@ -2254,8 +2261,9 @@ fn draw(
                 draw_detonation(&mut gizmos, &game, snap, a, d);
             }
             Some(AnimItem::Prompt { attacker, options, .. }) => {
-                if let (Some(ap), Some(fp)) = (a.end_pose(*attacker, snap), fp_of(*attacker)) {
-                    render::draw_firing_arc_with(&mut gizmos, &game, ap, fp, &snap.obstacles, 0.6);
+                if let (Some(ap), Some(class)) = (a.end_pose(*attacker, snap), class_of(*attacker))
+                {
+                    render::draw_arcs(&mut gizmos, &game, class, ap, &snap.obstacles, 0.6);
                     bullseye.0 = Some(ap);
                 }
                 let hi = Color::srgb(1.0, 0.95, 0.2);
@@ -2331,14 +2339,7 @@ fn draw(
     }
     let end = from;
     if arcs.0 {
-        render::draw_firing_arc_with(
-            &mut gizmos,
-            &game,
-            end,
-            class.footprint,
-            &snap.obstacles,
-            0.7,
-        );
+        render::draw_arcs(&mut gizmos, &game, class, end, &snap.obstacles, 0.7);
         bullseye.0 = Some(end);
     }
     let (size, tf) = render::ship_visual(class, end, &game, 2.0);
