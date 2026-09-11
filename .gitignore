@@ -9,4 +9,5 @@ reference/
 # licensed); shippable sprites live under assets/ after review.
 /*.png
 /*.jpg
+/*.jpeg
 /*.webp
