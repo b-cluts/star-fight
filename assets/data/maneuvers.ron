@@ -318,20 +318,19 @@
             ],
         ),
         (
-            id: 14, // Firespray-31 dial (First Edition card, from the Slave I
-                    // expansion; the supplied dial photo is Second Edition,
-                    // which adds 1-turns and Tallon rolls): speed 1 all
-                    // green; 2 banks and straight green, turns white; the
-                    // speed-3 row white with a red K-turn; 4 straight white
-                    // and a red K-turn.
+            id: 14, // Firespray-31 dial, read from a photo of the First
+                    // Edition dial (FS-31): speed 1 all green; at speed 2
+                    // only the straight is green, banks and turns white;
+                    // the speed-3 row white with a red K-turn; 4 straight
+                    // white and a red K-turn. Four green maneuvers in all.
             maneuvers: [
                 (steer: BankLeft,  distance: 1, difficulty: Easy),
                 (steer: Straight,  distance: 1, difficulty: Easy),
                 (steer: BankRight, distance: 1, difficulty: Easy),
                 (steer: TurnLeft,  distance: 2, difficulty: Normal),
-                (steer: BankLeft,  distance: 2, difficulty: Easy),
+                (steer: BankLeft,  distance: 2, difficulty: Normal),
                 (steer: Straight,  distance: 2, difficulty: Easy),
-                (steer: BankRight, distance: 2, difficulty: Easy),
+                (steer: BankRight, distance: 2, difficulty: Normal),
                 (steer: TurnRight, distance: 2, difficulty: Normal),
                 (steer: TurnLeft,  distance: 3, difficulty: Normal),
                 (steer: BankLeft,  distance: 3, difficulty: Normal),

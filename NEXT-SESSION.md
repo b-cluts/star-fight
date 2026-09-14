@@ -299,8 +299,8 @@ and Server `ws://127.0.0.1:7777`.
       laser colour yellow; server side name "Scum"; missions stay
       Rebel/Empire — Scum arms map to the Rebel side / no fixed force),
       classes 13 Z-95 (dial 13 READ FROM THE USER'S PHOTO), 14 Y-Wing Scum
-      (dial 4 shared), 15 Firespray-31 (dial 14 FROM MEMORY — the user's
-      firespray_dial.jpg is Second Edition, blue arrows; told the user),
+      (dial 4 shared), 15 Firespray-31 (dial 14 CONFIRMED 2026-09-14 from the user's
+      replacement First Edition dial photo: 2-banks are white),
       `ShipClass.rear_arc` + `combat::rear_pose` + `ship_in_rear_arc`
       (primary weapon only; client `render::draw_arcs` draws both arcs),
       pilots 1301-1504 with abilities StealTokenAtCombatStart (Kaa'to,
