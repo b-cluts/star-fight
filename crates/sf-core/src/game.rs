@@ -1993,6 +1993,31 @@ impl GameState {
             events.push(format!("{who}: Tactician — {} is stressed", self.label(content, d_idx)));
             self.gain_stress(content, d_idx, events);
         }
+        // Airen Cracken: a friend at Range 1 takes a free action (policy: a
+        // focus action, for a friend without a focus token first).
+        if self.ability(content, &self.ships[a_idx])
+            == Some(PilotAbility::FreeActionToFriendAfterAttack)
+        {
+            let friends: Vec<usize> = self
+                .friends_at_range1(content, a_idx)
+                .into_iter()
+                .filter(|&f| self.may_act_freely(content, f))
+                .collect();
+            let pick = friends
+                .iter()
+                .copied()
+                .find(|&f| self.ships[f].focus == 0)
+                .or_else(|| friends.first().copied());
+            if let Some(f) = pick {
+                let fp = self.class_of(content, &self.ships[f]).footprint;
+                let (r, _) = self.perform_action(content, f, PlannedAction::Focus, fp, &[], events);
+                events.push(format!(
+                    "{who}: Airen Cracken — {} takes a free focus action{}",
+                    self.label(content, f),
+                    if r == ActionResult::Performed { "" } else { " FAILED" }
+                ));
+            }
+        }
         // Ruthlessness: after a hit, another ship at Range 1 of the
         // defender suffers 1 damage — an enemy if there is one, else a
         // friend (the card says must).
@@ -6205,7 +6230,16 @@ impl GameState {
         // "If this attack hits, … Then cancel all dice results": ion and
         // flechette weapons deal a fixed 1 damage (plus their token), Adv.
         // Homing Missiles a faceup card straight to the hull.
-        let landed = hits + crits > 0;
+        // Lieutenant Blount: the defender is hit even without damage.
+        let blount =
+            self.ability(content, &self.ships[a_idx]) == Some(PilotAbility::AttackAlwaysHits);
+        let landed = hits + crits > 0 || blount;
+        if blount && hits + crits == 0 {
+            events.push(format!(
+                "{}: Lieutenant Blount — counts as a hit",
+                self.label(content, a_idx)
+            ));
+        }
         let mut bypass_shields = false;
         if landed {
             let who = self.label(content, d_idx);
@@ -11867,6 +11901,54 @@ mod tests {
         assert_eq!(shot.hits, 2);
         assert_eq!(gs.ships[0].hull, 1, "{:?}", rec.events);
         assert!(!gs.ships[1].locks_on(ShipId(0)));
+    }
+
+    #[test]
+    fn blount_counts_as_a_hit_and_airen_cracken_hands_a_friend_a_free_action() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        // Blount's Ion Pulse Missiles roll nothing but still "hit": the
+        // TIE suffers 1 damage and 2 ion tokens.
+        let missiles = UpgradeId(144);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("lieutenantblount", Pose::new(10.0, 9.0, south), 1)],
+        );
+        gs.ships[1].upgrades.push(missiles);
+        gs.ships[1].take_lock(ShipId(0), false);
+        let mut rolls = scripted(vec![7; 40]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| {
+            let w = p.options.iter().find(|o| o.weapon == Some(missiles)).map(|o| o.weapon);
+            (p.options[0].target, w.flatten())
+        });
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!(shot.weapon, Some(missiles), "{:?}", rec.events);
+        assert_eq!((gs.ships[0].hull, gs.ships[0].ion), (2, 2), "{:?}", rec.events);
+        assert!(rec.events.iter().any(|e| e.contains("Lieutenant Blount")));
+
+        // Airen's wingman at Range 1 takes a free focus action after his shot.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("airencracken", Pose::new(10.0, 9.0, south), 1),
+                ("banditsquadronpilot", Pose::new(12.0, 9.0, south), 1),
+            ],
+        );
+        let mut rolls = scripted(vec![7; 40]);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| (p.options[0].target, None));
+        assert!(
+            rec.events.iter().any(|e| e.contains("Airen Cracken")
+                && e.contains("free focus action")
+                && !e.contains("FAILED")),
+            "{:?}",
+            rec.events
+        );
     }
 
     #[test]

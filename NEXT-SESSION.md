@@ -326,6 +326,11 @@ and Server `ws://127.0.0.1:7777`.
       from the gitignored reference/xwing-card-images scans (pilots/scum/*,
       upgrades/illicit, upgrades/samd, upgrades/mod) — use them again for
       any further Scum content (aggressor, starviper, m3a, kihraxz, ...).
+      >>> REBEL Z-95 DONE 2026-09-14 (259 tests): class 16 (same sprite and
+      dial as the Scum Z-95, bar Missile), pilots 1601-1604, Airen Cracken
+      (FreeActionToFriendAfterAttack: a Range-1 friend gets a free focus
+      action in after_attack_cards) and Lieutenant Blount (AttackAlwaysHits:
+      `landed` is true even with no results). Remaining data-only: Emon.
       >>> TESTS DONE 2026-09-14 (258 tests): every planned test below is in
       game.rs / squad.rs. NEXT: (2) playtest the Scum builder page, the
       Firespray sprite and rear arc on screen, then cut v0.6.0 (proto 4).

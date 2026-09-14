@@ -135,5 +135,11 @@
         (id: 1503, class: 15, name: "Kath Scarlet", xws: "kathscarlet",      unique: true, skill: 7, cost: 38, talent_slot: true,  source: MostWanted, ability: Some(ExtraAttackDieInAuxiliaryArc)),
         (id: 1502, class: 15, name: "Emon Azzameen", xws: "emonazzameen",   unique: true,  skill: 6, cost: 36, talent_slot: true,  source: MostWanted, ability: Some(BombWithSpeed3Template)),
         (id: 1501, class: 15, name: "Mandalorian Mercenary", xws: "mandalorianmercenary", unique: false, skill: 5, cost: 35, talent_slot: true, source: MostWanted, ability: None),
+
+        // ---------------- Z-95 Headhunter, Rebel (class 16) ----------------
+        (id: 1604, class: 16, name: "Airen Cracken", xws: "airencracken",     unique: true,  skill: 8, cost: 19, talent_slot: true,  source: Z95Expansion, ability: Some(FreeActionToFriendAfterAttack)),
+        (id: 1603, class: 16, name: "Lieutenant Blount", xws: "lieutenantblount", unique: true, skill: 6, cost: 17, talent_slot: true,  source: Z95Expansion, ability: Some(AttackAlwaysHits)),
+        (id: 1602, class: 16, name: "Tala Squadron Pilot", xws: "talasquadronpilot", unique: false, skill: 4, cost: 13, talent_slot: false, source: Z95Expansion, ability: None),
+        (id: 1601, class: 16, name: "Bandit Squadron Pilot", xws: "banditsquadronpilot", unique: false, skill: 2, cost: 12, talent_slot: false, source: Z95Expansion, ability: None),
     ],
 )

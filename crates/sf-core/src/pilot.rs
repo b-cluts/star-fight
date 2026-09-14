@@ -44,6 +44,8 @@ pub enum Source {
     XWingExpansion,
     /// Most Wanted (Scum and Villainy: Z-95, Y-Wing, Firespray-31 repaints).
     MostWanted,
+    /// Z-95 Headhunter expansion (Rebel).
+    Z95Expansion,
 }
 
 /// Pilot abilities, as data tags. Each variant documents the card text;
@@ -242,6 +244,12 @@ pub enum PilotAbility {
     /// Boba Fett (Scum): when attacking or defending, reroll 1 die for
     /// each enemy ship at Range 1.
     RerollPerEnemyRange1,
+    // ---- Rebel Z-95 Headhunter ----
+    /// Airen Cracken: after attacking, a friendly ship at Range 1 performs
+    /// a free action.
+    FreeActionToFriendAfterAttack,
+    /// Lieutenant Blount: the defender counts as hit even without damage.
+    AttackAlwaysHits,
     /// Lieutenant Lorrir: when performing a barrel roll, you may receive
     /// 1 stress token to use the bank 1 templates instead of straight 1.
     BarrelRollWithBank1ForStress,
@@ -327,6 +335,12 @@ impl PilotAbility {
             }
             PilotAbility::RerollPerEnemyRange1 => {
                 "Boba Fett: when attacking or defending, you may reroll 1 of your dice for each enemy ship at Range 1."
+            }
+            PilotAbility::FreeActionToFriendAfterAttack => {
+                "Airen Cracken: after you perform an attack, you may choose another friendly ship at Range 1. That ship may perform 1 free action."
+            }
+            PilotAbility::AttackAlwaysHits => {
+                "Lieutenant Blount: when attacking, the defender is hit by your attack, even if he does not suffer any damage."
             }
             PilotAbility::RerollPerFriendlyRange1 => {
                 "Jess Pava: when attacking or defending, you may reroll 1 die for each other friendly ship at Range 1."
@@ -490,6 +504,8 @@ impl PilotAbility {
                 | PilotAbility::ExtraAttackDieOutsideOwnArc
                 | PilotAbility::ExtraAttackDieInAuxiliaryArc
                 | PilotAbility::RerollPerEnemyRange1
+                | PilotAbility::FreeActionToFriendAfterAttack
+                | PilotAbility::AttackAlwaysHits
                 | PilotAbility::ExtraAttackDieAtRange1
                 | PilotAbility::ExtraAttackDieOutsideDefenderArc
                 | PilotAbility::ExtraAttackDieVsDamaged

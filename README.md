@@ -43,7 +43,7 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    mission), take Focus, and shoot the weakest target; they field the
    cheapest generic pilot of their faction up to the points, or the
    mission's printed force.
-   **Factions**: Rebel Alliance (with the Resistance), Galactic Empire
+   **Factions**: Rebel Alliance (with the Resistance and the Z-95), Galactic Empire
    (with the First Order) and **Scum and Villainy** (Most Wanted: Z-95
    Headhunter, Y-Wing, Firespray-31 with its rear firing arc). Press F in
    the squad builder to cycle; the rulebook missions are Rebels vs Empire.
