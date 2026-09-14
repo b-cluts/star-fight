@@ -91,6 +91,26 @@ The easiest way to play with friends elsewhere is a [Tailscale](https://tailscal
 network: no router port forwarding, no public IP, and the game's own pinned
 TLS and password still apply on top of Tailscale's encryption.
 
+**What Tailscale does.** Your PC normally sits behind a home router with a
+private address (192.168.x.x) that nobody outside can reach; the old fix is
+forwarding a port on the router and handing out your public IP. Tailscale
+replaces that: every machine signed into the same Tailscale network gets a
+stable private address in the `100.x.y.z` range (and, with MagicDNS, a name
+like `mybox.tailnet-name.ts.net`), and any of those machines can reach any
+other at that address through an encrypted tunnel, from anywhere. The game
+knows nothing about Tailscale — the server listens on TCP 7777 as usual and
+the clients connect to it; Tailscale is only what makes the server's
+address reachable from your friends' houses. Both routers see just an
+outgoing connection, which they allow like any other.
+
+**Game night in short.** Server machine: Tailscale running, start
+`sf-server --host <its Tailscale name or 100.x address>`, send the printed
+join string and password to the players. Every player, you included:
+Tailscale running, start the client, paste the join string into **Server**,
+type the password; the host presses **Create Game** and shares the 4-letter
+code, the others press **Join Game** and enter it. Your own client uses the
+same join string — a machine can reach itself by its Tailscale address.
+
 1. Install Tailscale on the machine that runs `sf-server` and on every
    player's machine, all signed into the same tailnet (or share the server
    node with a friend's tailnet). Each machine gets a `100.x.y.z` address and,
@@ -111,9 +131,13 @@ TLS and password still apply on top of Tailscale's encryption.
    host:port after the first connection.
 
 Nothing needs opening on the router. Only a local firewall on the server
-box could get in the way (allow TCP 7777 on the `tailscale0` interface). If
-a player has MagicDNS turned off, use the server's `100.x` address in
-`--host` instead of the name.
+box could get in the way (allow TCP 7777 on the `tailscale0` interface): if
+a player can ping your Tailscale address but the client cannot connect, that
+is the place to look. If a player has MagicDNS turned off, use the server's
+`100.x` address in `--host` instead of the name. The server's Tailscale
+address is not its LAN address: started without `--host`, `sf-server` prints
+a join string with the LAN address, which only works on your own network.
+The Tailscale app shows the address, or run `tailscale ip -4`.
 
 Without Tailscale, forward TCP 7777 on your router to the server box and
 pass your public IP or dynamic-DNS name as `--host`; the pinned certificate
