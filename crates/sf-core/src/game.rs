@@ -11613,6 +11613,263 @@ mod tests {
     }
 
     #[test]
+    fn ndru_kavil_and_kath_roll_an_extra_attack_die() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let tie = ("academypilot", Pose::new(10.0, 2.5, north), 2);
+        let shot_by = |rec: &TurnRecords, id: u32| {
+            rec.attacks.iter().find(|a| a.attacker == ShipId(id)).cloned().expect("fired")
+        };
+        // N'dru alone at Range 2: 2 + 1 dice.
+        let mut gs = skirmish(&c, &[tie], &[("ndrusuhlak", Pose::new(10.0, 9.0, south), 1)]);
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert_eq!(shot_by(&rec, 1).attack_faces.len(), 3, "{:?}", rec.events);
+        // With a friend at Range 2 (and out of the TIE's reach): 2 dice.
+        let mut gs = skirmish(
+            &c,
+            &[tie],
+            &[
+                ("ndrusuhlak", Pose::new(10.0, 9.0, south), 1),
+                ("binayrepirate", Pose::new(10.0, 13.5, south), 1),
+            ],
+        );
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert_eq!(shot_by(&rec, 1).attack_faces.len(), 2, "{:?}", rec.events);
+        // Kavil's turret shot at the TIE behind him: 3 + 1 dice.
+        let mut gs = skirmish(&c, &[tie], &[("kavil", Pose::new(10.0, 9.0, north), 1)]);
+        gs.ships[1].upgrades.push(UpgradeId(10));
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let shot = shot_by(&rec, 1);
+        assert_eq!((shot.weapon, shot.attack_faces.len()), (Some(UpgradeId(10)), 4));
+        // Kath Scarlet's rear-arc primary shot: 3 + 1 dice.
+        let mut gs = skirmish(&c, &[tie], &[("kathscarlet", Pose::new(10.0, 9.0, north), 1)]);
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let shot = shot_by(&rec, 1);
+        assert_eq!((shot.weapon, shot.attack_faces.len()), (None, 4), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn boba_fett_rerolls_one_die_per_enemy_at_range_1_attacking_and_defending() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        // TIE base at y 6..7 after its move, Boba's at 8..10: Range 1.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 5.0, north), 2)],
+            &[("bobafett", Pose::new(10.0, 9.0, south), 1)],
+        );
+        // Boba (PS8) first: four blanks, the reroll lands a hit; the TIE
+        // rolls no evades. Then the TIE hits once; Boba's two blanks get
+        // one reroll, which evades.
+        let mut rolls = vec![7, 7, 7, 7, 0, 7, 7, 7, 0, 7, 7, 7, 7, 0];
+        rolls.extend([7; 30]);
+        let rec = resolve(&c, &mut gs, rolls);
+        let boba = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert_eq!((boba.attack_faces.len(), boba.hits), (4, 1), "{:?}", rec.events);
+        assert_eq!(gs.ships[0].hull, 2);
+        assert_eq!((gs.ships[1].shields, gs.ships[1].hull), (4, 6), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn drea_renthal_reacquires_a_spent_lock_for_a_stress_token() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("drearenthal", Pose::new(10.0, 9.0, south), 1)],
+        );
+        gs.ships[1].take_lock(ShipId(0), false);
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(shot.lock_spent);
+        assert!(gs.ships[1].locks_on(ShipId(0)), "lock re-acquired");
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(rec.events.iter().any(|e| e.contains("Drea Renthal")), "{:?}", rec.events);
+    }
+
+    #[test]
+    fn kaato_takes_a_friends_focus_token_at_combat_start() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("kaatoleeachos", Pose::new(10.0, 9.0, south), 1),
+                ("binayrepirate", Pose::new(10.0, 13.5, south), 1),
+            ],
+        );
+        gs.ships[2].focus = 2;
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(
+            rec.events.iter().any(|e| e.contains("takes a focus token from")),
+            "{:?}",
+            rec.events
+        );
+    }
+
+    #[test]
+    fn hot_shot_blaster_fires_outside_the_arc_and_is_discarded() {
+        let c = content();
+        let north = FRAC_PI_2;
+        let blaster = UpgradeId(210);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("binayrepirate", Pose::new(10.0, 9.0, north), 1)],
+        );
+        gs.ships[1].upgrades.push(blaster);
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).expect("blaster shot");
+        assert_eq!((shot.weapon, shot.attack_faces.len(), shot.range), (Some(blaster), 3, 2));
+        assert!(!gs.ships[1].upgrades.contains(&blaster), "discarded after firing");
+    }
+
+    #[test]
+    fn inertial_dampeners_hold_position_for_a_stress_token() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let dampeners = UpgradeId(211);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("binayrepirate", Pose::new(10.0, 9.0, south), 2)],
+        );
+        gs.ships[1].upgrades.push(dampeners);
+        gs.plan_card_use(&c, P1, ShipId(1), dampeners, true).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let mv = rec.moves.iter().find(|m| m.ship == ShipId(1)).unwrap();
+        assert!((mv.end.anchor.y - 9.0).abs() < 1e-9, "{:?}", mv.end);
+        assert_eq!(gs.ships[1].stress, 1);
+        assert!(!gs.ships[1].upgrades.contains(&dampeners));
+    }
+
+    #[test]
+    fn dead_mans_switch_burns_every_ship_at_range_1() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[
+                ("binayrepirate", Pose::new(10.0, 6.0, south), 1),
+                ("syndicatethug", Pose::new(12.0, 9.0, south), 1),
+            ],
+        );
+        gs.ships[1].upgrades.push(UpgradeId(212));
+        gs.ships[1].shields = 0;
+        gs.ships[1].hull = 1;
+        // Y-Wing (PS2) misses first; the TIE picks the Z-95 and hits.
+        let mut seq = vec![7, 7, 7, 7, 7, 0, 7, 7, 7, 7];
+        seq.extend([7; 30]);
+        let mut rolls = scripted(seq);
+        gs.commit_plans_begin(&c, P0, &mut rolls).unwrap();
+        gs.commit_plans_begin(&c, P1, &mut rolls).unwrap();
+        let rec = run_combat(&c, &mut gs, &mut rolls, |p| {
+            let t = if p.attacker == ShipId(0) { ShipId(1) } else { p.options[0].target };
+            (t, None)
+        });
+        assert!(gs.ships[1].destroyed, "{:?}", rec.events);
+        assert_eq!(gs.ships[0].hull, 2, "the TIE at Range 1 burns: {:?}", rec.events);
+        assert_eq!(gs.ships[2].shields, 2, "the friendly Y-Wing burns too");
+        assert!(rec.events.iter().any(|e| e.contains("Dead Man's Switch")));
+    }
+
+    #[test]
+    fn feedback_array_zaps_an_enemy_at_range_1_instead_of_attacking() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let array = UpgradeId(213);
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("binayrepirate", Pose::new(10.0, 6.0, south), 1)],
+        );
+        gs.ships[1].upgrades.push(array);
+        gs.plan_card_use(&c, P1, ShipId(1), array, true).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        assert!(rec.attacks.iter().all(|a| a.attacker != ShipId(1)), "{:?}", rec.events);
+        assert_eq!((gs.ships[1].ion, gs.ships[1].shields), (1, 1));
+        assert_eq!(gs.ships[0].hull, 2);
+        assert!(gs.ships[1].upgrades.contains(&array), "not discarded");
+    }
+
+    #[test]
+    fn unhinged_astromech_greens_speed_3_and_salvaged_astromech_eats_a_ship_crit() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let setup = |c: &Content| {
+            skirmish(
+                c,
+                &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+                &[("syndicatethug", Pose::new(10.0, 9.0, south), 1)],
+            )
+        };
+        let turn3 = Maneuver {
+            steer: crate::maneuver::Steer::TurnLeft,
+            distance: 3,
+            difficulty: Difficulty::Hard,
+        };
+        let mut gs = setup(&c);
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &turn3).0, Difficulty::Hard);
+        gs.ships[1].upgrades.push(UpgradeId(220));
+        assert_eq!(gs.maneuver_difficulty(&c, 1, &turn3).0, Difficulty::Easy);
+
+        let salvaged = UpgradeId(221);
+        let mut gs = setup(&c);
+        gs.ships[1].upgrades.push(salvaged);
+        gs.ships[1].shields = 0;
+        let ship_card = (0..8).find(|&v| !crate::crit::draw(v).is_pilot_trait()).unwrap();
+        // Y-Wing (PS2) misses; the TIE's crit gets through and draws a
+        // Ship-trait card, which the astromech discards along with itself.
+        let mut seq = vec![7, 7, 7, 7, 7, 3, 7, 7, ship_card];
+        seq.extend([7; 30]);
+        let rec = resolve(&c, &mut gs, seq);
+        let tie = rec.attacks.iter().find(|a| a.attacker == ShipId(0)).unwrap();
+        assert_eq!(tie.crits, 1, "{:?}", rec.events);
+        assert_eq!(gs.ships[1].hull, 5, "{:?}", rec.events);
+        assert!(gs.ships[1].crits.is_empty());
+        assert!(!gs.ships[1].upgrades.contains(&salvaged));
+    }
+
+    #[test]
+    fn r4_agromech_locks_after_a_focus_and_r4_b11_rerolls_the_evades() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let setup = |c: &Content| {
+            skirmish(
+                c,
+                &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+                &[("syndicatethug", Pose::new(10.0, 9.0, south), 1)],
+            )
+        };
+        let mut gs = setup(&c);
+        gs.ships[1].upgrades.push(UpgradeId(222));
+        gs.ships[1].focus = 1;
+        let mut seq = vec![4, 7];
+        seq.extend([7; 40]);
+        let rec = resolve(&c, &mut gs, seq);
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(shot.attacker_focus_spent);
+        assert!(gs.ships[1].locks_on(ShipId(0)), "{:?}", rec.events);
+
+        let mut gs = setup(&c);
+        gs.ships[1].upgrades.push(UpgradeId(223));
+        gs.ships[1].take_lock(ShipId(0), false);
+        // Two hits need no reroll, so the lock is still there to force the
+        // TIE's three evades to be rerolled — into blanks.
+        let mut seq = vec![0, 0, 0, 0, 0, 7, 7, 7];
+        seq.extend([7; 40]);
+        let rec = resolve(&c, &mut gs, seq);
+        let shot = rec.attacks.iter().find(|a| a.attacker == ShipId(1)).unwrap();
+        assert!(shot.lock_spent, "{:?}", rec.events);
+        assert_eq!(shot.hits, 2);
+        assert_eq!(gs.ships[0].hull, 1, "{:?}", rec.events);
+        assert!(!gs.ships[1].locks_on(ShipId(0)));
+    }
+
+    #[test]
     fn black_holes_drag_ships_within_range_5_and_swallow_at_the_core() {
         let c = content();
         let hole = |x, y| Obstacle {

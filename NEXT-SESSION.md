@@ -326,7 +326,10 @@ and Server `ws://127.0.0.1:7777`.
       from the gitignored reference/xwing-card-images scans (pilots/scum/*,
       upgrades/illicit, upgrades/samd, upgrades/mod) — use them again for
       any further Scum content (aggressor, starviper, m3a, kihraxz, ...).
-      >>> NEXT: (1) WRITE THE TESTS the Scum commit lacks, in game.rs tests
+      >>> TESTS DONE 2026-09-14 (258 tests): every planned test below is in
+      game.rs / squad.rs. NEXT: (2) playtest the Scum builder page, the
+      Firespray sprite and rear arc on screen, then cut v0.6.0 (proto 4).
+      >>> (done) WRITE THE TESTS the Scum commit lacks, in game.rs tests
       (helpers: `skirmish`, `resolve`, `run_combat`, `scripted`; Scum
       pilots go in the "rebel" slot of skirmish; ids above). Planned:
       N'dru/Kavil (Ion Cannon Turret on Kavil, TIE behind him)/Kath extra

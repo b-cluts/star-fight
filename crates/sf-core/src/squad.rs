@@ -594,6 +594,39 @@ mod tests {
     }
 
     #[test]
+    fn scum_ships_take_illicit_and_salvaged_astromech_cards_only() {
+        let c = content();
+        let rules = SquadRules::default();
+        let squad =
+            |s: SquadShip| Squad { name: "s".into(), faction: s_faction(&c, &s), ships: vec![s] };
+        assert!(
+            validate_squad(&squad(ship(&c, "binayrepirate", &["hotshotblaster"])), &c, &rules)
+                .is_ok()
+        );
+        assert!(
+            validate_squad(&squad(ship(&c, "syndicatethug", &["unhingedastromech"])), &c, &rules)
+                .is_ok()
+        );
+        let e =
+            errs(validate_squad(&squad(ship(&c, "syndicatethug", &["r2astromech"])), &c, &rules));
+        assert!(e.iter().any(|x| matches!(x, SquadError::NoSlot { .. })), "{e:?}");
+        let e = errs(validate_squad(
+            &squad(ship(&c, "goldsquadronpilot", &["deadmansswitch"])),
+            &c,
+            &rules,
+        ));
+        assert!(e.iter().any(|x| matches!(x, SquadError::NoSlot { .. })), "{e:?}");
+        // A Scum ship in a Rebel squad is the wrong faction.
+        let mixed = Squad {
+            name: "m".into(),
+            faction: Faction::RebelAlliance,
+            ships: vec![ship(&c, "binayrepirate", &[])],
+        };
+        let e = errs(validate_squad(&mixed, &c, &rules));
+        assert!(e.iter().any(|x| matches!(x, SquadError::WrongFaction { .. })), "{e:?}");
+    }
+
+    #[test]
     fn granted_slots_and_icons_count_and_source_rules_apply() {
         let c = content();
         // R2-D6 grants a talent slot to a PS4 Red Squadron Veteran? No —
