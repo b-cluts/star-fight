@@ -604,13 +604,17 @@ async fn a_bot_seat_plays_a_solo_game_through() {
                 _ => {}
             }
         }
-        let (turn, committed) = recv_until(&mut a, |m| match m {
+        // The game may already be over (three Z-95s shoot fast): the
+        // server then sends GameOver after TurnEnd and closes the session.
+        let next = recv_until(&mut a, |m| match m {
             ServerMsg::Snapshot { phase: Phase::Planning, turn, committed, .. } => {
-                Some((turn, committed))
+                Some(Some((turn, committed)))
             }
+            ServerMsg::GameOver { .. } => Some(None),
             _ => None,
         })
         .await;
+        let Some((turn, committed)) = next else { return };
         assert!(turn >= 2);
         assert!(!committed[0]);
     }
