@@ -81,6 +81,9 @@ pub struct ActionExtras {
     /// `plan_card_use`.
     #[serde(default)]
     pub toggles: Vec<UpgradeId>,
+    /// Emon Azzameen: bombs may be dropped with the speed-3 templates
+    /// (`plan_bomb` template, client key T).
+    pub bomb_templates: bool,
 }
 
 /// The 1-speed maneuver a boost flies. Boosting does NOT count as

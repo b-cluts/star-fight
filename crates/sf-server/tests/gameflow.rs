@@ -543,7 +543,13 @@ async fn a_bot_seat_plays_a_solo_game_through() {
     )
     .await;
     assert!(matches!(recv(&mut a).await, ServerMsg::Welcome { .. }));
-    let setup = GameSetup { points: 40, asteroids: 2, bots: 1, ..GameSetup::default() };
+    let setup = GameSetup {
+        points: 40,
+        asteroids: 2,
+        bots: 1,
+        bot_faction: Some(sf_core::ship::Faction::Scum),
+        ..GameSetup::default()
+    };
     send(&mut a, &ClientMsg::CreateGame { squad: None, setup: Some(setup) }).await;
     // The bot is seated with the host: the game starts immediately.
     let players = recv_until(&mut a, |m| match m {
@@ -557,12 +563,12 @@ async fn a_bot_seat_plays_a_solo_game_through() {
         _ => None,
     })
     .await;
-    // Host: two basic TIEs (seat 0); bot: the cheapest Rebel generic
-    // pilot, repeated up to 40 points.
+    // Host: two basic TIEs (seat 0); bot: the cheapest Scum generic
+    // pilot (the host asked for Scum bots), repeated up to 40 points.
     let mine: Vec<u32> = ships.iter().filter(|s| s.owner.0 == 0).map(|s| s.id.0).collect();
     assert_eq!(mine, vec![0, 1]);
     let bots: Vec<&sf_core::game::ShipView> = ships.iter().filter(|s| s.owner.0 == 1).collect();
-    assert!(bots.len() >= 2 && bots.iter().all(|s| s.pilot == bots[0].pilot), "{bots:?}");
+    assert!(bots.len() >= 2 && bots.iter().all(|s| s.pilot == "Binayre Pirate"), "{bots:?}");
     for (id, x) in [(0u32, 8.0), (1, 12.0)] {
         send(
             &mut a,

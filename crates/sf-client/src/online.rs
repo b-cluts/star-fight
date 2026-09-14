@@ -313,6 +313,7 @@ fn demo_view(id: u32, owner: u32, class: u32, callsign: &str, pose: Pose) -> Shi
         plan: None,
         planned_action: None,
         bomb: None,
+        bomb_template: Default::default(),
         planned_action2: None,
         extras: Default::default(),
     }
@@ -1431,20 +1432,36 @@ fn planning_input(
     }
     // B: cycle the bomb card to drop on dial reveal (then none);
     // M: cycle the mine card dropped as this turn's action (then Pass).
-    let (reveal, mines, cur_bomb, cur_action) = {
+    let (reveal, mines, cur_bomb, cur_action, cur_template) = {
         let Some(snap) = &online.snap else { return };
         let Some(view) = snap.ships.iter().find(|v| v.id.0 == selected) else {
             return;
         };
         let (reveal, mines) = bomb_cards(&game, view);
-        (reveal, mines, view.bomb, view.planned_action)
+        (reveal, mines, view.bomb, view.planned_action, view.bomb_template)
     };
     if keys.just_pressed(KeyCode::KeyB) && !reveal.is_empty() {
         let bomb = match cur_bomb.and_then(|c| reveal.iter().position(|u| *u == c)) {
             None => Some(reveal[0]),
             Some(i) => reveal.get(i + 1).copied(),
         };
-        online.send(ClientMsg::PlanBomb { ship_id: ShipId(selected), bomb });
+        online.send(ClientMsg::PlanBomb {
+            ship_id: ShipId(selected),
+            bomb,
+            template: cur_template,
+        });
+    }
+    // T: Emon Azzameen cycles the drop template (straight 1, turn-left 3,
+    // straight 3, turn-right 3) for bombs and mines alike.
+    if keys.just_pressed(KeyCode::KeyT)
+        && extras.bomb_templates
+        && (!reveal.is_empty() || !mines.is_empty())
+    {
+        online.send(ClientMsg::PlanBomb {
+            ship_id: ShipId(selected),
+            bomb: cur_bomb,
+            template: cur_template.next(),
+        });
     }
     // U: switch the next toggle card on (Lightning Reflexes, Electronic
     // Baffle, Jan Ors, Decoy); with every one on, switch them all off.
@@ -2499,6 +2516,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
         if let Some(b) = view.bomb {
             line.push_str(&format!(" | bomb: {} (drops on reveal)", card_name(&game, b)));
         }
+        if view.extras.bomb_templates {
+            line.push_str(&format!(" | bomb template: {}", view.bomb_template.label()));
+        }
         if !view.card_uses.is_empty() {
             let names: Vec<String> = view.card_uses.iter().map(|c| card_name(&game, *c)).collect();
             line.push_str(&format!(" | using: {}", names.join(", ")));
@@ -2612,8 +2632,9 @@ fn hud(online: Res<Online>, game: Res<Game>, mut hud: Query<&mut Text, With<HudT
                 None => String::new(),
             };
             let bomb = if reveal.is_empty() { "" } else { " • B: bomb on reveal" };
+            let template = if extras.bomb_templates { " • T: bomb template" } else { "" };
             format!(
-                "Tab: ship • Left/Right+Enter: maneuver • actions: {}{second}{bomb} • C: commit • X: resign",
+                "Tab: ship • Left/Right+Enter: maneuver • actions: {}{second}{bomb}{template} • C: commit • X: resign",
                 acts.join(" ")
             )
         }

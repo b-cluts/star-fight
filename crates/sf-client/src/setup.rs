@@ -32,7 +32,7 @@ pub struct SetupForm {
     pub team_mode: bool,
 }
 
-const FIELDS: [&str; 9] = [
+const FIELDS: [&str; 10] = [
     "Asteroids",
     "Debris clouds",
     "Black holes",
@@ -42,6 +42,7 @@ const FIELDS: [&str; 9] = [
     "Board width",
     "Board height",
     "Bots (computer players)",
+    "Bot faction",
 ];
 
 pub fn plugin(app: &mut App) {
@@ -132,7 +133,19 @@ fn input(
                 s.board_height =
                     (s.board_height + f64::from(delta) * 2.0).clamp(BOARD_RANGE.0, BOARD_RANGE.1)
             }
-            _ => s.bots = bump_u8(s.bots, s.players.saturating_sub(1)),
+            8 => s.bots = bump_u8(s.bots, s.players.saturating_sub(1)),
+            _ => {
+                use sf_core::ship::Faction;
+                let cycle = [
+                    None,
+                    Some(Faction::RebelAlliance),
+                    Some(Faction::Empire),
+                    Some(Faction::Scum),
+                ];
+                let at = cycle.iter().position(|f| *f == s.bot_faction).unwrap_or(0);
+                let n = (at as i32 + delta).rem_euclid(cycle.len() as i32) as usize;
+                s.bot_faction = cycle[n];
+            }
         }
         if let Some(t) = toggled {
             form.team_mode = t;
@@ -201,6 +214,12 @@ fn show(
         s.board_width.to_string(),
         s.board_height.to_string(),
         s.bots.to_string(),
+        match s.bot_faction {
+            None => "auto (Imperial on even seats, Rebel on odd)".to_string(),
+            Some(sf_core::ship::Faction::RebelAlliance) => "Rebel".to_string(),
+            Some(sf_core::ship::Faction::Empire) => "Imperial".to_string(),
+            Some(sf_core::ship::Faction::Scum) => "Scum".to_string(),
+        },
     ];
     for (i, (name, value)) in FIELDS.iter().zip(values.iter()).enumerate() {
         let (o, c) = if i == form.field { ("[", "]") } else { (" ", " ") };

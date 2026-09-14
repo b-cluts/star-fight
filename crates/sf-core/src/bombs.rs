@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{Footprint, Pose, Vec2};
+use crate::maneuver::{self, Difficulty, Maneuver, Steer};
 use crate::rules;
 use crate::ship::{PlayerId, ShipId};
 use crate::templates;
@@ -126,9 +127,60 @@ pub fn drop_pose(ship: Pose, fp: Footprint) -> Pose {
     Pose { anchor: ship.local_to_world(Vec2::new(-back, 0.0)), heading: ship.heading }
 }
 
+/// The template a bomb is dropped with: the straight 1 for everyone, or
+/// one of Emon Azzameen's speed-3 templates. Left and right are the
+/// ship's own sides: `TurnLeft3` lands the token behind and to the
+/// ship's left.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DropTemplate {
+    #[default]
+    Straight1,
+    TurnLeft3,
+    Straight3,
+    TurnRight3,
+}
+
+impl DropTemplate {
+    pub fn label(self) -> &'static str {
+        match self {
+            DropTemplate::Straight1 => "straight 1",
+            DropTemplate::TurnLeft3 => "turn-left 3",
+            DropTemplate::Straight3 => "straight 3",
+            DropTemplate::TurnRight3 => "turn-right 3",
+        }
+    }
+
+    /// The next choice when cycling with a key.
+    pub fn next(self) -> Self {
+        match self {
+            DropTemplate::Straight1 => DropTemplate::TurnLeft3,
+            DropTemplate::TurnLeft3 => DropTemplate::Straight3,
+            DropTemplate::Straight3 => DropTemplate::TurnRight3,
+            DropTemplate::TurnRight3 => DropTemplate::Straight1,
+        }
+    }
+}
+
+/// Where a token lands when dropped with `template`: the template is
+/// laid against the rear of the base (flown from the rear edge, facing
+/// backwards) and the token sits at its far end, facing the ship's way.
+pub fn drop_pose_with(ship: Pose, fp: Footprint, template: DropTemplate) -> Pose {
+    let steer = match template {
+        DropTemplate::Straight1 => return drop_pose(ship, fp),
+        // Flown backwards, the ship's left is the template's right.
+        DropTemplate::TurnLeft3 => Steer::TurnRight,
+        DropTemplate::Straight3 => Steer::Straight,
+        DropTemplate::TurnRight3 => Steer::TurnLeft,
+    };
+    let rear = crate::combat::rear_pose(ship, fp);
+    let man = Maneuver { steer, distance: 3, difficulty: Difficulty::Normal };
+    let end = maneuver::sample_path(rear, man).ok().and_then(|p| p.last().copied()).unwrap_or(rear);
+    Pose { anchor: end.anchor, heading: end.heading + std::f64::consts::PI }
+}
+
 /// Token poses for a drop: one token, or the three-wide Cluster Mine set.
-pub fn drop_poses(kind: BombKind, ship: Pose, fp: Footprint) -> Vec<Pose> {
-    let center = drop_pose(ship, fp);
+pub fn drop_poses(kind: BombKind, ship: Pose, fp: Footprint, template: DropTemplate) -> Vec<Pose> {
+    let center = drop_pose_with(ship, fp, template);
     if kind == BombKind::ClusterMine {
         let w = TOKEN_FOOTPRINT.width;
         [w, 0.0, -w]
@@ -156,7 +208,21 @@ mod tests {
         // to y=3, token front-center there.
         assert!((p.anchor.x - 10.0).abs() < 1e-9);
         assert!((p.anchor.y - 3.0).abs() < 1e-9, "{}", p.anchor.y);
-        assert_eq!(drop_poses(BombKind::ClusterMine, Pose::new(10.0, 5.0, FRAC_PI_2), fp).len(), 3);
-        assert_eq!(drop_poses(BombKind::Proton, Pose::new(10.0, 5.0, FRAC_PI_2), fp).len(), 1);
+        let s1 = DropTemplate::Straight1;
+        assert_eq!(
+            drop_poses(BombKind::ClusterMine, Pose::new(10.0, 5.0, FRAC_PI_2), fp, s1).len(),
+            3
+        );
+        assert_eq!(drop_poses(BombKind::Proton, Pose::new(10.0, 5.0, FRAC_PI_2), fp, s1).len(), 1);
+        // Emon's templates: straight 3 reaches y=1; the turns end to the
+        // ship's own left (-x) and right (+x), behind it.
+        let ship = Pose::new(10.0, 5.0, FRAC_PI_2);
+        let s3 = drop_pose_with(ship, fp, DropTemplate::Straight3);
+        assert!((s3.anchor.x - 10.0).abs() < 1e-9 && (s3.anchor.y - 1.0).abs() < 1e-9, "{s3:?}");
+        let l3 = drop_pose_with(ship, fp, DropTemplate::TurnLeft3);
+        let r3 = drop_pose_with(ship, fp, DropTemplate::TurnRight3);
+        assert!(l3.anchor.x < 9.0 && l3.anchor.y < 4.0, "{l3:?}");
+        assert!(r3.anchor.x > 11.0 && r3.anchor.y < 4.0, "{r3:?}");
+        assert!((l3.anchor.x - 10.0).abs() - (r3.anchor.x - 10.0).abs() < 1e-9, "mirror images");
     }
 }

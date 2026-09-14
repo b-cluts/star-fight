@@ -611,13 +611,16 @@ async fn session(
                     bots_seated = true;
                     for n in 1..=usize::from(setup.bots) {
                         let bot_seat = players.len() as u8;
-                        let faction = setup.faction_for_seat(bot_seat).unwrap_or({
-                            if bot_seat.is_multiple_of(2) {
-                                sf_core::ship::Faction::Empire
-                            } else {
-                                sf_core::ship::Faction::RebelAlliance
-                            }
-                        });
+                        // A mission decides; else the host's choice; else
+                        // Empire on even seats, Rebels on odd ones.
+                        let faction =
+                            setup.faction_for_seat(bot_seat).or(setup.bot_faction).unwrap_or({
+                                if bot_seat.is_multiple_of(2) {
+                                    sf_core::ship::Faction::Empire
+                                } else {
+                                    sf_core::ship::Faction::RebelAlliance
+                                }
+                            });
                         let squad = match setup.mission {
                             Some(kind) => sf_core::mission::fixed_squad(&content, kind, faction)
                                 .expect("mission forces are in the data"),
@@ -743,8 +746,8 @@ async fn session(
                             Err(e) => send_to!(seat, ServerMsg::Rejected { reason: e.to_string() }),
                         }
                     }
-                    ClientMsg::PlanBomb { ship_id, bomb } => {
-                        match gs.plan_bomb(&content, player, ship_id, bomb) {
+                    ClientMsg::PlanBomb { ship_id, bomb, template } => {
+                        match gs.plan_bomb(&content, player, ship_id, bomb, template) {
                             // Plans are secret: only the planner's view changes.
                             Ok(()) => send_to!(
                                 seat,

@@ -12,7 +12,7 @@ use crate::action::{
     self, ActionExtras, ActionKind, ActionResult, PlannedAction, SecondActionKind,
 };
 use crate::board::{Board, Seat};
-use crate::bombs::{self, BombHit, BombKind, BombToken, Detonation};
+use crate::bombs::{self, BombHit, BombKind, BombToken, Detonation, DropTemplate};
 use crate::combat;
 use crate::crit::{self, CritEffect};
 use crate::data::Content;
@@ -464,6 +464,9 @@ pub struct ShipView {
     /// Own ships only: the bomb card chosen to drop on dial reveal.
     #[serde(default)]
     pub bomb: Option<UpgradeId>,
+    /// Own ships only: the template the bomb is dropped with (Emon).
+    #[serde(default)]
+    pub bomb_template: DropTemplate,
     /// Own ships only: the planned second action.
     #[serde(default)]
     pub planned_action2: Option<PlannedAction>,
@@ -2654,6 +2657,7 @@ impl GameState {
                 > 0,
             daredevil: self.count_effect(content, s, UpgradeEffect::RedTurn1Action) > 0,
             toggles: self.toggle_cards(content, s),
+            bomb_templates: ability == Some(PilotAbility::BombWithSpeed3Template),
         }
     }
 
@@ -3374,6 +3378,7 @@ impl GameState {
         player: PlayerId,
         ship_id: ShipId,
         bomb: Option<UpgradeId>,
+        template: DropTemplate,
     ) -> Result<(), Rejection> {
         if self.phase != Phase::Planning {
             return Err(Rejection::WrongPhase);
@@ -3398,7 +3403,14 @@ impl GameState {
         {
             return Err(Rejection::NoSuchUpgrade);
         }
+        // Emon Azzameen alone may pick a speed-3 template.
+        if template != DropTemplate::Straight1
+            && self.ability(content, &self.ships[i]) != Some(PilotAbility::BombWithSpeed3Template)
+        {
+            return Err(Rejection::TemplateNotAllowed);
+        }
         self.ships[i].bomb = bomb;
+        self.ships[i].bomb_template = template;
         Ok(())
     }
 
@@ -3427,8 +3439,21 @@ impl GameState {
             self.ships[i].upgrades.retain(|u| *u != card);
         }
         let name = content.upgrades.upgrade(card).map(|u| u.name.clone()).unwrap_or_default();
-        events.push(format!("{}: drops {name}", self.label(content, i)));
-        let tokens: Vec<BombToken> = bombs::drop_poses(kind, pose, fp)
+        // Emon Azzameen: his chosen template; everyone else the straight 1.
+        let template = if self.ability(content, &self.ships[i])
+            == Some(PilotAbility::BombWithSpeed3Template)
+        {
+            self.ships[i].bomb_template
+        } else {
+            DropTemplate::Straight1
+        };
+        let how = if template == DropTemplate::Straight1 {
+            String::new()
+        } else {
+            format!(" with the {} template", template.label())
+        };
+        events.push(format!("{}: drops {name}{how}", self.label(content, i)));
+        let tokens: Vec<BombToken> = bombs::drop_poses(kind, pose, fp, template)
             .into_iter()
             .map(|pose| {
                 let id = self.next_bomb_id;
@@ -6750,6 +6775,7 @@ impl GameState {
                     plan: if own { s.plan } else { None },
                     planned_action: if own { s.planned_action } else { None },
                     bomb: if own { s.bomb } else { None },
+                    bomb_template: if own { s.bomb_template } else { DropTemplate::Straight1 },
                     planned_action2: if own { s.planned_action2 } else { None },
                     extras: if own {
                         self.action_extras(content, s)
@@ -9704,10 +9730,10 @@ mod tests {
         let c = content();
         let seismic = UpgradeId(181);
         let mut gs = bomber_duel(&c, seismic, 1);
-        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic)).unwrap();
+        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic), DropTemplate::Straight1).unwrap();
         // Mines cannot be planned as dial-reveal bombs, nor unequipped cards.
         assert_eq!(
-            gs.plan_bomb(&c, P0, ShipId(0), Some(UpgradeId(182))),
+            gs.plan_bomb(&c, P0, ShipId(0), Some(UpgradeId(182)), DropTemplate::Straight1),
             Err(Rejection::NoSuchUpgrade)
         );
         let mut blanks = scripted(vec![7]);
@@ -9738,7 +9764,7 @@ mod tests {
         let proton = UpgradeId(180);
         let mut gs = bomber_duel(&c, proton, 1);
         gs.ships[0].shields = 2; // pretend shields: the faceup card ignores them
-        gs.plan_bomb(&c, P0, ShipId(0), Some(proton)).unwrap();
+        gs.plan_bomb(&c, P0, ShipId(0), Some(proton), DropTemplate::Straight1).unwrap();
         // crit::draw(9) = Stunned Pilot: no immediate extra damage.
         let mut rolls = scripted(vec![9]);
         gs.commit_plans(&c, P0, &mut rolls).unwrap();
@@ -9750,7 +9776,7 @@ mod tests {
 
         // Straight 2 puts the rear 3 units away: out of Range 1.
         let mut gs = bomber_duel(&c, proton, 2);
-        gs.plan_bomb(&c, P0, ShipId(0), Some(proton)).unwrap();
+        gs.plan_bomb(&c, P0, ShipId(0), Some(proton), DropTemplate::Straight1).unwrap();
         let mut blanks = scripted(vec![7]);
         gs.commit_plans(&c, P0, &mut blanks).unwrap();
         let rec = gs.commit_plans(&c, P1, &mut blanks).unwrap().unwrap();
@@ -10068,7 +10094,7 @@ mod tests {
         let mut gs = bomber_duel(&c, seismic, 1);
         gs.ships[0].upgrades.push(UpgradeId(6));
         gs.ships[0].ordnance = vec![seismic];
-        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic)).unwrap();
+        gs.plan_bomb(&c, P0, ShipId(0), Some(seismic), DropTemplate::Straight1).unwrap();
         let rec = resolve(&c, &mut gs, vec![7; 16]);
         assert!(gs.ships[0].upgrades.contains(&seismic), "card kept: {:?}", rec.events);
         assert!(gs.ships[0].ordnance.is_empty());
@@ -10512,7 +10538,7 @@ mod tests {
             &[("bluesquadronnovice", Pose::new(10.0, 17.5, -FRAC_PI_2), 1)],
         );
         gs.ships[0].upgrades.push(mines);
-        gs.plan_bomb(&c, P0, ShipId(0), Some(mines)).unwrap();
+        gs.plan_bomb(&c, P0, ShipId(0), Some(mines), DropTemplate::Straight1).unwrap();
         let rec = resolve(&c, &mut gs, vec![7; 20]);
         let mv = rec.moves.iter().find(|m| m.ship == ShipId(0)).unwrap();
         assert_eq!(mv.dropped_before.len(), 1, "{:?}", rec.events);
@@ -11949,6 +11975,42 @@ mod tests {
             "{:?}",
             rec.events
         );
+    }
+
+    #[test]
+    fn emon_azzameen_drops_bombs_with_a_speed_3_template() {
+        let c = content();
+        let (north, south) = (FRAC_PI_2, -FRAC_PI_2);
+        let proton = UpgradeId(180);
+        // Only Emon may pick a template; the Mercenary is refused.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("mandalorianmercenary", Pose::new(10.0, 12.0, south), 1)],
+        );
+        gs.ships[1].upgrades.push(proton);
+        assert!(!gs.action_extras(&c, &gs.ships[1]).bomb_templates);
+        assert_eq!(
+            gs.plan_bomb(&c, P1, ShipId(1), Some(proton), DropTemplate::Straight3),
+            Err(Rejection::TemplateNotAllowed)
+        );
+        // Emon, facing south with his rear edge at y 14 (large base from
+        // the anchor at 12): a straight-3 drop lands the token at y 17,
+        // the TIE far away is untouched.
+        let mut gs = skirmish(
+            &c,
+            &[("academypilot", Pose::new(10.0, 2.5, north), 2)],
+            &[("emonazzameen", Pose::new(10.0, 12.0, south), 1)],
+        );
+        gs.ships[1].upgrades.push(proton);
+        assert!(gs.action_extras(&c, &gs.ships[1]).bomb_templates);
+        gs.plan_bomb(&c, P1, ShipId(1), Some(proton), DropTemplate::Straight3).unwrap();
+        let rec = resolve(&c, &mut gs, vec![7; 40]);
+        let det = rec.detonations.first().expect("the proton bomb went off");
+        assert!((det.token.pose.anchor.x - 10.0).abs() < 1e-9, "{:?}", det.token.pose);
+        assert!((det.token.pose.anchor.y - 17.0).abs() < 1e-9, "{:?}", det.token.pose);
+        assert!(rec.events.iter().any(|e| e.contains("straight 3 template")), "{:?}", rec.events);
+        assert_eq!(gs.ships[0].hull, 3);
     }
 
     #[test]

@@ -164,6 +164,9 @@ pub struct ShipState {
     /// Secretly chosen bomb card to drop when the dial is revealed.
     #[serde(default)]
     pub bomb: Option<crate::upgrade::UpgradeId>,
+    /// Emon Azzameen: the template his bombs are dropped with.
+    #[serde(default)]
+    pub bomb_template: crate::bombs::DropTemplate,
     /// A shield was lost this round ("Red Ace" triggers once per round).
     #[serde(default)]
     pub shield_lost_round: bool,
@@ -255,6 +258,7 @@ impl ShipState {
             planned_action2: None,
             card_actions: Vec::new(),
             bomb: None,
+            bomb_template: Default::default(),
             shield_lost_round: false,
             on_asteroid: false,
             used_round: Vec::new(),

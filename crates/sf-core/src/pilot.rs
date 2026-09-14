@@ -505,6 +505,7 @@ impl PilotAbility {
                 | PilotAbility::ExtraAttackDieInAuxiliaryArc
                 | PilotAbility::RerollPerEnemyRange1
                 | PilotAbility::FreeActionToFriendAfterAttack
+                | PilotAbility::BombWithSpeed3Template
                 | PilotAbility::AttackAlwaysHits
                 | PilotAbility::ExtraAttackDieAtRange1
                 | PilotAbility::ExtraAttackDieOutsideDefenderArc

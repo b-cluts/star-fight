@@ -57,6 +57,9 @@ pub enum ClientMsg {
     PlanBomb {
         ship_id: ShipId,
         bomb: Option<UpgradeId>,
+        /// Emon Azzameen's template choice (straight 1 for everyone else).
+        #[serde(default)]
+        template: sf_core::bombs::DropTemplate,
     },
     /// Secretly switch a card's "use it this round" effect on or off
     /// (Lightning Reflexes, Electronic Baffle, Jan Ors, Decoy).

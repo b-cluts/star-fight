@@ -70,6 +70,10 @@ pub struct GameSetup {
     /// Seats taken by computer players (after the host), for solo play.
     #[serde(default)]
     pub bots: u8,
+    /// The faction every bot flies; None = automatic (Empire on even
+    /// seats, Rebels on odd ones). A mission overrides it.
+    #[serde(default)]
+    pub bot_faction: Option<crate::ship::Faction>,
 }
 
 impl Default for GameSetup {
@@ -86,6 +90,7 @@ impl Default for GameSetup {
             teams: Vec::new(),
             mission: None,
             bots: 0,
+            bot_faction: None,
         }
     }
 }
@@ -104,6 +109,7 @@ impl From<&Scenario> for GameSetup {
             teams: s.teams.clone(),
             mission: s.mission,
             bots: 0,
+            bot_faction: None,
         }
     }
 }
@@ -252,10 +258,16 @@ impl GameSetup {
         if let Some(m) = self.mission {
             parts.push(format!("mission {}", m.number()));
         }
+        let flying = match self.bot_faction {
+            Some(crate::ship::Faction::RebelAlliance) => " (Rebel)",
+            Some(crate::ship::Faction::Empire) => " (Imperial)",
+            Some(crate::ship::Faction::Scum) => " (Scum)",
+            None => "",
+        };
         match self.bots {
             0 => {}
-            1 => parts.push("1 bot".into()),
-            n => parts.push(format!("{n} bots")),
+            1 => parts.push(format!("1 bot{flying}")),
+            n => parts.push(format!("{n} bots{flying}")),
         }
         if self.players > 2 {
             parts.push(format!("{} players, {}", self.players, self.mode_name()));

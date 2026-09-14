@@ -326,6 +326,18 @@ and Server `ws://127.0.0.1:7777`.
       from the gitignored reference/xwing-card-images scans (pilots/scum/*,
       upgrades/illicit, upgrades/samd, upgrades/mod) — use them again for
       any further Scum content (aggressor, starviper, m3a, kihraxz, ...).
+      >>> EMON + BOT FACTION DONE 2026-09-14 (260 tests, PROTOCOL 5):
+      `bombs::DropTemplate` (Straight1/TurnLeft3/Straight3/TurnRight3,
+      `drop_pose_with` flies the template backwards from
+      `combat::rear_pose`), `ShipState.bomb_template`, `plan_bomb(..,
+      template)` rejects TemplateNotAllowed for anyone but Emon,
+      `ActionExtras.bomb_templates`, `ShipView.bomb_template`, client key T
+      cycles it, `ClientMsg::PlanBomb.template` (serde default) — hence
+      PROTOCOL_VERSION 5 for v0.6.0. `GameSetup.bot_faction:
+      Option<Faction>` (setup field 10 "Bot faction": auto/Rebel/Imperial/
+      Scum; mission overrides; server seating uses it; summary shows it);
+      the solo-bot server test now asks for Scum bots. No data-only
+      abilities remain.
       >>> REBEL Z-95 DONE 2026-09-14 (259 tests): class 16 (same sprite and
       dial as the Scum Z-95, bar Missile), pilots 1601-1604, Airen Cracken
       (FreeActionToFriendAfterAttack: a Range-1 friend gets a free focus

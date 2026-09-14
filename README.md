@@ -42,7 +42,8 @@ damage, pilots, upgrades and squad building. Rust workspace: `sf-core`
    fly toward the nearest enemy (or an escape edge / satellite in a
    mission), take Focus, and shoot the weakest target; they field the
    cheapest generic pilot of their faction up to the points, or the
-   mission's printed force.
+   mission's printed force. The **Bot faction** field picks what they fly
+   (auto, Rebel, Imperial or Scum).
    **Factions**: Rebel Alliance (with the Resistance and the Z-95), Galactic Empire
    (with the First Order) and **Scum and Villainy** (Most Wanted: Z-95
    Headhunter, Y-Wing, Firespray-31 with its rear firing arc). Press F in
